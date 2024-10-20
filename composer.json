@@ -1,24 +1,27 @@
 {
-    "name": ":vendor_slug/:package_slug",
-    "description": ":package_description",
+    "name": "jkbennemann/laravel-api-documentation",
+    "description": "This is my package laravel-api-documentation",
     "keywords": [
-        ":vendor_name",
+        "Jakob Bennemann",
+        "Bennemann",
         "laravel",
-        ":package_slug"
+        "laravel-api-documentation"
     ],
-    "homepage": "https://github.com/:vendor_slug/:package_slug",
+    "homepage": "https://github.com/jkbennemann/laravel-api-documentation",
     "license": "MIT",
     "authors": [
         {
-            "name": ":author_name",
-            "email": "author@domain.com",
+            "name": "Jakob Bennemann",
+            "email": "github@jakob-bennemann.de",
             "role": "Developer"
         }
     ],
     "require": {
-        "php": "^8.2",
-        "spatie/laravel-package-tools": "^1.16",
-        "illuminate/contracts": "^10.0||^11.0"
+        "php": "^8.1",
+        "cebe/php-openapi": "^1.7",
+        "illuminate/contracts": "^10.0||^11.0",
+        "nikic/php-parser": "^5.3",
+        "spatie/laravel-package-tools": "^1.16"
     },
     "require-dev": {
         "laravel/pint": "^1.14",
@@ -35,19 +38,19 @@
     },
     "autoload": {
         "psr-4": {
-            "VendorName\\Skeleton\\": "src/",
-            "VendorName\\Skeleton\\Database\\Factories\\": "database/factories/"
+            "Bennemann\\LaravelApiDocumentation\\": "src/",
+            "Bennemann\\LaravelApiDocumentation\\Database\\Factories\\": "database/factories/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "VendorName\\Skeleton\\Tests\\": "tests/",
+            "Bennemann\\LaravelApiDocumentation\\Tests\\": "tests/",
             "Workbench\\App\\": "workbench/app/"
         }
     },
     "scripts": {
         "post-autoload-dump": "@composer run prepare",
-        "clear": "@php vendor/bin/testbench package:purge-skeleton --ansi",
+        "clear": "@php vendor/bin/testbench package:purge-laravel-api-documentation --ansi",
         "prepare": "@php vendor/bin/testbench package:discover --ansi",
         "build": [
             "@composer run prepare",
@@ -73,10 +76,10 @@
     "extra": {
         "laravel": {
             "providers": [
-                "VendorName\\Skeleton\\SkeletonServiceProvider"
+                "Bennemann\\LaravelApiDocumentation\\LaravelApiDocumentationServiceProvider"
             ],
             "aliases": {
-                "Skeleton": "VendorName\\Skeleton\\Facades\\Skeleton"
+                "LaravelApiDocumentation": "Bennemann\\LaravelApiDocumentation\\Facades\\LaravelApiDocumentation"
             }
         }
     },
