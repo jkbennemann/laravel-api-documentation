@@ -60,7 +60,7 @@ class RouteComposition
             $urlParams = $this->extractPlaceholders($uri);
             $description = null;
             $summary = null;
-            $tags = null;
+            $tags = [];
             $url = null;
             $additionalDescription = null;
             $validationRules = [];
@@ -108,6 +108,8 @@ class RouteComposition
                         $value = explode(',', $tagsValue);
                         $tags = array_map('trim', $value);
                         $tags = array_filter($tags);
+                    } elseif (is_array($tagsValue)) {
+                        $tags = $tagsValue;
                     }
                 }
 
@@ -236,9 +238,9 @@ class RouteComposition
                 'uri' => $uri,
                 'summary' => $summary,
                 'description' => $description,
-                'middlewares' => implode(',', $middleswares),
+                'middlewares' => $middleswares,
                 'is_vendor' => $isVendorClass,
-                'request_parameters' => implode(',', $urlParams), //TODO: make possible to use PathParameter attribute
+                'request_parameters' => $urlParams,
                 'parameters' => $parameters,
                 'tags' => $tags,
                 'documentation' => $url ? [
