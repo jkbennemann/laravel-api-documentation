@@ -239,3 +239,42 @@ it('can generate route information for route with multiple path parameters', fun
         ->and($routeData[0]['request_parameters']['paramTwo']['format'])
         ->toBe('uuid');
 });
+
+it('can generate route information for route with an email example', function () {
+    Route::get('route/{mail}', [SimpleController::class, 'mailExampleParameter']);
+
+    $service = app(RouteComposition::class);
+    $routeData = $service->process();
+
+    expect($routeData)
+        ->toHaveCount(1)
+        ->and($routeData[0])
+        ->toBeArray()
+        ->toHaveCount(11)
+        ->and($routeData[0]['request_parameters'])
+        ->toBeArray()
+        ->toHaveCount(1)
+        ->and($routeData[0]['request_parameters']['mail'])
+        ->toHaveKeys([
+            'description',
+            'required',
+            'type',
+            'format',
+            'example',
+        ])
+        ->and($routeData[0]['request_parameters']['mail']['required'])
+        ->toBeTrue()
+        ->and($routeData[0]['request_parameters']['mail']['type'])
+        ->toBe('string')
+        ->and($routeData[0]['request_parameters']['mail']['format'])
+        ->toBe('email')
+        ->and($routeData[0]['request_parameters']['mail']['example'])
+        ->toBeArray()
+        ->toHaveCount(3)
+        ->and($routeData[0]['request_parameters']['mail']['example']['type'])
+        ->toBe('string')
+        ->and($routeData[0]['request_parameters']['mail']['example']['format'])
+        ->toBe('email')
+        ->and($routeData[0]['request_parameters']['mail']['example']['value'])
+        ->toBe('mail@test.com');
+});

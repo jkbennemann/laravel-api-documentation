@@ -66,4 +66,10 @@ class SimpleController extends Controller
     {
         return new SampleResource([]);
     }
+
+    #[PathParameter(name: 'mail', format: 'email', description: 'The first parameter', example: 'mail@test.com')]
+    public function mailExampleParameter(string $mail): SampleResource
+    {
+        return new SampleResource([]);
+    }
 }

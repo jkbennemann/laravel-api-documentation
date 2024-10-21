@@ -132,13 +132,26 @@ class RouteComposition
                         'type' => $attr->getArguments()['type'] ?? $attr->getArguments()[2] ?? 'string',
                         'format' => $attr->getArguments()['format'] ?? $attr->getArguments()[3] ?? null,
                         'required' => $attr->getArguments()['required'] ?? $attr->getArguments()[4] ?? true,
-                        'example' => $attr->getArguments()['example'] ?? $attr->getArguments()[5] ?? null,
+                        'example' => null,
                     ];
 
                     if ($routeParams[$name]['type'] === 'int') {
                         $routeParams[$name]['type'] = 'integer';
                     }
 
+                    if ($value = $attr->getArguments()['example'] ?? $attr->getArguments()[5] ?? null) {
+                        $routeParams[$name]['example'] = [
+                            'type' => $routeParams[$name]['type'],
+                            'value' => null,
+                            'format' => $routeParams[$name]['format'],
+                        ];
+                        $routeParams[$name]['example']['type'] = $routeParams[$name]['type'];
+                        $routeParams[$name]['example']['value'] = $value;
+
+                        if (null !== $routeParams[$name]['format']) {
+                            $routeParams[$name]['example']['format'] = $routeParams[$name]['format'];
+                        }
+                    }
                 }
             }
 
