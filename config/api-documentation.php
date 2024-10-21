@@ -11,32 +11,33 @@ return [
         'documentation',
         'documentation/swagger',
         'documentation/redoc',
-        '!api/v1/organizations/*/billing-profiles',
-//        'api/v1/users/*/roles',
-//        'api/v1/users/update*',
+
+        //add the routes you want to exclude from the documentation
+        //use the route name or the route uri.
+        //you can use the wildcard * to exclude all routes that match the pattern.
+        //you can use ! to exclude all routes except the ones that match the pattern.
+        //for example: 'api/*' will exclude all routes that start with 'api/'
+        //for example: '!api/*' will exclude all routes except the ones that start with 'api/'
     ],
     'excluded_methods' => [
         'HEAD',
-        'GET',
-        'POST',
-//        'PUT',
-        'PATCH',
-        'DELETE',
+        'OPTIONS',
+        //'GET',
+        //'POST',
+        //'PUT',
+        //'PATCH',
+        //'DELETE',
     ],
     'servers' => [
         [
-            'url' => 'https://user-service.raidboxes.io',
-            'description' => 'Production',
-        ],
-        [
-            'url' => 'https://staging-user-service.raidboxes.io',
-            'description' => 'Staging',
+            'url' => env('APP_URL', 'http://localhost'),
+            'description' => env('APP_NAME', 'Service'),
         ],
     ],
     'ui' => [
         'default' => 'swagger',
         'swagger' => [
-            'enabled' => true,
+            'enabled' => false,
             'route' => '/documentation/swagger',
             'version' => '5.17.14',
             'middleware' => [
@@ -44,7 +45,7 @@ return [
             ],
         ],
         'redoc' => [
-            'enabled' => true,
+            'enabled' => false,
             'route' => '/documentation/redoc',
             'version' => '2.2.0',
             'middleware' => [
