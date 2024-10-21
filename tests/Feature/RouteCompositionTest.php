@@ -64,7 +64,7 @@ it('can generate route information for simplistic route', function () {
         ->toHaveCount(0);
 });
 
-it('can generate route information for route wit a tag', function () {
+it('can generate route information for route with a tag', function () {
     Route::get('route-1', [SimpleController::class, 'tag']);
 
     $service = app(RouteComposition::class);
@@ -120,4 +120,34 @@ it('can generate route information for route with multiple tags as string', func
         ->toBe('My-Tag')
         ->and($routeData[0]['tags'][1])
         ->toBe('Another-Tag');
+});
+
+it('can generate route information for route with a description', function () {
+    Route::get('route-1', [SimpleController::class, 'description']);
+
+    $service = app(RouteComposition::class);
+    $routeData = $service->process();
+
+    expect($routeData)
+        ->toHaveCount(1)
+        ->and($routeData[0])
+        ->toBeArray()
+        ->toHaveCount(11)
+        ->and($routeData[0]['description'])
+        ->toBe('My Description');
+});
+
+it('can generate route information for route with a summary', function () {
+    Route::get('route-1', [SimpleController::class, 'summary']);
+
+    $service = app(RouteComposition::class);
+    $routeData = $service->process();
+
+    expect($routeData)
+        ->toHaveCount(1)
+        ->and($routeData[0])
+        ->toBeArray()
+        ->toHaveCount(11)
+        ->and($routeData[0]['summary'])
+        ->toBe('My Summary');
 });
