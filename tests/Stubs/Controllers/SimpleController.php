@@ -6,6 +6,7 @@ namespace JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers;
 
 use Illuminate\Routing\Controller;
 use JkBennemann\LaravelApiDocumentation\Attributes\Description;
+use JkBennemann\LaravelApiDocumentation\Attributes\PathParameter;
 use JkBennemann\LaravelApiDocumentation\Attributes\Summary;
 use JkBennemann\LaravelApiDocumentation\Attributes\Tag;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Resources\SampleResource;
@@ -43,6 +44,25 @@ class SimpleController extends Controller
 
     #[Description('My Description')]
     public function description(): SampleResource
+    {
+        return new SampleResource([]);
+    }
+
+    #[PathParameter(name: 'id', description: 'The ID of the resource', type: 'integer')]
+    public function parameter(int $id): SampleResource
+    {
+        return new SampleResource([]);
+    }
+
+    #[PathParameter(name: 'id', description: 'The ID of the resource', type: 'int', required: false)]
+    public function optionalParameter(int $id = null): SampleResource
+    {
+        return new SampleResource([]);
+    }
+
+    #[PathParameter(name: 'paramOne', description: 'The first parameter', type: 'int')]
+    #[PathParameter(name: 'paramTwo', description: 'The second parameter', type: 'string', format: 'uuid', required: false)]
+    public function multiParameter(int $paramOne, ?string $paramTwo = null): SampleResource
     {
         return new SampleResource([]);
     }

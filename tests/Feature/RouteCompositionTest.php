@@ -17,8 +17,6 @@ it('can generate route information for simplistic route', function () {
     $service = app(RouteComposition::class);
     $routeData = $service->process();
 
-    ray($routeData);
-
     expect($routeData)
         ->toHaveCount(1)
         ->and($routeData[0])
@@ -150,4 +148,94 @@ it('can generate route information for route with a summary', function () {
         ->toHaveCount(11)
         ->and($routeData[0]['summary'])
         ->toBe('My Summary');
+});
+
+it('can generate route information for route with a required path parameter', function () {
+    Route::get('route/{id}', [SimpleController::class, 'parameter']);
+
+    $service = app(RouteComposition::class);
+    $routeData = $service->process();
+
+    expect($routeData)
+        ->toHaveCount(1)
+        ->and($routeData[0])
+        ->toBeArray()
+        ->toHaveCount(11)
+        ->and($routeData[0]['request_parameters'])
+        ->toBeArray()
+        ->toHaveCount(1)
+        ->and($routeData[0]['request_parameters']['id'])
+        ->toHaveKeys([
+            'description',
+            'required',
+            'type',
+            'format',
+        ])
+        ->and($routeData[0]['request_parameters']['id']['required'])
+        ->toBeTrue()
+        ->and($routeData[0]['request_parameters']['id']['type'])
+        ->toBe('integer')
+        ->and($routeData[0]['request_parameters']['id']['format'])
+        ->toBeNull();
+});
+
+it('can generate route information for route with a optional path parameter', function () {
+    Route::get('route/{?id}', [SimpleController::class, 'optionalParameter']);
+
+    $service = app(RouteComposition::class);
+    $routeData = $service->process();
+
+    expect($routeData)
+        ->toHaveCount(1)
+        ->and($routeData[0])
+        ->toBeArray()
+        ->toHaveCount(11)
+        ->and($routeData[0]['request_parameters'])
+        ->toBeArray()
+        ->toHaveCount(1)
+        ->and($routeData[0]['request_parameters']['id'])
+        ->toHaveKeys([
+            'description',
+            'required',
+            'type',
+            'format',
+        ])
+        ->and($routeData[0]['request_parameters']['id']['required'])
+        ->toBeFalse();
+});
+
+it('can generate route information for route with multiple path parameters', function () {
+    Route::get('route/{firstParam}/{?secondParam}', [SimpleController::class, 'multiParameter']);
+
+    $service = app(RouteComposition::class);
+    $routeData = $service->process();
+
+    expect($routeData)
+        ->toHaveCount(1)
+        ->and($routeData[0])
+        ->toBeArray()
+        ->toHaveCount(11)
+        ->and($routeData[0]['request_parameters'])
+        ->toBeArray()
+        ->toHaveCount(2)
+        ->and($routeData[0]['request_parameters']['paramOne'])
+        ->toHaveKeys([
+            'description',
+            'required',
+            'type',
+            'format',
+            'example',
+        ])
+        ->and($routeData[0]['request_parameters']['paramOne']['required'])
+        ->toBeTrue()
+        ->and($routeData[0]['request_parameters']['paramTwo']['required'])
+        ->toBeFalse()
+        ->and($routeData[0]['request_parameters']['paramOne']['type'])
+        ->toBe('integer')
+        ->and($routeData[0]['request_parameters']['paramOne']['format'])
+        ->toBeNull()
+        ->and($routeData[0]['request_parameters']['paramTwo']['type'])
+        ->toBe('string')
+        ->and($routeData[0]['request_parameters']['paramTwo']['format'])
+        ->toBe('uuid');
 });

@@ -14,6 +14,7 @@ use JkBennemann\LaravelApiDocumentation\Attributes\AdditionalDocumentation;
 use JkBennemann\LaravelApiDocumentation\Attributes\DataResponse;
 use JkBennemann\LaravelApiDocumentation\Attributes\Description;
 use JkBennemann\LaravelApiDocumentation\Attributes\Parameter;
+use JkBennemann\LaravelApiDocumentation\Attributes\PathParameter;
 use JkBennemann\LaravelApiDocumentation\Attributes\Summary;
 use JkBennemann\LaravelApiDocumentation\Attributes\Tag;
 use ReflectionAttribute;
@@ -87,6 +88,8 @@ class RouteComposition
                 continue;
             }
 
+            $routeParams = [];
+
             foreach ($attributes as $attr) {
                 if ($attr->getName() === Description::class) {
                     $description = $attr->getArguments()[0] ?? null;
@@ -120,6 +123,22 @@ class RouteComposition
                         'resource' => $attr->getArguments()['resource'] ?? $attr->getArguments()[2] ?? '',
                         'headers' => $attr->getArguments()['headers'] ?? $attr->getArguments()[3] ?? [],
                     ];
+                }
+
+                if ($attr->getName() === PathParameter::class) {
+                    $name = $attr->getArguments()['name'] ?? $attr->getArguments()[0];
+                    $routeParams[$name] = [
+                        'description' => $attr->getArguments()['description'] ?? $attr->getArguments()[1] ?? '',
+                        'type' => $attr->getArguments()['type'] ?? $attr->getArguments()[2] ?? 'string',
+                        'format' => $attr->getArguments()['format'] ?? $attr->getArguments()[3] ?? null,
+                        'required' => $attr->getArguments()['required'] ?? $attr->getArguments()[4] ?? true,
+                        'example' => $attr->getArguments()['example'] ?? $attr->getArguments()[5] ?? null,
+                    ];
+
+                    if ($routeParams[$name]['type'] === 'int') {
+                        $routeParams[$name]['type'] = 'integer';
+                    }
+
                 }
             }
 
@@ -240,7 +259,7 @@ class RouteComposition
                 'description' => $description,
                 'middlewares' => $middleswares,
                 'is_vendor' => $isVendorClass,
-                'request_parameters' => $urlParams,
+                'request_parameters' => $routeParams,
                 'parameters' => $parameters,
                 'tags' => $tags,
                 'documentation' => $url ? [
