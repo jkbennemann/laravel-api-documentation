@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace Bennemann\LaravelApiDocumentation\Services;
+namespace JkBennemann\LaravelApiDocumentation\Services;
 
-use Bennemann\LaravelApiDocumentation\Attributes\Description;
 use Illuminate\Config\Repository;
+use JkBennemann\LaravelApiDocumentation\Attributes\Description;
 use openapiphp\openapi\spec\Components;
 use openapiphp\openapi\spec\Header;
 use openapiphp\openapi\spec\Info;
@@ -78,7 +78,7 @@ class OpenApi
             ]);
         }
 
-        if (!empty($servers)) {
+        if (! empty($servers)) {
             $this->openApi->servers = $servers;
         }
 
@@ -93,7 +93,7 @@ class OpenApi
                     'type' => 'http',
                     'scheme' => 'bearer',
                 ],
-            ]
+            ],
         ]);
 
         return $this;
@@ -109,11 +109,11 @@ class OpenApi
     private function getPaths(array $input): array
     {
         $paths = [];
-        $parser = (new ParserFactory())->createForHostVersion();
+        $parser = (new ParserFactory)->createForHostVersion();
         $traverser = new NodeTraverser;
 
         foreach ($input as $data) {
-            if (!$this->includeVendorRoutes && $data['is_vendor']) {
+            if (! $this->includeVendorRoutes && $data['is_vendor']) {
                 continue;
             }
             foreach ($this->excludedRoutes as $excludedRoute) {
@@ -137,9 +137,9 @@ class OpenApi
                 $summary = $data['summary'];
             }
 
-            if (!empty($data['request_parameters'])) {
+            if (! empty($data['request_parameters'])) {
                 $params = explode(',', $data['request_parameters']);
-                $parameters = array_map(function ($param) use ($params) {
+                $parameters = array_map(function ($param) {
                     return new Parameter([
                         'name' => $param,
                         'in' => 'query',
@@ -169,7 +169,6 @@ class OpenApi
                 ];
             }
 
-
             if ($data['middlewares'] ?? null) {
                 $middlewares = explode(',', $data['middlewares']);
 
@@ -190,7 +189,7 @@ class OpenApi
                 $baseInfo['parameters'] = $parameters;
             }
 
-            if (!empty($data['parameters'])) {
+            if (! empty($data['parameters'])) {
                 $params = [];
                 $required = [];
                 foreach ($data['parameters'] as $name => $val) {
@@ -201,7 +200,7 @@ class OpenApi
                         'deprecated' => $val['is_deprecated'],
                     ];
 
-                    if (false === $val['is_deprecated']) {
+                    if ($val['is_deprecated'] === false) {
                         unset($params[$name]['deprecated']);
                     }
 
@@ -209,16 +208,16 @@ class OpenApi
                         $required[] = $name;
                     }
 
-                    if (null === $val['format']) {
+                    if ($val['format'] === null) {
                         unset($params[$name]['format']);
                     }
 
-                    if (null === $val['type']) {
+                    if ($val['type'] === null) {
                         unset($params[$name]['type']);
                     }
                 }
 
-                if (!in_array($data['method'], ['GET', 'DELETE', 'HEAD'])) {
+                if (! in_array($data['method'], ['GET', 'DELETE', 'HEAD'])) {
                     $values['requestBody'] = new RequestBody([
                         'content' => [
                             'application/json' => [
@@ -234,12 +233,12 @@ class OpenApi
                 }
             }
 
-            if (!empty($data['tags'])) {
+            if (! empty($data['tags'])) {
                 $values['tags'] = $data['tags'];
             }
 
             //responses
-            if (!empty($data['responses'])) {
+            if (! empty($data['responses'])) {
                 $responses = [];
                 foreach ($data['responses'] as $code => $response) {
                     $headers = [];
@@ -278,10 +277,10 @@ class OpenApi
 
                                 //2. TODO: override fetched values in case $attributes is not empty for those keys
                                 foreach ($attributes as $attribute) {
-                                    if ($attribute->getName() === \Bennemann\LaravelApiDocumentation\Attributes\Parameter::class) {
+                                    if ($attribute->getName() === \JkBennemann\LaravelApiDocumentation\Attributes\Parameter::class) {
                                         $name = $attribute->getArguments()['name'] ?? $attribute->getArguments()[0] ?? null;
 
-                                        if (!$name) {
+                                        if (! $name) {
                                             continue;
                                         }
 
@@ -342,7 +341,7 @@ class OpenApi
                                         'type' => 'string',
                                     ];
                                 }
-                                if (!empty($t)) {
+                                if (! empty($t)) {
                                     $tmp['content'] = [
                                         'application/json' => [
                                             'schema' => [
@@ -361,8 +360,8 @@ class OpenApi
                 $values['responses'] = $responses;
             }
 
-            if (isset($paths[$this->replacePlaceholdersForOpenApi('/' . $data['uri'])])) {
-                $item = $paths[$this->replacePlaceholdersForOpenApi('/' . $data['uri'])];
+            if (isset($paths[$this->replacePlaceholdersForOpenApi('/'.$data['uri'])])) {
+                $item = $paths[$this->replacePlaceholdersForOpenApi('/'.$data['uri'])];
             } else {
                 $item = new PathItem($baseInfo);
             }
@@ -371,7 +370,7 @@ class OpenApi
 
             $item->{strtolower($data['method'])} = $operation;
 
-            $paths[$this->replacePlaceholdersForOpenApi('/' . $data['uri'])] = $item;
+            $paths[$this->replacePlaceholdersForOpenApi('/'.$data['uri'])] = $item;
         }
 
         return $paths;
@@ -388,7 +387,8 @@ class OpenApi
         return preg_replace('/\{[^}]+\}/', '*', $uri);
     }
 
-    private function matchUri(string $uri, string $pattern): bool {
+    private function matchUri(string $uri, string $pattern): bool
+    {
         $uri = $this->getSimplifiedRoute($uri);
         // Check if the pattern is negated
         $isNegated = false;
@@ -408,14 +408,14 @@ class OpenApi
         $regex = str_replace('/', '\/', $regex);
 
         // Add start and end anchors for the regex pattern to match the whole string
-        $regex = '/^' . $regex . '$/';
+        $regex = '/^'.$regex.'$/';
 
         // Test if the pattern matches the URI
         $matches = preg_match($regex, $uri) === 1;
 
         // Handle negated patterns
         if ($isNegated) {
-            return !$matches; // Return false if it matches a negated pattern
+            return ! $matches; // Return false if it matches a negated pattern
         }
 
         return $matches;

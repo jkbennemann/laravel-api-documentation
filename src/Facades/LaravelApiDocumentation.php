@@ -2,17 +2,17 @@
 
 declare(strict_types=1);
 
-namespace Bennemann\LaravelApiDocumentation\Facades;
+namespace JkBennemann\LaravelApiDocumentation\Facades;
 
 use Illuminate\Support\Facades\Facade;
 
 /**
- * @see \Bennemann\LaravelApiDocumentation\LaravelApiDocumentation
+ * @see \JkBennemann\LaravelApiDocumentation\LaravelApiDocumentation
  */
 class LaravelApiDocumentation extends Facade
 {
     protected static function getFacadeAccessor(): string
     {
-        return \Bennemann\LaravelApiDocumentation\LaravelApiDocumentation::class;
+        return \JkBennemann\LaravelApiDocumentation\LaravelApiDocumentation::class;
     }
 }

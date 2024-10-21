@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace Bennemann\LaravelApiDocumentation;
+namespace JkBennemann\LaravelApiDocumentation;
 
-use Bennemann\LaravelApiDocumentation\Http\Controllers\RedocController;
-use Bennemann\LaravelApiDocumentation\Http\Controllers\SwaggerController;
 use Illuminate\Support\Facades\Route;
+use JkBennemann\LaravelApiDocumentation\Commands\LaravelApiDocumentationCommand;
+use JkBennemann\LaravelApiDocumentation\Http\Controllers\RedocController;
+use JkBennemann\LaravelApiDocumentation\Http\Controllers\SwaggerController;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
-use Bennemann\LaravelApiDocumentation\Commands\LaravelApiDocumentationCommand;
 
 class LaravelApiDocumentationServiceProvider extends PackageServiceProvider
 {
@@ -29,7 +29,7 @@ class LaravelApiDocumentationServiceProvider extends PackageServiceProvider
                 config('api-documentation.ui.swagger.route'),
                 [
                     SwaggerController::class,
-                    'index'
+                    'index',
                 ]
             )
                 ->middleware(config('api-documentation.ui.swagger.middleware', []))
@@ -41,7 +41,7 @@ class LaravelApiDocumentationServiceProvider extends PackageServiceProvider
                 config('api-documentation.ui.redoc.route'),
                 [
                     RedocController::class,
-                    'index'
+                    'index',
                 ]
             )
                 ->middleware(config('api-documentation.ui.redoc.middleware', []))
@@ -54,7 +54,7 @@ class LaravelApiDocumentationServiceProvider extends PackageServiceProvider
                     '/documentation',
                     [
                         RedocController::class,
-                        'index'
+                        'index',
                     ]
                 )
                     ->middleware(config('api-documentation.ui.redoc.middleware', []));
@@ -63,7 +63,7 @@ class LaravelApiDocumentationServiceProvider extends PackageServiceProvider
                     '/documentation',
                     [
                         SwaggerController::class,
-                        'index'
+                        'index',
                     ]
                 )
                     ->middleware(config('api-documentation.ui.swagger.middleware', []));

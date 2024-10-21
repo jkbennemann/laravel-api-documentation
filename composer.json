@@ -1,11 +1,10 @@
 {
     "name": "jkbennemann/laravel-api-documentation",
-    "description": "This is my package laravel-api-documentation",
+    "description": "This is an opinionated package to generate API documentation for your Laravel application.",
     "keywords": [
         "Jakob Bennemann",
-        "Bennemann",
         "laravel",
-        "laravel-api-documentation"
+        "API Documentation"
     ],
     "homepage": "https://github.com/jkbennemann/laravel-api-documentation",
     "license": "MIT",
@@ -38,13 +37,13 @@
     },
     "autoload": {
         "psr-4": {
-            "Bennemann\\LaravelApiDocumentation\\": "src/",
-            "Bennemann\\LaravelApiDocumentation\\Database\\Factories\\": "database/factories/"
+            "JkBennemann\\LaravelApiDocumentation\\": "src/",
+            "JkBennemann\\LaravelApiDocumentation\\Database\\Factories\\": "database/factories/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "Bennemann\\LaravelApiDocumentation\\Tests\\": "tests/",
+            "JkBennemann\\LaravelApiDocumentation\\Tests\\": "tests/",
             "Workbench\\App\\": "workbench/app/"
         }
     },
@@ -76,10 +75,10 @@
     "extra": {
         "laravel": {
             "providers": [
-                "Bennemann\\LaravelApiDocumentation\\LaravelApiDocumentationServiceProvider"
+                "JkBennemann\\LaravelApiDocumentation\\LaravelApiDocumentationServiceProvider"
             ],
             "aliases": {
-                "LaravelApiDocumentation": "Bennemann\\LaravelApiDocumentation\\Facades\\LaravelApiDocumentation"
+                "LaravelApiDocumentation": "JkBennemann\\LaravelApiDocumentation\\Facades\\LaravelApiDocumentation"
             }
         }
     },

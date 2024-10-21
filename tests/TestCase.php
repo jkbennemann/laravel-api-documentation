@@ -1,10 +1,10 @@
 <?php
 
-namespace Bennemann\LaravelApiDocumentation\Tests;
+namespace JkBennemann\LaravelApiDocumentation\Tests;
 
 use Illuminate\Database\Eloquent\Factories\Factory;
+use JkBennemann\LaravelApiDocumentation\LaravelApiDocumentationServiceProvider;
 use Orchestra\Testbench\TestCase as Orchestra;
-use Bennemann\LaravelApiDocumentation\LaravelApiDocumentationServiceProvider;
 
 class TestCase extends Orchestra
 {
@@ -13,7 +13,7 @@ class TestCase extends Orchestra
         parent::setUp();
 
         Factory::guessFactoryNamesUsing(
-            fn (string $modelName) => 'Bennemann\\LaravelApiDocumentation\\Database\\Factories\\'.class_basename($modelName).'Factory'
+            fn (string $modelName) => 'JkBennemann\\LaravelApiDocumentation\\Database\\Factories\\'.class_basename($modelName).'Factory'
         );
     }
 

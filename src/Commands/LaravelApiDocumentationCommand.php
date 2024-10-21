@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace Bennemann\LaravelApiDocumentation\Commands;
+namespace JkBennemann\LaravelApiDocumentation\Commands;
 
-use Bennemann\LaravelApiDocumentation\Services\OpenApi;
-use Bennemann\LaravelApiDocumentation\Services\RouteComposition;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Storage;
+use JkBennemann\LaravelApiDocumentation\Services\OpenApi;
+use JkBennemann\LaravelApiDocumentation\Services\RouteComposition;
 use openapiphp\openapi\Writer;
 
 class LaravelApiDocumentationCommand extends Command
@@ -22,14 +22,14 @@ class LaravelApiDocumentationCommand extends Command
 
         $routesData = $routeService->process();
 
-        $this->line(count($routesData) . ' routes generated for documentation');
+        $this->line(count($routesData).' routes generated for documentation');
 
         try {
             $json = Writer::writeToJson($openApiService->setPathsData($routesData)->get());
 
             Storage::disk('public')->put('api-documentation.json', $json);
         } catch (\Throwable $e) {
-            $this->error('Error writing documentation to file: ' . $e->getMessage());
+            $this->error('Error writing documentation to file: '.$e->getMessage());
 
             return self::FAILURE;
         }
@@ -37,12 +37,12 @@ class LaravelApiDocumentationCommand extends Command
         $this->info('Generation completed.');
         $this->newLine();
 
-        if (true === config('api-documentation.ui.swagger.enabled', false) ||
-            true === config('api-documentation.ui.redoc.enabled', false)) {
+        if (config('api-documentation.ui.swagger.enabled', false) === true ||
+            config('api-documentation.ui.redoc.enabled', false) === true) {
             $default = config('api-documentation.ui.default', false);
 
             $this->line('You can view the documentation at:');
-            $this->line('Default Documentation (' . $default . '): ' . config('app.url') . '/documentation');
+            $this->line('Default Documentation ('.$default.'): '.config('app.url').'/documentation');
         } else {
             $this->comment('You need to enable at least one UI inside "config/api-documentation.php" to view the documentation!');
             $this->comment('To publish the configuration file run: "php artisan vendor:publish --tag=api-documentation-config"');
@@ -50,11 +50,11 @@ class LaravelApiDocumentationCommand extends Command
             return self::SUCCESS;
         }
 
-        if (true === config('api-documentation.ui.swagger.enabled', false)) {
-            $this->line('Swagger: ' . config('app.url') . config('api-documentation.ui.swagger.route'));
+        if (config('api-documentation.ui.swagger.enabled', false) === true) {
+            $this->line('Swagger: '.config('app.url').config('api-documentation.ui.swagger.route'));
         }
-        if (true === config('api-documentation.ui.redoc.enabled', false)) {
-            $this->line('Redoc: ' . config('app.url') . config('api-documentation.ui.redoc.route'));
+        if (config('api-documentation.ui.redoc.enabled', false) === true) {
+            $this->line('Redoc: '.config('app.url').config('api-documentation.ui.redoc.route'));
         }
 
         return self::SUCCESS;

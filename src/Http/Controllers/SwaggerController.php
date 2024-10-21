@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Bennemann\LaravelApiDocumentation\Http\Controllers;
+namespace JkBennemann\LaravelApiDocumentation\Http\Controllers;
 
 class SwaggerController
 {

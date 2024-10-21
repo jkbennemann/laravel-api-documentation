@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Bennemann\LaravelApiDocumentation\Attributes;
+namespace JkBennemann\LaravelApiDocumentation\Attributes;
 
 use Attribute;
 
@@ -17,7 +17,5 @@ class Parameter
         public string $description = '',
         public bool $deprecated = false,
         public mixed $example = null,
-    )
-    {
-    }
+    ) {}
 }

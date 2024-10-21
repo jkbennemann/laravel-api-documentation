@@ -2,6 +2,6 @@
 
 declare(strict_types=1);
 
-namespace Bennemann\LaravelApiDocumentation;
+namespace JkBennemann\LaravelApiDocumentation;
 
 class LaravelApiDocumentation {}

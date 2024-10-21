@@ -119,7 +119,7 @@ This attribute can be used to add the route to a specific tag.
 
 ```php
 # SampleLoginController.php
-use Bennemann\LaravelApiDocumentation\Attributes\Tag;
+use JkBennemann\LaravelApiDocumentation\Attributes\Tag;
 
 //..
 #[Tag('Authentication')]
@@ -148,7 +148,7 @@ This attribute can be used to add a summary to the route.
 
 ```php
 # SampleLoginController.php
-use Bennemann\LaravelApiDocumentation\Attributes\Summary;
+use JkBennemann\LaravelApiDocumentation\Attributes\Summary;
 
 //..
 #[Summary('Login a user')]
@@ -177,7 +177,7 @@ This attribute also supports HTML.
 
 ```php
 # SampleLoginController.php
-use Bennemann\LaravelApiDocumentation\Attributes\Description;
+use JkBennemann\LaravelApiDocumentation\Attributes\Description;
 
 //..
 #[Description('Logs an user in. <br> This route requires a valid email and password.')]
@@ -204,7 +204,7 @@ This will add a new field to the route object in the OpenAPI file:
 This attribute can be used to add additional documentation to the route which are pointing to any external resources.
 ```php
 # SampleController.php
-use Bennemann\LaravelApiDocumentation\Attributes\AdditionalDocumentation;
+use JkBennemann\LaravelApiDocumentation\Attributes\AdditionalDocumentation;
 
 //..
 #[AdditionalDocumentation(url: 'https://example.com/docs', description: 'External documentation')]
@@ -243,7 +243,7 @@ Available parameters:
 
 ```php
 # SampleController.php
-use Bennemann\LaravelApiDocumentation\Attributes\DataResponse;
+use JkBennemann\LaravelApiDocumentation\Attributes\DataResponse;
 
 //..
 #[DataResponse(200, description: 'Logged in user information', resource: UserResource::class, headers: ['X-Token' => 'Token for the user to be used to issue API calls',])]
@@ -322,7 +322,7 @@ Available parameters:
 
 ```php
 # LoginUserRequest.php
-use Bennemann\LaravelApiDocumentation\Attributes\Parameter;
+use JkBennemann\LaravelApiDocumentation\Attributes\Parameter;
 
 //..
 #[Parameter(name: 'email', required: true, format: 'email', description: 'The email of the user', example: 'hello@example.com')]
@@ -343,7 +343,7 @@ public function rules(): array
 
 ```php
 # LoginUserRequest.php
-use Bennemann\LaravelApiDocumentation\Attributes\Parameter;
+use JkBennemann\LaravelApiDocumentation\Attributes\Parameter;
 
 //..
 #[Parameter(name: 'email', required: true, format: 'email', description: 'The email of the user', example: 'hello@example.com')]
@@ -363,7 +363,7 @@ public function rules(): array
 
 ```php
 # UserResource.php
-use Bennemann\LaravelApiDocumentation\Attributes\Parameter;
+use JkBennemann\LaravelApiDocumentation\Attributes\Parameter;
 
 #[Parameter(name: 'id', type: 'string', format: 'uuid', description: 'The user ID', example: '123e4567-e89b-12d3-a456-426614174000')]
 #[Parameter(name: 'email', type: 'string', format: 'email', description: 'The users email address')]
