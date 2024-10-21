@@ -36,12 +36,18 @@ class LaravelApiDocumentationCommand extends Command
 
         $this->info('Generation completed.');
         $this->newLine();
-        $this->line('You can view the documentation at:');
 
         if (true === config('api-documentation.ui.swagger.enabled', false) ||
             true === config('api-documentation.ui.redoc.enabled', false)) {
             $default = config('api-documentation.ui.default', false);
+
+            $this->line('You can view the documentation at:');
             $this->line('Default Documentation (' . $default . '): ' . config('app.url') . '/documentation');
+        } else {
+            $this->comment('You need to enable at least one UI inside "config/api-documentation.php" to view the documentation!');
+            $this->comment('To publish the configuration file run: "php artisan vendor:publish --tag=api-documentation-config"');
+
+            return self::SUCCESS;
         }
 
         if (true === config('api-documentation.ui.swagger.enabled', false)) {
