@@ -338,27 +338,6 @@ public function rules(): array
 }
 ```
 
-
-```php
-# LoginUserRequest.php
-use JkBennemann\LaravelApiDocumentation\Attributes\Parameter;
-
-//..
-#[Parameter(name: 'email', required: true, format: 'email', description: 'The email of the user', example: 'hello@example.com')]
-#[Parameter(name: 'password', required: true, description: 'The password of the user')]
-#[Parameter(name: 'confirm_token', required: true, description: 'The confirmation token. This is not used any longer!', deprecated: true)]
-public function rules(): array
-{
-    return [
-        'email' => [
-            'required',
-            'email',
-        ],
-        'password' => 'required',
-    ];
-}
-```
-
 ```php
 # UserResource.php
 use JkBennemann\LaravelApiDocumentation\Attributes\Parameter;
