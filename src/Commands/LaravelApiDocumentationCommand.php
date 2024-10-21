@@ -6,9 +6,9 @@ namespace Bennemann\LaravelApiDocumentation\Commands;
 
 use Bennemann\LaravelApiDocumentation\Services\OpenApi;
 use Bennemann\LaravelApiDocumentation\Services\RouteComposition;
-use cebe\openapi\Writer;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Storage;
+use openapiphp\openapi\Writer;
 
 class LaravelApiDocumentationCommand extends Command
 {

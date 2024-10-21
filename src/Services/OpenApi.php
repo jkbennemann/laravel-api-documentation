@@ -5,16 +5,16 @@ declare(strict_types=1);
 namespace Bennemann\LaravelApiDocumentation\Services;
 
 use Bennemann\LaravelApiDocumentation\Attributes\Description;
-use cebe\openapi\spec\Components;
-use cebe\openapi\spec\Header;
-use cebe\openapi\spec\Info;
-use cebe\openapi\spec\Operation;
-use cebe\openapi\spec\Parameter;
-use cebe\openapi\spec\PathItem;
-use cebe\openapi\spec\RequestBody;
-use cebe\openapi\spec\Response;
-use cebe\openapi\spec\Server;
 use Illuminate\Config\Repository;
+use openapiphp\openapi\spec\Components;
+use openapiphp\openapi\spec\Header;
+use openapiphp\openapi\spec\Info;
+use openapiphp\openapi\spec\Operation;
+use openapiphp\openapi\spec\Parameter;
+use openapiphp\openapi\spec\PathItem;
+use openapiphp\openapi\spec\RequestBody;
+use openapiphp\openapi\spec\Response;
+use openapiphp\openapi\spec\Server;
 use PhpParser\Node\Stmt\Class_;
 use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node\Stmt\Namespace_;
@@ -32,7 +32,7 @@ class OpenApi
 
     private string $title;
 
-    private \cebe\openapi\spec\OpenApi $openApi;
+    private \openapiphp\openapi\spec\OpenApi $openApi;
 
     private bool $includeVendorRoutes;
 
@@ -52,12 +52,12 @@ class OpenApi
         $this->excludedMethods = $this->configuration->get('api-documentation.excluded_methods', []);
         $this->servers = $this->configuration->get('api-documentation.servers', []);
 
-        $this->openApi = new \cebe\openapi\spec\OpenApi([]);
+        $this->openApi = new \openapiphp\openapi\spec\OpenApi([]);
 
         $this->setBaseInformation();
     }
 
-    public function get(): \cebe\openapi\spec\OpenApi
+    public function get(): \openapiphp\openapi\spec\OpenApi
     {
         return $this->openApi;
     }
