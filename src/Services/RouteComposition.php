@@ -241,22 +241,6 @@ class RouteComposition
                 return Str::snake($element);
             }, $urlParams));
 
-            //compose parameter keys into associative array
-            //            $output = [];
-            //
-            //            foreach ($parameterKeys as $item) {
-            //                $parts = explode('.', $item);
-            //
-            //                // If there's only one part, it's a standalone key-value
-            //                if (count($parts) === 1) {
-            //                    $output[$item] = $item;
-            //                } else {
-            //                    // Extract the last part (actual value) and the rest of the parts as keys
-            //                    $value = array_pop($parts);
-            //                    $this->insertIntoArray($output, $parts, $value);
-            //                }
-            //            }
-            //
             $parameters = [];
             foreach ($validationRules as $key => $values) {
                 //                $finding = $this->getNestedValue($output, $key);
