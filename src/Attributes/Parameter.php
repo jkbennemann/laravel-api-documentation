@@ -12,7 +12,7 @@ class Parameter
     public function __construct(
         public string $name,
         public bool $required = false,
-        public string $type = 'int',
+        public string $type = 'string',
         public ?string $format = null,
         public string $description = '',
         public bool $deprecated = false,
