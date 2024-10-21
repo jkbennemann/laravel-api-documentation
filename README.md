@@ -359,6 +359,8 @@ public function toArray($request): array|JsonSerializable|Arrayable
 - [ ] Add support providing examples for request
 - [ ] Add support for handling inline controller validation rules
 - [ ] Adjusting the logic to determine the response structure with its types and formats correctly
+- [ ] Option to customize the location of the generated documentation file
+  -  [ ] Support for external storages (eg. Github Link, S3 Bucket, ...)
 - [ ] ...
 
 ## Security Vulnerabilities

@@ -27,7 +27,14 @@ class LaravelApiDocumentationCommand extends Command
         try {
             $json = Writer::writeToJson($openApiService->setPathsData($routesData)->get());
 
-            Storage::disk('public')->put('api-documentation.json', $json);
+            $success = Storage::disk('public')->put('api-documentation.json', $json);
+
+            if ($success === false) {
+                $this->error('Error writing documentation to file: Could not write to file.');
+
+                return self::FAILURE;
+            }
+
         } catch (\Throwable $e) {
             $this->error('Error writing documentation to file: '.$e->getMessage());
 
