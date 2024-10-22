@@ -12,7 +12,7 @@ it('can execute the command', function () {
 })->throwsNoExceptions();
 
 it('can generate a simplistic documentation file', function () {
-    Route::get('/route-1', [SimpleController::class, 'index']);
+    Route::get('/route-1', [SimpleController::class, 'simple']);
 
     $this->artisan('documentation:generate')
         ->assertExitCode(0);
