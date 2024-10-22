@@ -148,7 +148,7 @@ class RouteComposition
                         $routeParams[$name]['example']['type'] = $routeParams[$name]['type'];
                         $routeParams[$name]['example']['value'] = $value;
 
-                        if (null !== $routeParams[$name]['format']) {
+                        if ($routeParams[$name]['format'] !== null) {
                             $routeParams[$name]['example']['format'] = $routeParams[$name]['format'];
                         }
                     }

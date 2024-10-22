@@ -11,7 +11,5 @@ class Tag
 {
     public null|array|string $value = null;
 
-    public function __construct(null|string|array $value = null)
-    {
-    }
+    public function __construct(null|string|array $value = null) {}
 }

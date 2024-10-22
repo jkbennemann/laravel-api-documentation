@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace JkBennemann\LaravelApiDocumentation\Tests\Stubs\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
-use JkBennemann\LaravelApiDocumentation\Attributes\Parameter;
 
 class NestedParametersRequest extends FormRequest
 {

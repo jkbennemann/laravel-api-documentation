@@ -55,7 +55,7 @@ class SimpleController extends Controller
     }
 
     #[PathParameter(name: 'id', description: 'The ID of the resource', type: 'int', required: false)]
-    public function optionalParameter(int $id = null): SampleResource
+    public function optionalParameter(?int $id = null): SampleResource
     {
         return new SampleResource([]);
     }

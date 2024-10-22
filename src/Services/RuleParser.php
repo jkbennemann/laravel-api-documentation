@@ -8,7 +8,7 @@ class RuleParser
 {
     public static function parse(array $rules): array
     {
-        return (new self())->groupRules($rules);
+        return (new self)->groupRules($rules);
     }
 
     private function groupRules(array $rules): array
@@ -25,7 +25,7 @@ class RuleParser
             $segments = explode('.', $key);
             $base = $segments[0];
 
-            if (!isset($tree[$base])) {
+            if (! isset($tree[$base])) {
                 $tree[$base] = [
                     'name' => $base,
                     'description' => null,

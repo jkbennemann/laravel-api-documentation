@@ -14,6 +14,7 @@ use openapiphp\openapi\spec\Parameter;
 use openapiphp\openapi\spec\PathItem;
 use openapiphp\openapi\spec\RequestBody;
 use openapiphp\openapi\spec\Response;
+use openapiphp\openapi\spec\Schema;
 use openapiphp\openapi\spec\Server;
 use PhpParser\Node\Stmt\Class_;
 use PhpParser\Node\Stmt\ClassMethod;
@@ -99,7 +100,7 @@ class OpenApi
         return $this;
     }
 
-    public function setPathsData(array $routes): self
+    public function processRoutes(array $routes): self
     {
         $this->openApi->paths = $this->getPaths($routes);
 
@@ -190,46 +191,16 @@ class OpenApi
             }
 
             if (! empty($data['parameters'])) {
-                $params = [];
-                $required = [];
-                foreach ($data['parameters'] as $name => $val) {
-                    $params[$name] = [
-                        'type' => $val['type'],
-                        'format' => $val['format'],
-                        'description' => $val['description'],
-                        'deprecated' => $val['is_deprecated'],
-                    ];
-
-                    if ($val['is_deprecated'] === false) {
-                        unset($params[$name]['deprecated']);
-                    }
-
-                    if ($val['is_required']) {
-                        $required[] = $name;
-                    }
-
-                    if ($val['format'] === null) {
-                        unset($params[$name]['format']);
-                    }
-
-                    if ($val['type'] === null) {
-                        unset($params[$name]['type']);
-                    }
-                }
-
                 if (! in_array($data['method'], ['GET', 'DELETE', 'HEAD'])) {
-                    $values['requestBody'] = new RequestBody([
-                        'content' => [
-                            'application/json' => [
-                                'schema' => [
-                                    'type' => 'object',
-                                    'properties' => $params,
-                                    'required' => $required,
-                                ],
-                            ],
-                        ],
-                        'required' => true,
-                    ]);
+                    // Generate RequestBody for POST/PUT
+                    $requestBody = $this->generateOpenAPIRequestBody($data['parameters']);
+                    //TODO: extend for description
+                    $values['requestBody'] = $requestBody;
+                } else {
+                    $parameters = $this->generateOpenAPIParameters($data['parameters']);
+                    foreach ($parameters as $parameter) {
+                        $baseInfo['parameters'][] = $parameter;
+                    }
                 }
             }
 
@@ -453,5 +424,159 @@ class OpenApi
         }
 
         return $values;
+    }
+
+    private function getItems(string $name, array $items, array &$required): array
+    {
+        //is last child element
+        if (empty($items['parameters'])) {
+            $params[$name] = [
+                'type' => $items['type'] ?? null,
+                'description' => $items['description'] ?? '',
+                'deprecated' => $items['deprecated'],
+                'items' => [],
+            ];
+
+            if ($items['format'] !== null) {
+                $params[$name]['format'] = $items['format'];
+            }
+
+            if ($items['required']) {
+                $required[] = $name;
+            }
+
+            if ($items['type'] === null) {
+                unset($params[$name]['type']);
+            }
+
+            return $params;
+        }
+
+        if ($items['required'] ?? false) {
+            $required[] = $name;
+        }
+
+        return [
+            'type' => $items['type'],
+            'description' => $items['description'],
+            'deprecated' => $items['deprecated'],
+            'required' => $items['required'] ?? false,
+            'items' => $this->getItems($name, $items['parameters'], $required),
+        ];
+    }
+
+    private function generateOpenAPISchema(array $validationRules): array
+    {
+        $properties = [];
+        $requiredFields = [];
+
+        foreach ($validationRules as $name => $parameter) {
+            $type = $parameter['type'];
+            $format = $parameter['format'] ?? null;
+            $description = $parameter['description'] ?? '';
+
+            // Track required fields for the object-level schema
+            if ($parameter['required']) {
+                $requiredFields[] = $name;
+            }
+
+            // Create the basic schema object for this property
+            $propertySchema = [
+                'type' => $type,
+                'description' => $description,
+            ];
+
+            if ($format) {
+                $propertySchema['format'] = $format;
+            }
+
+            // Check if there are nested parameters
+            if (! empty($parameter['parameters'])) {
+                // Recursively generate the schema for nested parameters
+                $propertySchema['type'] = 'object'; // Nested parameters imply an object type
+                $nestedSchema = $this->generateOpenAPISchema($parameter['parameters']);
+                $propertySchema['properties'] = $nestedSchema['properties'];
+
+                // If the nested object has required fields, include them
+                if (! empty($nestedSchema['required'])) {
+                    $propertySchema['required'] = $nestedSchema['required'];
+                }
+            }
+
+            // Assign the generated schema to the property
+            $properties[$name] = new Schema($propertySchema);
+        }
+
+        return [
+            'properties' => $properties,
+            'required' => $requiredFields, // Return the list of required fields at the object level
+        ];
+    }
+
+    private function generateOpenAPIRequestBody(array $validationRules): RequestBody
+    {
+        // Generate properties and required fields for the schema
+        $schemaData = $this->generateOpenAPISchema($validationRules);
+
+        // Create the OpenAPI RequestBody with a schema that includes properties and required fields
+        return new RequestBody([
+            'description' => '',
+            'required' => true,
+            'content' => [
+                'application/json' => [
+                    'schema' => new Schema([
+                        'type' => 'object', // The schema must be of type object
+                        'properties' => $schemaData['properties'], // Properties must be an object
+                        'required' => $schemaData['required'], // Required should be an array of required property names
+                    ]),
+                ],
+            ],
+        ]);
+
+        return $requestBody;
+    }
+
+    private function generateOpenAPIParameters(array $validationRules, string $parentName = ''): array
+    {
+        $parameters = [];
+
+        foreach ($validationRules as $name => $parameter) {
+            $type = $parameter['type'];
+            $format = $parameter['format'] ?? null;
+            $description = $parameter['description'] ?? '';
+            $required = $parameter['required'] ?? false;
+
+            // Construct the full parameter name (use dot notation for nested parameters)
+            $fullName = $parentName ? $parentName.'.'.$name : $name;
+
+            // If the parameter has nested parameters, we need to treat it as an object or array
+            if (! empty($parameter['parameters'])) {
+                // Recursively generate parameters for nested fields
+                $nestedParameters = $this->generateOpenAPIParameters($parameter['parameters'], $fullName);
+                $parameters = array_merge($parameters, $nestedParameters);
+            } else {
+                // Create the schema for the parameter
+                $schema = new Schema([
+                    'type' => $type,
+                ]);
+
+                if ($format) {
+                    $schema->format = $format;
+                }
+
+                // Create the query parameter object
+                $queryParam = new Parameter([
+                    'name' => $fullName, // Use the full name, including dot notation if nested
+                    'in' => 'query',
+                    'required' => $required,
+                    'description' => $description,
+                    'schema' => $schema,
+                ]);
+
+                $parameters[] = $queryParam; // Add this parameter to the list
+            }
+        }
+
+        return $parameters; // Return an array of query parameters
     }
 }

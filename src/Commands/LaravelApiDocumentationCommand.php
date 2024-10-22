@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Storage;
 use JkBennemann\LaravelApiDocumentation\Services\OpenApi;
 use JkBennemann\LaravelApiDocumentation\Services\RouteComposition;
 use openapiphp\openapi\Writer;
+use Throwable;
 
 class LaravelApiDocumentationCommand extends Command
 {
@@ -25,7 +26,7 @@ class LaravelApiDocumentationCommand extends Command
         $this->line(count($routesData).' routes generated for documentation');
 
         try {
-            $json = Writer::writeToJson($openApiService->setPathsData($routesData)->get());
+            $json = Writer::writeToJson($openApiService->processRoutes($routesData)->get());
 
             $success = Storage::disk('public')->put('api-documentation.json', $json);
 
@@ -35,7 +36,7 @@ class LaravelApiDocumentationCommand extends Command
                 return self::FAILURE;
             }
 
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             $this->error('Error writing documentation to file: '.$e->getMessage());
 
             return self::FAILURE;

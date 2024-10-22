@@ -77,7 +77,7 @@ function expectedNestedResult(): array
                     'deprecated' => false,
                     'parameters' => [],
                 ],
-            ]
+            ],
         ],
     ];
 }

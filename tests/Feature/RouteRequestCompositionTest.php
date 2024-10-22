@@ -5,7 +5,6 @@ declare(strict_types=1);
 use Illuminate\Support\Facades\Route;
 use JkBennemann\LaravelApiDocumentation\Services\RouteComposition;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\RequestParameterController;
-use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\SimpleController;
 
 it('can compose basic request parameters from a request class', function () {
     Route::get('route-1', [RequestParameterController::class, 'simple']);
