@@ -33,8 +33,8 @@ it('can generate a simplistic documentation file', function () {
         ->toBe('1.0.0')
         ->and($parsedFile->paths)
         ->toHaveCount(1)
-        ->and($parsedFile->components->securitySchemes)
-        ->toHaveCount(2);
+        ->and($parsedFile->components)
+        ->toBeNull();
 });
 
 it('can generate a simplistic documentation file with a different title', function () {

@@ -23,12 +23,8 @@ use PhpParser\Node\Expr\New_;
 use PhpParser\Node\Expr\Variable;
 use PhpParser\Node\Scalar\LNumber;
 use PhpParser\Node\Scalar\String_;
-use PhpParser\Node\Stmt\Class_;
-use PhpParser\Node\Stmt\ClassMethod;
-use PhpParser\Node\Stmt\Namespace_;
 use PhpParser\Node\Stmt\Return_;
 use PhpParser\NodeFinder;
-use PhpParser\NodeTraverser;
 use PhpParser\ParserFactory;
 use ReflectionClass;
 use ReflectionMethod;
@@ -51,6 +47,8 @@ class OpenApi
     private array $excludedMethods;
 
     private array $servers;
+
+    private array $includedSecuritySchemes = [];
 
     public function __construct(private readonly Repository $configuration)
     {
@@ -92,19 +90,34 @@ class OpenApi
             $this->openApi->servers = $servers;
         }
 
-        $this->openApi->components = new Components([
-            'securitySchemes' => [
-                'jwt' => [
-                    'type' => 'http',
-                    'scheme' => 'bearer',
-                    'bearerFormat' => 'JWT',
-                ],
-                'token' => [
-                    'type' => 'http',
-                    'scheme' => 'bearer',
-                ],
-            ],
-        ]);
+        return $this;
+    }
+
+    private function setSecuritySchemes(): static
+    {
+        if (! empty($this->includedSecuritySchemes)) {
+            $schemas = [];
+            foreach ($this->includedSecuritySchemes as $scheme) {
+                if ($scheme === 'jwt') {
+                    $schemas[$scheme] = [
+                        'type' => 'http',
+                        'scheme' => 'bearer',
+                        'bearerFormat' => 'JWT',
+                    ];
+                } else {
+                    $schemas[$scheme] = [
+                        'type' => 'http',
+                        'scheme' => 'bearer',
+                    ];
+                }
+            }
+
+            if (! empty($schemas)) {
+                $this->openApi->components = new Components([
+                    'securitySchemes' => $schemas,
+                ]);
+            }
+        }
 
         return $this;
     }
@@ -113,14 +126,15 @@ class OpenApi
     {
         $this->openApi->paths = $this->getPaths($routes);
 
+        $this->setSecuritySchemes();
+
         return $this;
     }
 
     private function getPaths(array $input): array
     {
         $paths = [];
-        $parser = (new ParserFactory)->createForHostVersion();
-        $traverser = new NodeTraverser;
+        $includedSecuritySchemes = [];
 
         foreach ($input as $data) {
             if (! $this->includeVendorRoutes && $data['is_vendor']) {
@@ -189,12 +203,14 @@ class OpenApi
                     $values['security'][] = [
                         'jwt' => [],
                     ];
+                    $includedSecuritySchemes[] = 'jwt';
                 }
 
                 if (in_array('auth:sanctum', $middlewares)) {
                     $values['security'][] = [
                         'token' => [],
                     ];
+                    $includedSecuritySchemes[] = 'token';
                 }
             }
 
@@ -323,6 +339,9 @@ class OpenApi
             $paths[$this->replacePlaceholdersForOpenApi('/'.$data['uri'])] = $item;
         }
 
+        $includedSecuritySchemes = array_unique($includedSecuritySchemes);
+        $this->includedSecuritySchemes = $includedSecuritySchemes;
+
         return $paths;
     }
 
@@ -369,79 +388,6 @@ class OpenApi
         }
 
         return $matches;
-    }
-
-    private function getValues(array $stmts): array
-    {
-        $values = [];
-
-        foreach ($stmts as $stmt) {
-            if ($stmt instanceof Namespace_) {
-                foreach ($stmt->stmts as $st) {
-                    if ($st instanceof Class_) {
-                        foreach ($st->stmts as $s) {
-                            if ($s instanceof ClassMethod) {
-                                if ($s->name->name === 'toArray') {
-                                    foreach ($s->stmts as $stmt) {
-                                        if ($stmt instanceof Return_) {
-                                            $value = $stmt->expr->items;
-
-                                            foreach ($value as $val) {
-                                                $values[$val->key->value] = [
-                                                    'type' => 'string',
-                                                ];
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                }
-            }
-        }
-
-        return $values;
-    }
-
-    private function getItems(string $name, array $items, array &$required): array
-    {
-        //is last child element
-        if (empty($items['parameters'])) {
-            $params[$name] = [
-                'type' => $items['type'] ?? null,
-                'description' => $items['description'] ?? '',
-                'deprecated' => $items['deprecated'],
-                'items' => [],
-            ];
-
-            if ($items['format'] !== null) {
-                $params[$name]['format'] = $items['format'];
-            }
-
-            if ($items['required']) {
-                $required[] = $name;
-            }
-
-            if ($items['type'] === null) {
-                unset($params[$name]['type']);
-            }
-
-            return $params;
-        }
-
-        if ($items['required'] ?? false) {
-            $required[] = $name;
-        }
-
-        return [
-            'type' => $items['type'],
-            'description' => $items['description'],
-            'deprecated' => $items['deprecated'],
-            'required' => $items['required'] ?? false,
-            'items' => $this->getItems($name, $items['parameters'], $required),
-        ];
     }
 
     private function generateOpenAPISchema(array $validationRules): array
@@ -511,8 +457,6 @@ class OpenApi
                 ],
             ],
         ]);
-
-        return $requestBody;
     }
 
     private function generateOpenAPIParameters(array $validationRules, string $parentName = ''): array
@@ -659,7 +603,7 @@ class OpenApi
         return $fields;
     }
 
-    private function generateOpenAPIResponseSchema(string $resourceClass)
+    private function generateOpenAPIResponseSchema(string $resourceClass): Response
     {
         // Extract fields from the Laravel Resource class
         $fields = $this->extractFieldsFromToArray($resourceClass);
@@ -807,29 +751,7 @@ class OpenApi
         }
     }
 
-    private function getFullClassName(string $className, string $currentClass): string
-    {
-        // Assuming that the current class is namespaced
-        $namespace = $this->getNamespace($currentClass);
-
-        // Check if the class name is already fully qualified
-        if (strpos($className, '\\') !== false) {
-            return $className; // Already fully qualified
-        }
-
-        // Otherwise, append the namespace
-        return $namespace.'\\'.$className;
-    }
-
-    private function getNamespace(string $class): string
-    {
-        // Assuming you have a way to get the namespace, e.g., using reflection
-        $reflection = new \ReflectionClass($class);
-
-        return $reflection->getNamespaceName();
-    }
-
-    private function updateResponseArray(&$responseArray, $propertyName, $values)
+    private function updateResponseArray(&$responseArray, $propertyName, $values): bool
     {
         // Check if the response array has the expected structure
         if (isset($responseArray['content']['application/json']['schema'])) {
@@ -845,7 +767,7 @@ class OpenApi
         return false; // Property not found
     }
 
-    private function updateSchemaProperty(&$schema, $propertyName, $values)
+    private function updateSchemaProperty(&$schema, $propertyName, $values): bool
     {
         // Check if the properties exist in the current schema
         if (isset($schema['properties'][$propertyName])) {
