@@ -14,6 +14,7 @@ use JkBennemann\LaravelApiDocumentation\Attributes\AdditionalDocumentation;
 use JkBennemann\LaravelApiDocumentation\Attributes\DataResponse;
 use JkBennemann\LaravelApiDocumentation\Attributes\Description;
 use JkBennemann\LaravelApiDocumentation\Attributes\Parameter;
+use JkBennemann\LaravelApiDocumentation\Attributes\PathParameter;
 use JkBennemann\LaravelApiDocumentation\Attributes\Summary;
 use JkBennemann\LaravelApiDocumentation\Attributes\Tag;
 use ReflectionAttribute;
@@ -60,11 +61,11 @@ class RouteComposition
             $urlParams = $this->extractPlaceholders($uri);
             $description = null;
             $summary = null;
-            $tags = null;
+            $tags = [];
             $url = null;
             $additionalDescription = null;
-            $validationRules = [];
             $responses = [];
+            $availableRules = [];
 
             if (! $this->includeVendorRoutes && $isVendorClass) {
                 continue;
@@ -87,6 +88,8 @@ class RouteComposition
                 continue;
             }
 
+            $routeParams = [];
+
             foreach ($attributes as $attr) {
                 if ($attr->getName() === Description::class) {
                     $description = $attr->getArguments()[0] ?? null;
@@ -108,6 +111,8 @@ class RouteComposition
                         $value = explode(',', $tagsValue);
                         $tags = array_map('trim', $value);
                         $tags = array_filter($tags);
+                    } elseif (is_array($tagsValue)) {
+                        $tags = $tagsValue;
                     }
                 }
 
@@ -118,6 +123,35 @@ class RouteComposition
                         'resource' => $attr->getArguments()['resource'] ?? $attr->getArguments()[2] ?? '',
                         'headers' => $attr->getArguments()['headers'] ?? $attr->getArguments()[3] ?? [],
                     ];
+                }
+
+                if ($attr->getName() === PathParameter::class) {
+                    $name = $attr->getArguments()['name'] ?? $attr->getArguments()[0];
+                    $routeParams[$name] = [
+                        'description' => $attr->getArguments()['description'] ?? $attr->getArguments()[1] ?? '',
+                        'type' => $attr->getArguments()['type'] ?? $attr->getArguments()[2] ?? 'string',
+                        'format' => $attr->getArguments()['format'] ?? $attr->getArguments()[3] ?? null,
+                        'required' => $attr->getArguments()['required'] ?? $attr->getArguments()[4] ?? true,
+                        'example' => null,
+                    ];
+
+                    if ($routeParams[$name]['type'] === 'int') {
+                        $routeParams[$name]['type'] = 'integer';
+                    }
+
+                    if ($value = $attr->getArguments()['example'] ?? $attr->getArguments()[5] ?? null) {
+                        $routeParams[$name]['example'] = [
+                            'type' => $routeParams[$name]['type'],
+                            'value' => null,
+                            'format' => $routeParams[$name]['format'],
+                        ];
+                        $routeParams[$name]['example']['type'] = $routeParams[$name]['type'];
+                        $routeParams[$name]['example']['value'] = $value;
+
+                        if ($routeParams[$name]['format'] !== null) {
+                            $routeParams[$name]['example']['format'] = $routeParams[$name]['format'];
+                        }
+                    }
                 }
             }
 
@@ -150,84 +184,21 @@ class RouteComposition
                             $availableRules = $parser->explode($rules)->rules ?? [];
                             ksort($availableRules);
 
-                            foreach ($availableRules as $ruleName => $rules) {
-                                $ruleAttribute = $this->getRuleAttribute($ruleName, $attributes);
+                            $availableRules = RuleParser::parse($rules);
 
-                                if ($ruleAttribute === null) {
-                                    //take data from rule array
-                                    $isRequired = false;
-                                    $type = ''; //default to string
-                                    $format = null;
-                                    foreach ($rules as $r) {
-                                        if (is_scalar($r) && stripos($r, 'required') !== false) {
-                                            $isRequired = true;
-                                        }
-
-                                        if ($type === 'string' || (is_scalar($r) && $this->isStringParameter($r))) {
-                                            $type = 'string';
-                                        }
-
-                                        if ((is_scalar($r) && $this->isBooleanParameter($r))) {
-                                            $type = 'string';
-                                            $format = 'boolean';
-                                        }
-                                    }
-
-                                    if (empty($type)) {
-                                        $type = null;
-                                    }
-
-                                    $validationRules[$ruleName] = [
-                                        'name' => $ruleName,
-                                        'is_required' => $isRequired,
-                                        'type' => $type,
-                                        'format' => $format,
-                                        'description' => '',
-                                        'is_deprecated' => false,
-                                    ];
-
-                                    continue;
+                            //enhance rules with additional parameter data
+                            foreach ($availableRules as $key => $value) {
+                                $attribute = $this->getRuleAttribute($key, $attributes);
+                                if ($attribute) {
+                                    $availableRules[$key]['description'] = $attribute->getArguments()['description'] ?? $value['description'];
+                                    $availableRules[$key]['required'] = $attribute->getArguments()['required'] ?? $availableRules[$key]['required'];
+                                    $availableRules[$key]['deprecated'] = $attribute->getArguments()['deprecated'] ?? $availableRules[$key]['deprecated'];
+                                    $availableRules[$key]['type'] = $attribute->getArguments()['type'] ?? $availableRules[$key]['type'];
+                                    $availableRules[$key]['format'] = $attribute->getArguments()['type'] ?? $availableRules[$key]['format'];
                                 }
-
-                                $validationRules[$ruleName] = [
-                                    'name' => $ruleAttribute->getName(),
-                                    'is_required' => $ruleAttribute->getArguments()['required'] ?? false,
-                                    'type' => $ruleAttribute->getArguments()['type'] ?? 'string',
-                                    'format' => $ruleAttribute->getArguments()['format'] ?? null,
-                                    'description' => $ruleAttribute->getArguments()['description'] ?? '',
-                                    'is_deprecated' => $ruleAttribute->getArguments()['deprecated'] ?? false,
-                                ];
                             }
                         }
                     }
-                }
-            }
-
-            $parameterKeys = array_diff(array_keys($validationRules), array_map(function ($element) {
-                return Str::snake($element);
-            }, $urlParams));
-
-            //compose parameter keys into associative array
-            //            $output = [];
-            //
-            //            foreach ($parameterKeys as $item) {
-            //                $parts = explode('.', $item);
-            //
-            //                // If there's only one part, it's a standalone key-value
-            //                if (count($parts) === 1) {
-            //                    $output[$item] = $item;
-            //                } else {
-            //                    // Extract the last part (actual value) and the rest of the parts as keys
-            //                    $value = array_pop($parts);
-            //                    $this->insertIntoArray($output, $parts, $value);
-            //                }
-            //            }
-            //
-            $parameters = [];
-            foreach ($validationRules as $key => $values) {
-                //                $finding = $this->getNestedValue($output, $key);
-                if (in_array(Str::snake($key), $parameterKeys)) {
-                    $parameters[$key] = $values;
                 }
             }
 
@@ -236,10 +207,10 @@ class RouteComposition
                 'uri' => $uri,
                 'summary' => $summary,
                 'description' => $description,
-                'middlewares' => implode(',', $middleswares),
+                'middlewares' => $middleswares,
                 'is_vendor' => $isVendorClass,
-                'request_parameters' => implode(',', $urlParams), //TODO: make possible to use PathParameter attribute
-                'parameters' => $parameters,
+                'request_parameters' => $routeParams,
+                'parameters' => $availableRules,
                 'tags' => $tags,
                 'documentation' => $url ? [
                     'url' => $url,
@@ -252,55 +223,14 @@ class RouteComposition
         return $all;
     }
 
-    private function insertIntoArray(&$array, $keys, $value)
-    {
-        $current = &$array;
-
-        foreach ($keys as $key) {
-            if (! isset($current[$key])) {
-                $current[$key] = [];
-            } elseif (! is_array($current[$key])) {
-                // If it's not already an array, make it an array
-                $current[$key] = [$current[$key]];
-            }
-            $current = &$current[$key];
-        }
-
-        // Ensure that $current is an array before checking or adding the value
-        if (! is_array($current)) {
-            $current = [$current];
-        }
-
-        // Append the value to the array at the final position if it doesn't already exist
-        if (! in_array($value, $current)) {
-            $current[] = $value;
-        }
-    }
-
-    private function getNestedValue($array, $path)
-    {
-        $keys = explode('.', $path);  // Split the path by the dot
-        $current = $array;
-
-        foreach ($keys as $key) {
-            if (isset($current[$key])) {
-                $current = $current[$key];  // Navigate deeper into the array
-            } else {
-                return null;  // Key doesn't exist
-            }
-        }
-
-        return $current;  // Return the final value
-    }
-
     private function getMiddlewares(Route $route): array
     {
-        $middleswares = $route->getAction('middleware') ?? [];
-        if (is_string($middleswares)) {
-            $middleswares = [$middleswares];
+        $middlewares = $route->getAction('middleware') ?? [];
+        if (is_string($middlewares)) {
+            $middlewares = [$middlewares];
         }
 
-        return $middleswares;
+        return $middlewares;
     }
 
     private function getControllerData(Route $route): array
@@ -350,36 +280,6 @@ class RouteComposition
         }
 
         return null;
-    }
-
-    private function isStringParameter(mixed $r): bool
-    {
-        if (! is_string($r)) {
-            return false;
-        }
-
-        foreach (['date', 'date_equals', 'date_format', 'string', 'between', 'password', 'email', 'phone', 'uuid', 'regex', 'in'] as $item) {
-            if (stripos($r, $item) !== false) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private function isBooleanParameter(mixed $r): bool
-    {
-        if (! is_string($r)) {
-            return false;
-        }
-
-        foreach (['boolean', 'confirmed', 'accepted'] as $item) {
-            if (stripos($r, $item) !== false) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private function getSimplifiedRoute(string $uri): string

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace JkBennemann\LaravelApiDocumentation\Services;
 
+use Exception;
 use Illuminate\Config\Repository;
 use JkBennemann\LaravelApiDocumentation\Attributes\Description;
 use openapiphp\openapi\spec\Components;
@@ -14,13 +15,18 @@ use openapiphp\openapi\spec\Parameter;
 use openapiphp\openapi\spec\PathItem;
 use openapiphp\openapi\spec\RequestBody;
 use openapiphp\openapi\spec\Response;
+use openapiphp\openapi\spec\Schema;
 use openapiphp\openapi\spec\Server;
-use PhpParser\Node\Stmt\Class_;
-use PhpParser\Node\Stmt\ClassMethod;
-use PhpParser\Node\Stmt\Namespace_;
+use PhpParser\Node\Expr\Array_;
+use PhpParser\Node\Expr\ArrayItem;
+use PhpParser\Node\Expr\New_;
+use PhpParser\Node\Expr\Variable;
+use PhpParser\Node\Scalar\LNumber;
+use PhpParser\Node\Scalar\String_;
 use PhpParser\Node\Stmt\Return_;
-use PhpParser\NodeTraverser;
+use PhpParser\NodeFinder;
 use PhpParser\ParserFactory;
+use ReflectionClass;
 use ReflectionMethod;
 use Throwable;
 
@@ -41,6 +47,8 @@ class OpenApi
     private array $excludedMethods;
 
     private array $servers;
+
+    private array $includedSecuritySchemes = [];
 
     public function __construct(private readonly Repository $configuration)
     {
@@ -82,26 +90,43 @@ class OpenApi
             $this->openApi->servers = $servers;
         }
 
-        $this->openApi->components = new Components([
-            'securitySchemes' => [
-                'jwt' => [
-                    'type' => 'http',
-                    'scheme' => 'bearer',
-                    'bearerFormat' => 'JWT',
-                ],
-                'token' => [
-                    'type' => 'http',
-                    'scheme' => 'bearer',
-                ],
-            ],
-        ]);
+        return $this;
+    }
+
+    private function setSecuritySchemes(): static
+    {
+        if (! empty($this->includedSecuritySchemes)) {
+            $schemas = [];
+            foreach ($this->includedSecuritySchemes as $scheme) {
+                if ($scheme === 'jwt') {
+                    $schemas[$scheme] = [
+                        'type' => 'http',
+                        'scheme' => 'bearer',
+                        'bearerFormat' => 'JWT',
+                    ];
+                } else {
+                    $schemas[$scheme] = [
+                        'type' => 'http',
+                        'scheme' => 'bearer',
+                    ];
+                }
+            }
+
+            if (! empty($schemas)) {
+                $this->openApi->components = new Components([
+                    'securitySchemes' => $schemas,
+                ]);
+            }
+        }
 
         return $this;
     }
 
-    public function setPathsData(array $routes): self
+    public function processRoutes(array $routes): self
     {
         $this->openApi->paths = $this->getPaths($routes);
+
+        $this->setSecuritySchemes();
 
         return $this;
     }
@@ -109,8 +134,7 @@ class OpenApi
     private function getPaths(array $input): array
     {
         $paths = [];
-        $parser = (new ParserFactory)->createForHostVersion();
-        $traverser = new NodeTraverser;
+        $includedSecuritySchemes = [];
 
         foreach ($input as $data) {
             if (! $this->includeVendorRoutes && $data['is_vendor']) {
@@ -170,18 +194,23 @@ class OpenApi
             }
 
             if ($data['middlewares'] ?? null) {
-                $middlewares = explode(',', $data['middlewares']);
+                $middlewares = $data['middlewares'];
+                if (is_string($middlewares)) {
+                    $middlewares = explode(',', $data['middlewares']);
+                }
 
                 if (in_array('auth:jwt', $middlewares)) {
                     $values['security'][] = [
                         'jwt' => [],
                     ];
+                    $includedSecuritySchemes[] = 'jwt';
                 }
 
                 if (in_array('auth:sanctum', $middlewares)) {
                     $values['security'][] = [
                         'token' => [],
                     ];
+                    $includedSecuritySchemes[] = 'token';
                 }
             }
 
@@ -190,46 +219,16 @@ class OpenApi
             }
 
             if (! empty($data['parameters'])) {
-                $params = [];
-                $required = [];
-                foreach ($data['parameters'] as $name => $val) {
-                    $params[$name] = [
-                        'type' => $val['type'],
-                        'format' => $val['format'],
-                        'description' => $val['description'],
-                        'deprecated' => $val['is_deprecated'],
-                    ];
-
-                    if ($val['is_deprecated'] === false) {
-                        unset($params[$name]['deprecated']);
-                    }
-
-                    if ($val['is_required']) {
-                        $required[] = $name;
-                    }
-
-                    if ($val['format'] === null) {
-                        unset($params[$name]['format']);
-                    }
-
-                    if ($val['type'] === null) {
-                        unset($params[$name]['type']);
-                    }
-                }
-
                 if (! in_array($data['method'], ['GET', 'DELETE', 'HEAD'])) {
-                    $values['requestBody'] = new RequestBody([
-                        'content' => [
-                            'application/json' => [
-                                'schema' => [
-                                    'type' => 'object',
-                                    'properties' => $params,
-                                    'required' => $required,
-                                ],
-                            ],
-                        ],
-                        'required' => true,
-                    ]);
+                    // Generate RequestBody for POST/PUT
+                    $requestBody = $this->generateOpenAPIRequestBody($data['parameters']);
+                    //TODO: extend for description
+                    $values['requestBody'] = $requestBody;
+                } else {
+                    $parameters = $this->generateOpenAPIParameters($data['parameters']);
+                    foreach ($parameters as $parameter) {
+                        $baseInfo['parameters'][] = $parameter;
+                    }
                 }
             }
 
@@ -251,31 +250,18 @@ class OpenApi
                         ]);
                     }
 
-                    $tmp = [
-                        'description' => $response['description'],
-                        'headers' => $headers,
-                    ];
-
+                    $responseSchema = null;
                     if ($response['resource']) {
                         try {
+                            $responseSchema = $this->generateOpenAPIResponseSchema($response['resource']);
+
                             $instance = app()->make($response['resource'], ['resource' => []]);
-                            $responseDescription = '';
 
                             $rulesExist = method_exists($instance, 'toArray');
-                            $responseValues = [];
                             if ($rulesExist) {
                                 $actionMethod = new ReflectionMethod($instance, 'toArray');
                                 $attributes = $actionMethod->getAttributes();
 
-                                //need PHP Parser to get values of array from toArray method here
-                                //1. parse method and get values
-                                $content = file_get_contents($actionMethod->getFileName());
-                                $ast = $parser->parse($content);
-                                $stmts = $traverser->traverse($ast);
-                                $responseValues = $this->getValues($stmts);
-                                $keys = array_keys($responseValues); //keys from toArray method
-
-                                //2. TODO: override fetched values in case $attributes is not empty for those keys
                                 foreach ($attributes as $attribute) {
                                     if ($attribute->getName() === \JkBennemann\LaravelApiDocumentation\Attributes\Parameter::class) {
                                         $name = $attribute->getArguments()['name'] ?? $attribute->getArguments()[0] ?? null;
@@ -283,6 +269,10 @@ class OpenApi
                                         if (! $name) {
                                             continue;
                                         }
+
+                                        $currentResponseSchema = $responseSchema->getSerializableData();
+                                        $currentResponseSchema = json_decode(json_encode($currentResponseSchema), true);
+                                        $attributesToOverride = [];
 
                                         $type = $attribute->getArguments()['type'] ?? $attribute->getArguments()[1] ?? 'string';
                                         if ($type === 'array') {
@@ -292,70 +282,46 @@ class OpenApi
                                             $type = 'integer';
                                         }
 
-                                        $m = [
-                                            'type' => $type,
-                                            'description' => $attribute->getArguments()['description'] ?? $attribute->getArguments()[4] ?? '',
-                                        ];
+                                        //                                        TODO implement logic
+                                        //                                        if ($type !== $this->getPropertyType($currentResponseSchema, $name)) {
+                                        //                                            $attributesToOverride['type'] = $type;
+                                        //                                        }
 
                                         if ($attribute->getArguments()['format'] ?? $attribute->getArguments()[3] ?? null) {
-                                            $m['format'] = $attribute->getArguments()['format'] ?? $attribute->getArguments()[3] ?? null;
+                                            $attributesToOverride['format'] = $attribute->getArguments()['format'] ?? $attribute->getArguments()[3] ?? null;
                                         }
 
                                         if ($attribute->getArguments()['example'] ?? $attribute->getArguments()[6] ?? null) {
-                                            $m['example'] = $attribute->getArguments()['example'] ?? $attribute->getArguments()[6] ?? null;
+                                            $attributesToOverride['example'] = $attribute->getArguments()['example'] ?? $attribute->getArguments()[6] ?? null;
                                         }
 
-                                        $responseValues[$name] = $m;
+                                        $updated = $this->updateResponseArray($currentResponseSchema, $name, $attributesToOverride);
+                                        $responseSchema = new Response($currentResponseSchema);
                                     }
 
                                     if ($attribute->getName() === Description::class) {
                                         $responseDescription = $attribute->getArguments()['value'] ?? $attribute->getArguments()[0] ?? '';
+
+                                        $currentResponseSchema = $responseSchema->getSerializableData();
+                                        $currentResponseSchema = json_decode(json_encode($currentResponseSchema), true);
+                                        $updated = $this->updateResponseBaseProperty($currentResponseSchema, 'description', $responseDescription);
+                                        $responseSchema = new Response($currentResponseSchema);
                                     }
                                 }
-
-                                if ($instance::$wrap) {
-                                    $responseValues = [
-                                        $instance::$wrap => [
-                                            'type' => 'object',
-                                            'properties' => $responseValues,
-                                        ],
-                                    ];
-                                }
                             }
+                        } catch (Throwable $e) {
+                            $exception = '';
 
-                            $tmp['content'] = [
-                                'application/json' => [
-                                    'schema' => [
-                                        'type' => 'object',
-                                        'properties' => $responseValues,
-                                        'description' => $responseDescription,
-                                    ],
-                                ],
-                            ];
-                        } catch (Throwable) {
-                            $t = [];
-
-                            if (is_array($response['resource'])) {
-                                foreach ($response['resource'] as $key => $value) {
-                                    $t[$key] = [
-                                        'type' => 'string',
-                                    ];
-                                }
-                                if (! empty($t)) {
-                                    $tmp['content'] = [
-                                        'application/json' => [
-                                            'schema' => [
-                                                'type' => 'object',
-                                                'properties' => $t,
-                                            ],
-                                        ],
-                                    ];
-                                }
-                            }
+                            continue;
                         }
                     }
 
-                    $responses[$code] = new Response($tmp);
+                    if (! empty($headers) && $responseSchema) {
+                        $updated = $this->updateResponseBaseProperty($currentResponseSchema, 'headers', $headers);
+                        $responseSchema = new Response($currentResponseSchema);
+                    }
+
+                    $responses[$code] = $responseSchema;
                 }
                 $values['responses'] = $responses;
             }
@@ -372,6 +338,9 @@ class OpenApi
 
             $paths[$this->replacePlaceholdersForOpenApi('/'.$data['uri'])] = $item;
         }
+
+        $includedSecuritySchemes = array_unique($includedSecuritySchemes);
+        $this->includedSecuritySchemes = $includedSecuritySchemes;
 
         return $paths;
     }
@@ -421,37 +390,452 @@ class OpenApi
         return $matches;
     }
 
-    private function getValues(array $stmts): array
+    private function generateOpenAPISchema(array $validationRules): array
     {
-        $values = [];
+        $properties = [];
+        $requiredFields = [];
 
-        foreach ($stmts as $stmt) {
-            if ($stmt instanceof Namespace_) {
-                foreach ($stmt->stmts as $st) {
-                    if ($st instanceof Class_) {
-                        foreach ($st->stmts as $s) {
-                            if ($s instanceof ClassMethod) {
-                                if ($s->name->name === 'toArray') {
-                                    foreach ($s->stmts as $stmt) {
-                                        if ($stmt instanceof Return_) {
-                                            $value = $stmt->expr->items;
+        foreach ($validationRules as $name => $parameter) {
+            $type = $parameter['type'];
+            $format = $parameter['format'] ?? null;
+            $description = $parameter['description'] ?? '';
 
-                                            foreach ($value as $val) {
-                                                $values[$val->key->value] = [
-                                                    'type' => 'string',
-                                                ];
+            // Track required fields for the object-level schema
+            if ($parameter['required']) {
+                $requiredFields[] = $name;
+            }
+
+            // Create the basic schema object for this property
+            $propertySchema = [
+                'type' => $type,
+                'description' => $description,
+            ];
+
+            if ($format) {
+                $propertySchema['format'] = $format;
+            }
+
+            // Check if there are nested parameters
+            if (! empty($parameter['parameters'])) {
+                // Recursively generate the schema for nested parameters
+                $propertySchema['type'] = 'object'; // Nested parameters imply an object type
+                $nestedSchema = $this->generateOpenAPISchema($parameter['parameters']);
+                $propertySchema['properties'] = $nestedSchema['properties'];
+
+                // If the nested object has required fields, include them
+                if (! empty($nestedSchema['required'])) {
+                    $propertySchema['required'] = $nestedSchema['required'];
+                }
+            }
+
+            // Assign the generated schema to the property
+            $properties[$name] = new Schema($propertySchema);
+        }
+
+        return [
+            'properties' => $properties,
+            'required' => $requiredFields, // Return the list of required fields at the object level
+        ];
+    }
+
+    private function generateOpenAPIRequestBody(array $validationRules): RequestBody
+    {
+        // Generate properties and required fields for the schema
+        $schemaData = $this->generateOpenAPISchema($validationRules);
+
+        // Create the OpenAPI RequestBody with a schema that includes properties and required fields
+        return new RequestBody([
+            'description' => '',
+            'required' => true,
+            'content' => [
+                'application/json' => [
+                    'schema' => new Schema([
+                        'type' => 'object', // The schema must be of type object
+                        'properties' => $schemaData['properties'], // Properties must be an object
+                        'required' => $schemaData['required'], // Required should be an array of required property names
+                    ]),
+                ],
+            ],
+        ]);
+    }
+
+    private function generateOpenAPIParameters(array $validationRules, string $parentName = ''): array
+    {
+        $parameters = [];
+
+        foreach ($validationRules as $name => $parameter) {
+            $type = $parameter['type'];
+            $format = $parameter['format'] ?? null;
+            $description = $parameter['description'] ?? '';
+            $required = $parameter['required'] ?? false;
+
+            // Construct the full parameter name (use dot notation for nested parameters)
+            $fullName = $parentName ? $parentName.'.'.$name : $name;
+
+            // If the parameter has nested parameters, we need to treat it as an object or array
+            if (! empty($parameter['parameters'])) {
+                // Recursively generate parameters for nested fields
+                $nestedParameters = $this->generateOpenAPIParameters($parameter['parameters'], $fullName);
+                $parameters = array_merge($parameters, $nestedParameters);
+            } else {
+                // Create the schema for the parameter
+                $schema = new Schema([
+                    'type' => $type,
+                ]);
+
+                if ($format) {
+                    $schema->format = $format;
+                }
+
+                // Create the query parameter object
+                $queryParam = new Parameter([
+                    'name' => $fullName, // Use the full name, including dot notation if nested
+                    'in' => 'query',
+                    'required' => $required,
+                    'description' => $description,
+                    'schema' => $schema,
+                ]);
+
+                $parameters[] = $queryParam; // Add this parameter to the list
+            }
+        }
+
+        return $parameters; // Return an array of query parameters
+    }
+
+    private function extractFieldsFromToArray(string $resourceClass): array
+    {
+        $reflection = new ReflectionClass($resourceClass);
+
+        // Ensure the resource has a toArray method
+        if (! $reflection->hasMethod('toArray')) {
+            throw new Exception('The resource class must have a toArray method.');
+        }
+
+        $method = $reflection->getMethod('toArray');
+
+        // Use PhpParser to parse the `toArray` method
+        $parser = (new ParserFactory)->createForHostVersion();
+        $code = file_get_contents($method->getFileName());
+        $ast = $parser->parse($code);
+
+        // Find the return statement in the toArray method
+        $nodeFinder = new NodeFinder;
+        $returnNodes = $nodeFinder->findInstanceOf($ast, Return_::class);
+
+        $fields = [];
+
+        // Traverse the AST to find the fields in the return array
+        foreach ($returnNodes as $returnNode) {
+            if ($returnNode->expr instanceof Array_) {
+                foreach ($returnNode->expr->items as $item) {
+                    if ($item instanceof ArrayItem) {
+                        // Use the key if it's present
+                        $key = $item->key ? $item->key->value : null; // Use .value to access the string
+
+                        // Check if the value is another array
+                        if ($item->value instanceof Array_) {
+                            $fields[$key] = [
+                                'type' => 'array',
+                                'items' => [], // Initialize to hold the inner fields
+                            ];
+
+                            // Traverse items in the nested array
+                            foreach ($item->value->items as $nestedItem) {
+                                if ($nestedItem instanceof ArrayItem) {
+                                    $nestedKey = $nestedItem->key ? $nestedItem->key->value : null;
+
+                                    // Check for scalar values or nested resources
+                                    if ($nestedItem->value instanceof New_) {
+                                        //TODO: get this fixed for nested resource classes
+                                        // If it's a nested resource, extract fields recursively
+                                        //                                        $nestedResourceClass = $nestedItem->value->class->toString();
+                                        //                                        $namespace = $this->getFullClassName($nestedResourceClass, $resourceClass);
+                                        //                                        $fields[$key]['items'][$nestedKey] =  $this->extractFieldsFromToArray($namespace); // Recursively extract fields
+                                        //                                        $fields[$key]['items'][$nestedKey] = $this->extractFieldsFromToArray($nestedResourceClass);
+                                    } elseif ($nestedItem->value instanceof String_) {
+                                        $fields[$key]['items'][$nestedKey] = 'string'; // Handle string values
+                                    } elseif ($nestedItem->value instanceof LNumber) {
+                                        $fields[$key]['items'][$nestedKey] = 'integer'; // Handle integer values
+                                    } elseif ($nestedItem->value instanceof Array_) {
+                                        // Handle nested arrays
+                                        $fields[$key]['items'][$nestedKey] = [
+                                            'type' => 'array',
+                                            'items' => [],
+                                        ];
+                                        // Traverse the nested array items
+                                        foreach ($nestedItem->value->items as $subItem) {
+                                            if ($subItem instanceof ArrayItem) {
+                                                $subKey = $subItem->key ? $subItem->key->value : null;
+                                                $fields[$key]['items'][$nestedKey]['items'][$subKey] = 'unknown'; // Adjust type as needed
                                             }
                                         }
+                                    } else {
+                                        // Handle other types as necessary
+                                        $fields[$key]['items'][$nestedKey] = 'unknown';
                                     }
                                 }
                             }
+                        } elseif ($item->value instanceof New_) {
+                            // If the value is another resource, handle it accordingly
+                            $valueClass = $item->value->class->toString();
+                            //TODO: get this fixed for nested resource classes
+                            //                            $namespace = $this->getFullClassName($valueClass, $resourceClass);
+                            //                            $fields[$key] = $this->extractFieldsFromToArray($namespace); // Recursively extract fields
+                        } elseif ($item->value instanceof String_) {
+                            // If the value is a string, simply store it
+                            $fields[$key] = 'string'; // You might want to implement type inference here
+                        } elseif ($item->value instanceof LNumber) {
+                            // Handle numeric values
+                            $fields[$key] = 'integer';
+                        } elseif ($item->value instanceof Variable) {
+                            // Handle variables if necessary
+                            $fields[$key] = 'variable';
+                        } else {
+                            // Handle other types as needed
+                            $fields[$key] = 'unknown';
                         }
                     }
-
                 }
             }
         }
 
-        return $values;
+        return $fields;
+    }
+
+    private function generateOpenAPIResponseSchema(string $resourceClass): Response
+    {
+        // Extract fields from the Laravel Resource class
+        $fields = $this->extractFieldsFromToArray($resourceClass);
+
+        // Detect if the response is wrapped
+        $wrap = $this->detectWrapping($resourceClass);
+
+        // Generate the OpenAPI properties
+        $properties = [];
+        foreach ($fields as $key => $value) {
+            if (is_array($value)) {
+                // Handle nested arrays or resources
+                if (isset($value['type'])) {
+                    switch ($value['type']) {
+                        case 'array':
+                            // Handling array types with nested properties
+                            if (isset($value['items']) && is_array($value['items'])) {
+                                // Create a schema for items
+                                $itemProperties = [];
+                                foreach ($value['items'] as $itemKey => $itemValue) {
+                                    // Assuming itemValue is a scalar type
+                                    $itemProperties[$itemKey] = new Schema([
+                                        'type' => $this->getTypeFromValue($itemValue),
+                                        'description' => 'Description for '.$itemKey, // Customize as needed
+                                    ]);
+                                }
+
+                                $properties[$key] = new Schema([
+                                    'type' => 'array',
+                                    'items' => new Schema([
+                                        'type' => 'object',
+                                        'properties' => $itemProperties,
+                                    ]),
+                                ]);
+                            } else {
+                                throw new \InvalidArgumentException("Array type defined without valid items for key: $key");
+                            }
+                            break;
+
+                        case 'object':
+                            // Handling for nested resources (objects)
+                            $properties[$key] = new Schema([
+                                'type' => 'object',
+                                'properties' => $value['properties'] ?? [], // Ensure we have a valid properties array
+                            ]);
+                            break;
+
+                        default:
+                            // For other defined types (string, integer, etc.)
+                            $properties[$key] = new Schema([
+                                'type' => $value['type'],
+                                'description' => 'Description for '.$key, // Customize as needed
+                            ]);
+                            break;
+                    }
+                } else {
+                    // Handle case when type is not defined but is an array
+                    $properties[$key] = new Schema([
+                        'type' => 'object', // Defaulting to object, adjust as necessary
+                        'properties' => $value,
+                    ]);
+                }
+            } else {
+                // Handle scalar types directly
+                $properties[$key] = new Schema([
+                    'type' => $this->getTypeFromValue($value),
+                    'description' => 'Description for '.$key, // Customize as needed
+                ]);
+            }
+        }
+
+        // Handle nested properties (like address)
+        if (isset($properties['address']) && isset($fields['address']['items'])) {
+            $addressProperties = [];
+            foreach ($fields['address']['items'] as $addressKey => $addressValue) {
+                $addressProperties[$addressKey] = new Schema([
+                    'type' => $this->getTypeFromValue($addressValue),
+                    'description' => 'Description for '.$addressKey,
+                ]);
+            }
+            $properties['address'] = new Schema([
+                'type' => 'object',
+                'properties' => $addressProperties,
+            ]);
+        }
+
+        // Wrap the response in the given key if necessary
+        $schema = new Schema([
+            'type' => 'object',
+            'properties' => $properties,
+        ]);
+
+        if ($wrap !== null) {
+            // If wrapped, create the schema with wrapping
+            $schema = new Schema([
+                'type' => 'object',
+                'properties' => [
+                    $wrap => $schema,
+                ],
+            ]);
+        }
+
+        // Create the response object
+        return new Response([
+            'description' => 'A successful response',
+            'content' => [
+                'application/json' => [
+                    'schema' => $schema,
+                ],
+            ],
+        ]);
+    }
+
+    private function detectWrapping(string $resourceClass): mixed
+    {
+        $reflection = new ReflectionClass($resourceClass);
+
+        // Check for the existence of $wrap property
+        if ($reflection->hasProperty('wrap')) {
+            $wrapProperty = $reflection->getProperty('wrap');
+            $wrapProperty->setAccessible(true);
+
+            return $wrapProperty->getValue($reflection->newInstance(['resource' => []]));
+        }
+
+        // Default wrap is "data"
+        return 'data';
+    }
+
+    private function getTypeFromValue($value): string
+    {
+        // Map Laravel types to OpenAPI types
+        switch ($value) {
+            case 'string':
+                return 'string';
+            case 'integer':
+                return 'integer';
+            case 'boolean':
+                return 'boolean';
+            case 'array':
+                return 'array';
+                // Add more mappings as necessary
+            default:
+                return 'string'; // Default to string for unrecognized types
+        }
+    }
+
+    private function updateResponseArray(&$responseArray, $propertyName, $values): bool
+    {
+        // Check if the response array has the expected structure
+        if (isset($responseArray['content']['application/json']['schema'])) {
+            // Get the schema
+            $schema = &$responseArray['content']['application/json']['schema'];
+
+            // Update the schema properties recursively
+            if ($this->updateSchemaProperty($schema, $propertyName, $values)) {
+                return true; // Property found and updated
+            }
+        }
+
+        return false; // Property not found
+    }
+
+    private function updateSchemaProperty(&$schema, $propertyName, $values): bool
+    {
+        // Check if the properties exist in the current schema
+        if (isset($schema['properties'][$propertyName])) {
+            foreach ($values as $key => $value) {
+                if ($value !== null) { // Update only if value is provided
+                    // Update the property only if it exists, to avoid overriding with null
+                    if (array_key_exists($key, $schema['properties'][$propertyName])) {
+                        $schema['properties'][$propertyName][$key] = $value;
+                    } else {
+                        // Add new key-value pair if it doesn't exist
+                        $schema['properties'][$propertyName][$key] = $value;
+                    }
+                }
+            }
+
+            return true; // Property found and updated
+        }
+
+        // Check for nested properties
+        if (isset($schema['properties'])) {
+            foreach ($schema['properties'] as $key => &$property) {
+                if ($this->updateSchemaProperty($property, $propertyName, $values)) {
+                    return true; // Property found in nested object
+                }
+            }
+        }
+
+        // Check for items in case of an array
+        if (isset($schema['items'])) {
+            return $this->updateSchemaProperty($schema['items'], $propertyName, $values);
+        }
+
+        return false; // Property not found
+    }
+
+    private function updateResponseBaseProperty(&$responseArray, $propertyName, $values): bool
+    {
+
+        // Check if the response array has the expected structure
+        if (isset($responseArray['content']['application/json']['schema'])) {
+            // Get the schema
+            $schema = &$responseArray['content']['application/json']['schema'];
+
+            if ($propertyName === 'description') {
+                if ($values !== null) {
+                    $schema['description'] = $values;
+
+                    return true;
+                } else {
+                    unset($schema['description']);
+
+                    return true;
+                }
+            }
+        }
+
+        if ($propertyName === 'headers') {
+            if (! empty($values)) {
+                $responseArray['headers'] = $values;
+
+                return true;
+            } else {
+                unset($responseArray['headers']);
+
+                return true;
+            }
+        }
+
+        return false; // Property not found
     }
 }
