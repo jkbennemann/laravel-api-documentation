@@ -115,3 +115,26 @@ it('can generate a documentation file from for nested Body', function () {
         ->and($openApi->paths['/route-1']->post->responses[200]->description)
         ->toBe('');
 });
+
+it('can generate a documentation file with 200 response resource', function () {
+    $service = app(OpenApi::class);
+    $routeData = json_decode('[{"method":"GET","uri":"route-1","summary":null,"description":null,"middlewares":[],"is_vendor":false,"request_parameters":[],"parameters":[],"tags":[],"documentation":null,"responses":{"200":{"description":"A sample description","resource":"JkBennemann\\\\LaravelApiDocumentation\\\\Tests\\\\Stubs\\\\Resources\\\\SampleResource","headers":{"X-Header":"Some header"}}}}]', true);
+
+    $service->processRoutes($routeData);
+    $openApi = $service->get();
+
+    expect($openApi)
+        ->toBeInstanceOf(\openapiphp\openapi\spec\OpenApi::class)
+        ->and($openApi->paths)
+        ->toHaveKeys(['/route-1'])
+        ->and($openApi->paths['/route-1']->get->summary)
+        ->toBe('')
+        ->and($openApi->paths['/route-1']->get->description)
+        ->toBe('')
+        ->and($openApi->paths['/route-1']->get->responses)
+        ->toHaveCount(1)
+        ->and($openApi->paths['/route-1']->get->responses[200]->description)
+        ->toBe('A sample description')
+        ->and($openApi->paths['/route-1']->get->responses[200]->headers)
+        ->toHaveKeys(['X-Header']);
+});
