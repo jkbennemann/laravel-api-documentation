@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace JkBennemann\LaravelApiDocumentation\Services;
 
+use Throwable;
+
 class RuleParser
 {
     public static function parse(array $rules): array
@@ -75,14 +77,17 @@ class RuleParser
     {
         // If the rule is an array, find the format rule
         if (is_array($rule)) {
-            foreach ($rule as $r) {
-                if (str_contains($r, 'email')) {
-                    return 'email';
+            try {
+                foreach ($rule as $r) {
+                    if (str_contains($r, 'email')) {
+                        return 'email';
+                    }
+                    if (str_contains($r, 'uuid')) {
+                        return 'uuid';
+                    }
+                    // Add more format checks here
                 }
-                if (str_contains($r, 'uuid')) {
-                    return 'uuid';
-                }
-                // Add more format checks here
+            } catch (Throwable) {
             }
         }
 
@@ -91,15 +96,18 @@ class RuleParser
 
     private function getRuleType(array $parsedRules): string
     {
-        // Determine the type based on the validation rules
-        if (in_array('string', $parsedRules) || in_array('email', $parsedRules)) {
-            return 'string';
-        } elseif (in_array('integer', $parsedRules) || in_array('numeric', $parsedRules) || in_array('int', $parsedRules)) {
-            return 'integer';
-        } elseif (in_array('array', $parsedRules)) {
-            return 'array';
-        } elseif (in_array('boolean', $parsedRules) || in_array('bool', $parsedRules)) {
-            return 'boolean';
+        try {
+            // Determine the type based on the validation rules
+            if (in_array('string', $parsedRules) || in_array('email', $parsedRules)) {
+                return 'string';
+            } elseif (in_array('integer', $parsedRules) || in_array('numeric', $parsedRules) || in_array('int', $parsedRules)) {
+                return 'integer';
+            } elseif (in_array('array', $parsedRules)) {
+                return 'array';
+            } elseif (in_array('boolean', $parsedRules) || in_array('bool', $parsedRules)) {
+                return 'boolean';
+            }
+        } catch (Throwable) {
         }
 
         // Default to string if no specific type is defined
