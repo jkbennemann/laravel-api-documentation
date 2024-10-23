@@ -179,7 +179,7 @@ class OpenApi
             $values = [
                 'summary' => $summary,
                 'description' => $description,
-                'responses' => [
+                'responses' => [    //default response to comply with OpenAPI standard
                     '200' => new Response([
                         'description' => '',
                     ]),
@@ -253,7 +253,7 @@ class OpenApi
                     $responseSchema = null;
                     if ($response['resource']) {
                         try {
-                            $responseSchema = $this->generateOpenAPIResponseSchema($response['resource']);
+                            $responseSchema = $this->generateOpenAPIResponseSchema($response);
 
                             $instance = app()->make($response['resource'], ['resource' => []]);
 
@@ -317,6 +317,9 @@ class OpenApi
                     }
 
                     if (! empty($headers) && $responseSchema) {
+                        $currentResponseSchema = $responseSchema->getSerializableData();
+                        $currentResponseSchema = json_decode(json_encode($currentResponseSchema), true);
+
                         $updated = $this->updateResponseBaseProperty($currentResponseSchema, 'headers', $headers);
                         $responseSchema = new Response($currentResponseSchema);
                     }
@@ -603,8 +606,9 @@ class OpenApi
         return $fields;
     }
 
-    private function generateOpenAPIResponseSchema(string $resourceClass): Response
+    private function generateOpenAPIResponseSchema(array $response): Response
     {
+        $resourceClass = $response['resource'];
         // Extract fields from the Laravel Resource class
         $fields = $this->extractFieldsFromToArray($resourceClass);
 
@@ -691,30 +695,39 @@ class OpenApi
         }
 
         // Wrap the response in the given key if necessary
-        $schema = new Schema([
+        $data = [
             'type' => 'object',
             'properties' => $properties,
-        ]);
+        ];
+
+        $schema = new Schema($data);
 
         if ($wrap !== null) {
             // If wrapped, create the schema with wrapping
-            $schema = new Schema([
+            $data = [
                 'type' => 'object',
                 'properties' => [
                     $wrap => $schema,
                 ],
-            ]);
+            ];
+
+            $schema = new Schema($data);
         }
 
         // Create the response object
-        return new Response([
-            'description' => 'A successful response',
+        $data = [
             'content' => [
                 'application/json' => [
                     'schema' => $schema,
                 ],
             ],
-        ]);
+        ];
+
+        if ($response['description']) {
+            $data['description'] = $response['description'];
+        }
+
+        return new Response($data);
     }
 
     private function detectWrapping(string $resourceClass): mixed

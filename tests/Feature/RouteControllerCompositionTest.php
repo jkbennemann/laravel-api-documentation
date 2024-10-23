@@ -299,7 +299,7 @@ it('can generate route information for route with an email example', function ()
 });
 
 it('can generate route information for route with a data resource', function () {
-    Route::get('route/{firstParam}/{?secondParam}', [SimpleController::class, 'simpleResource']);
+    Route::get('route-1', [SimpleController::class, 'simpleResource']);
 
     $service = app(RouteComposition::class);
     $routeData = $service->process();
