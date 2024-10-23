@@ -321,5 +321,12 @@ it('can generate route information for route with a data resource', function () 
             'headers',
         ])
         ->and($routeData[0]['responses'][200]['resource'])
-        ->toBe(SampleResource::class);
+        ->toBe(SampleResource::class)
+        ->and($routeData[0]['responses'][200]['description'])
+        ->toBe('A sample description')
+        ->and($routeData[0]['responses'][200]['headers'])
+        ->toBeArray()
+        ->toHaveKeys(['X-Header'])
+        ->and($routeData[0]['responses'][200]['headers']['X-Header'])
+        ->toBe('Some header');
 });
