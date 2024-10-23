@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Illuminate\Support\Facades\Route;
 use JkBennemann\LaravelApiDocumentation\Services\RouteComposition;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\SimpleController;
+use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Resources\SampleResource;
 
 it('can create an instance of the service', function () {
     expect(app(RouteComposition::class))
@@ -295,4 +296,30 @@ it('can generate route information for route with an email example', function ()
         ->toBe('email')
         ->and($routeData[0]['request_parameters']['mail']['example']['value'])
         ->toBe('mail@test.com');
+});
+
+it('can generate route information for route with a data resource', function () {
+    Route::get('route/{firstParam}/{?secondParam}', [SimpleController::class, 'simpleResource']);
+
+    $service = app(RouteComposition::class);
+    $routeData = $service->process();
+
+    expect($routeData)
+        ->toHaveCount(1)
+        ->and($routeData[0])
+        ->toBeArray()
+        ->toHaveCount(11)
+        ->and($routeData[0]['responses'])
+        ->toBeArray()
+        ->toHaveCount(1)
+        ->and($routeData[0]['responses'])
+        ->toHaveKeys([200])
+        ->and($routeData[0]['responses'][200])
+        ->toHaveKeys([
+            'description',
+            'resource',
+            'headers',
+        ])
+        ->and($routeData[0]['responses'][200]['resource'])
+        ->toBe(SampleResource::class);
 });

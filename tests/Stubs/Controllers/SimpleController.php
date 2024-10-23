@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers;
 
 use Illuminate\Routing\Controller;
+use JkBennemann\LaravelApiDocumentation\Attributes\DataResponse;
 use JkBennemann\LaravelApiDocumentation\Attributes\Description;
 use JkBennemann\LaravelApiDocumentation\Attributes\PathParameter;
 use JkBennemann\LaravelApiDocumentation\Attributes\Summary;
@@ -69,6 +70,12 @@ class SimpleController extends Controller
 
     #[PathParameter(name: 'mail', format: 'email', description: 'The first parameter', example: 'mail@test.com')]
     public function mailExampleParameter(string $mail): SampleResource
+    {
+        return new SampleResource([]);
+    }
+
+    #[DataResponse(status: 200, resource: SampleResource::class, description: 'A sample description', headers: ['X-Header' => 'Some header'])]
+    public function simpleResource(): SampleResource
     {
         return new SampleResource([]);
     }
