@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 use JkBennemann\LaravelApiDocumentation\Services\OpenApi;
 use openapiphp\openapi\spec\RequestBody;
-use openapiphp\openapi\Writer;
 
 it('can generate a simplistic documentation file', function () {
     config()->set('api-documentation.title', 'Laravel API Documentation');
@@ -54,10 +53,6 @@ it('can generate a documentation file from a request parameter', function () {
 
     $service->processRoutes($routeData);
     $openApi = $service->get();
-
-    $json = Writer::writeToJson($openApi);
-
-    ray($json);
 
     expect($openApi)
         ->toBeInstanceOf(\openapiphp\openapi\spec\OpenApi::class)
