@@ -286,19 +286,6 @@ class OpenApi
                                         $currentResponseSchema = json_decode(json_encode($currentResponseSchema), true);
                                         $attributesToOverride = [];
 
-                                        $type = $attribute->getArguments()['type'] ?? $attribute->getArguments()[1] ?? 'string';
-                                        if ($type === 'array') {
-                                            $type = 'object';
-                                        }
-                                        if ($type === 'int') {
-                                            $type = 'integer';
-                                        }
-
-                                        //                                        TODO implement logic
-                                        //                                        if ($type !== $this->getPropertyType($currentResponseSchema, $name)) {
-                                        //                                            $attributesToOverride['type'] = $type;
-                                        //                                        }
-
                                         if ($attribute->getArguments()['format'] ?? $attribute->getArguments()[3] ?? null) {
                                             $attributesToOverride['format'] = $attribute->getArguments()['format'] ?? $attribute->getArguments()[3] ?? null;
                                         }
