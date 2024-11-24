@@ -2,10 +2,12 @@
 
 declare(strict_types=1);
 
+use Illuminate\Support\Str;
+
 return [
     'open_api_version' => '3.0.2',
     'version' => '1.0.0',
-    'title' => \Illuminate\Support\Str::title(config('app.name', 'Service')).' API Documentation',
+    'title' => Str::title(env('APP_NAME', 'Service')).' API Documentation',
     'include_vendor_routes' => false,
     'excluded_routes' => [
         //add the routes you want to exclude from the documentation
@@ -48,5 +50,9 @@ return [
                 'web',
             ],
         ],
+        'storage' => [
+            'disk' => 'public',
+            'filename' => 'api-documentation.json'
+        ]
     ],
 ];

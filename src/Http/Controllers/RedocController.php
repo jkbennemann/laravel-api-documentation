@@ -8,9 +8,11 @@ class RedocController
 {
     public function index()
     {
+        $filename = config('api-documentation.ui.storage.filename', 'api-documentation.json');
+
         return view('api-documentation::redoc.index', [
             'redocVersion' => config('api-documentation.ui.redoc.version', '3.0.0'),
-            'documentationFile' => asset('storage/api-documentation.json'),
+            'documentationFile' => asset($filename),
         ]);
     }
 }

@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace JkBennemann\LaravelApiDocumentation\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use JkBennemann\LaravelApiDocumentation\Services\OpenApi;
 use JkBennemann\LaravelApiDocumentation\Services\RouteComposition;
 use openapiphp\openapi\Writer;
@@ -28,7 +30,9 @@ class LaravelApiDocumentationCommand extends Command
         try {
             $json = Writer::writeToJson($openApiService->processRoutes($routesData)->get());
 
-            $success = Storage::disk('public')->put('api-documentation.json', $json);
+            $path = $this->getPath();
+
+            $success = File::put($path, $json);
 
             if ($success === false) {
                 $this->error('Error writing documentation to file: Could not write to file.');
@@ -66,5 +70,17 @@ class LaravelApiDocumentationCommand extends Command
         }
 
         return self::SUCCESS;
+    }
+
+    private function getPath(): string
+    {
+        $filename = config('api-documentation.ui.storage.filename', 'api-documentation.json');
+
+        if (false === Str::endsWith($filename, '.json')) {
+            $filename .= '.json';
+        }
+
+        return Storage::disk(config('api-documentation.ui.storage.disk', 'public'))
+            ->path($filename);
     }
 }

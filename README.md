@@ -31,14 +31,16 @@ By default it will set the settings to the following:
 
 ### Linking the storage's public directory
 
-The package will store the generated documentation in the storage folder. To link the storage folder you can run:
+The package will store the generated documentation at the defined disk.  
+By default it will use the `public` disk to store the documentation.
+For the default Laravel disk of `public` you'd need to link the storage folder to make it accessible by running:
 
 ```bash
 php artisan storage:link
 ```
 
 This will ensure that the generated documentation is accessible.  
-When generating the documentation the package will store the documentation in `storage/app/public/api-documentation.json`.
+When generating the documentation the package (by default) will store the documentation at `storage/app/public/api-documentation.json`.
 
 In order for this to work you need to have the `public` disk configured in your `config/filesystems.php`.  
 This should be already configured by default by your application.
@@ -61,13 +63,31 @@ it is needed to explicitly exclude the `api-documentation.json` from your `stora
 
 ```bash
 # storage/app/public/.gitignore
-
 *
 !.gitignore
 !api-documentation.json
 ```
 
+If you want to make the documentation public by default, without the need to link the storage folder, you can:
+1. Add a dedicated disk configuration for the documentation to `config/filesystems.php` *(Recommended)*
+2. Adjust the default disk configuration to not use the `storage_path()` *(Not recommended)*
+```php
+'public_exposed' => [
+    'driver'     => 'local',
+    'root'       => public_path(),
+    'url'        => env('APP_URL'),
+    'visibility' => 'public',
+    'throw'      => false,
+],
+```
+and then using the disk `public_exposed` in the `config/laravel-api-documentation.php` file.
+
+### Useful tips
+If you want to automatically re-generate the documentation all the time, consider to add a git hook to your repository.  
+This way you allow the documentation to be kept up-to-date, every time you push changes to your repository.
+
 ## Generating the documentation
+```bash
 Generating the documentation is as simple as running the following command:
 ```bash
 php artisan documentation:generate
