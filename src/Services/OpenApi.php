@@ -739,6 +739,14 @@ class OpenApi
                     $tmp['nullable'] = true;
                 }
 
+                if ($value === 'array') {
+                    $tmp['items'] = new Schema([
+                        'type' => 'object',
+                        'properties' => [],
+                        'default' => [],
+                    ]);
+                }
+
                 $properties[$key] = new Schema($tmp);
             }
         }
