@@ -28,7 +28,7 @@ it('can generate a simplistic documentation file', function () {
     expect($parsedFile->openapi)
         ->toBe('3.0.2')
         ->and($parsedFile->info->title)
-        ->toBe('Laravel API Documentation')
+        ->toBe('Service API Documentation')
         ->and($parsedFile->info->version)
         ->toBe('1.0.0')
         ->and($parsedFile->paths)
