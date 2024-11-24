@@ -236,7 +236,7 @@ In general this is used to provide more detailed information about the response 
 Available parameters:
 - (required) `status` (int) - The status code of the response
 - `description` (string) - A description of the response; *default:`''`*
-- `resource` (null | string | array) - The resource class that is returned by the route (e.g. `UserResource::class`, `['id' => 'string']`, `null`); *default:`[]`*
+- `resource` (null | string | array) - The resource class or Spatie Data object class that is returned by the route (e.g. `UserResource::class`, `['id' => 'string']`, `null`); *default:`[]`*
 - `headers` (null | array) - An array of response headers that are returned by the route (e.g. `['X-Token' => 'string']`); *default:`[]`*
 
 ```php

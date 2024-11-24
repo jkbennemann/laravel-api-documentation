@@ -6,7 +6,7 @@ namespace JkBennemann\LaravelApiDocumentation\Attributes;
 
 use Attribute;
 
-#[Attribute]
+#[Attribute(Attribute::IS_REPEATABLE | Attribute::TARGET_METHOD | Attribute::TARGET_CLASS)]
 class Parameter
 {
     public function __construct(

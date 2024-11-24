@@ -6,6 +6,7 @@ namespace JkBennemann\LaravelApiDocumentation\Services;
 
 use Exception;
 use Illuminate\Config\Repository;
+use Illuminate\Support\Str;
 use JkBennemann\LaravelApiDocumentation\Attributes\Description;
 use openapiphp\openapi\spec\Components;
 use openapiphp\openapi\spec\Header;
@@ -23,11 +24,18 @@ use PhpParser\Node\Expr\New_;
 use PhpParser\Node\Expr\Variable;
 use PhpParser\Node\Scalar\LNumber;
 use PhpParser\Node\Scalar\String_;
+use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node\Stmt\Return_;
 use PhpParser\NodeFinder;
 use PhpParser\ParserFactory;
+use ReflectionAttribute;
 use ReflectionClass;
 use ReflectionMethod;
+use ReflectionProperty;
+use Spatie\LaravelData\Attributes\MapName;
+use Spatie\LaravelData\Attributes\MapOutputName;
+use Spatie\LaravelData\Data;
+use Spatie\LaravelData\Mappers\SnakeCaseMapper;
 use Throwable;
 
 class OpenApi
@@ -93,7 +101,7 @@ class OpenApi
         return $this;
     }
 
-    private function setSecuritySchemes(): static
+    private function setSecuritySchemes(): void
     {
         if (! empty($this->includedSecuritySchemes)) {
             $schemas = [];
@@ -119,7 +127,6 @@ class OpenApi
             }
         }
 
-        return $this;
     }
 
     public function processRoutes(array $routes): self
@@ -254,14 +261,19 @@ class OpenApi
                     if ($response['resource']) {
                         try {
                             $responseSchema = $this->generateOpenAPIResponseSchema($response);
-
-                            $instance = app()->make($response['resource'], ['resource' => []]);
-
-                            $rulesExist = method_exists($instance, 'toArray');
-                            if ($rulesExist) {
+                            $instance = null;
+                            $reflection = new ReflectionClass($response['resource']);
+                            if ($reflection->isSubclassOf(Data::class)) {
+                                $rulesExist = true;
+                                $attributes = $reflection->getAttributes();
+                            } else {
+                                $instance = app()->make($response['resource'], ['resource' => []]);
+                                $rulesExist = method_exists($instance, 'toArray');
                                 $actionMethod = new ReflectionMethod($instance, 'toArray');
                                 $attributes = $actionMethod->getAttributes();
+                            }
 
+                            if ($rulesExist) {
                                 foreach ($attributes as $attribute) {
                                     if ($attribute->getName() === \JkBennemann\LaravelApiDocumentation\Attributes\Parameter::class) {
                                         $name = $attribute->getArguments()['name'] ?? $attribute->getArguments()[0] ?? null;
@@ -274,25 +286,19 @@ class OpenApi
                                         $currentResponseSchema = json_decode(json_encode($currentResponseSchema), true);
                                         $attributesToOverride = [];
 
-                                        $type = $attribute->getArguments()['type'] ?? $attribute->getArguments()[1] ?? 'string';
-                                        if ($type === 'array') {
-                                            $type = 'object';
-                                        }
-                                        if ($type === 'int') {
-                                            $type = 'integer';
-                                        }
-
-                                        //                                        TODO implement logic
-                                        //                                        if ($type !== $this->getPropertyType($currentResponseSchema, $name)) {
-                                        //                                            $attributesToOverride['type'] = $type;
-                                        //                                        }
-
                                         if ($attribute->getArguments()['format'] ?? $attribute->getArguments()[3] ?? null) {
                                             $attributesToOverride['format'] = $attribute->getArguments()['format'] ?? $attribute->getArguments()[3] ?? null;
                                         }
 
                                         if ($attribute->getArguments()['example'] ?? $attribute->getArguments()[6] ?? null) {
                                             $attributesToOverride['example'] = $attribute->getArguments()['example'] ?? $attribute->getArguments()[6] ?? null;
+                                        }
+
+                                        if ($attribute->getArguments()['description'] ?? $attribute->getArguments()[4] ?? null) {
+                                            $value = $attribute->getArguments()['description'] ?? $attribute->getArguments()[4] ?? null;
+                                            if ($value) {
+                                                $attributesToOverride['description'] = $value;
+                                            }
                                         }
 
                                         $updated = $this->updateResponseArray($currentResponseSchema, $name, $attributesToOverride);
@@ -508,7 +514,46 @@ class OpenApi
 
     private function extractFieldsFromToArray(string $resourceClass): array
     {
+        $fields = [];
         $reflection = new ReflectionClass($resourceClass);
+
+        if ($reflection->isSubclassOf(Data::class)) {
+            $properties = $reflection->getProperties(ReflectionProperty::IS_PUBLIC);
+
+            /** @var ReflectionAttribute $globalMapper */
+            $globalMapper = $reflection->getAttributes(MapName::class);
+            /** @var ReflectionAttribute $outputMapper */
+            $outputMapper = $reflection->getAttributes(MapOutputName::class);
+            $hasSnakeCaseMapper = false;
+
+            if ($globalMapper) {
+                foreach ($globalMapper as $attribute) {
+                    foreach ($attribute->getArguments() as $argument) {
+                        if ($argument === SnakeCaseMapper::class) {
+                            $hasSnakeCaseMapper = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if ($outputMapper) {
+                foreach ($outputMapper as $attribute) {
+                    foreach ($attribute->getArguments() as $argument) {
+                        if ($argument === SnakeCaseMapper::class) {
+                            $hasSnakeCaseMapper = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            foreach ($properties as $property) {
+                $fields[$hasSnakeCaseMapper ? Str::snake($property->getName()) : $property->getName()] = $property->getType()->getName() . '|' . boolval($property->getType()->allowsNull());
+            }
+
+            return $fields;
+        }
 
         // Ensure the resource has a toArray method
         if (! $reflection->hasMethod('toArray')) {
@@ -525,8 +570,6 @@ class OpenApi
         // Find the return statement in the toArray method
         $nodeFinder = new NodeFinder;
         $returnNodes = $nodeFinder->findInstanceOf($ast, Return_::class);
-
-        $fields = [];
 
         // Traverse the AST to find the fields in the return array
         foreach ($returnNodes as $returnNode) {
@@ -672,10 +715,31 @@ class OpenApi
                 }
             } else {
                 // Handle scalar types directly
-                $properties[$key] = new Schema([
+                try {
+                    [$value, $isNullable] = explode('|', $value);
+                } catch (Exception $e) {
+                    $isNullable = false;
+                }
+
+
+                $tmp = [
                     'type' => $this->getTypeFromValue($value),
                     'description' => 'Description for '.$key, // Customize as needed
-                ]);
+                ];
+
+                if ($isNullable) {
+                    $tmp['nullable'] = true;
+                }
+
+                if ($value === 'array') {
+                    $tmp['items'] = new Schema([
+                        'type' => 'object',
+                        'properties' => [],
+                        'default' => [],
+                    ]);
+                }
+
+                $properties[$key] = new Schema($tmp);
             }
         }
 
@@ -742,6 +806,34 @@ class OpenApi
             return $wrapProperty->getValue($reflection->newInstance(['resource' => []]));
         }
 
+        if ($reflection->isSubclassOf(Data::class)) {
+            if ($reflection->hasMethod('defaultWrap')) {
+                $parser = (new ParserFactory)->createForHostVersion();
+                $method = $reflection->getMethod('defaultWrap');
+                $code = file_get_contents($method->getFileName());
+                $ast = $parser->parse($code);
+
+                $nodeFinder = new NodeFinder;
+                $methodNodes = $nodeFinder->findInstanceOf($ast, ClassMethod::class);
+
+                /** @var ClassMethod $methodNode */
+                foreach ($methodNodes as $methodNode) {
+                    if ($methodNode->name->name === 'defaultWrap') {
+                        $returnNodes = $nodeFinder->findInstanceOf($methodNode, Return_::class);
+                        foreach ($returnNodes as $returnNode) {
+                            if ($returnNode->expr instanceof String_) {
+                                return $returnNode->expr->value;
+                            }
+                        }
+                    }
+                }
+
+                return null;
+            }
+
+            return null;
+        }
+
         // Default wrap is "data"
         return 'data';
     }
@@ -753,6 +845,7 @@ class OpenApi
             case 'string':
                 return 'string';
             case 'integer':
+            case 'int':
                 return 'integer';
             case 'boolean':
                 return 'boolean';
