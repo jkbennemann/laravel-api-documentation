@@ -3,6 +3,12 @@
 [![Latest Version on Packagist](https://img.shields.io/packagist/v/jkbennemann/laravel-api-documentation.svg?style=flat-square)](https://packagist.org/packages/jkbennemann/laravel-api-documentation)
 [![Total Downloads](https://img.shields.io/packagist/dt/jkbennemann/laravel-api-documentation.svg?style=flat-square)](https://packagist.org/packages/jkbennemann/laravel-api-documentation)
 
+> **This library is currently in an alpha phase**  
+> - still under development
+> - versions are not stable
+> - breaking changes can occur
+
+
 This is an opinionated package to generate API documentation for Laravel applications.
 They key focus is to remove the need to manually write documentation and keep it up to date by generating it from the code.
 
