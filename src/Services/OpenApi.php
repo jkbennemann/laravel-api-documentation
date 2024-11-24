@@ -158,6 +158,7 @@ class OpenApi
                 }
             }
 
+            $parameters = [];
             $baseInfo = [];
             $description = '';
             $summary = '';
@@ -169,18 +170,35 @@ class OpenApi
             }
 
             if (! empty($data['request_parameters'])) {
-                $params = explode(',', $data['request_parameters']);
-                $parameters = array_map(function ($param) {
-                    return new Parameter([
-                        'name' => $param,
-                        'in' => 'query',
-                        'required' => true,
-                        'description' => '',
-                        'schema' => [
-                            'type' => 'string',
-                        ],
-                    ]);
-                }, $params);
+                if (is_array($data['request_parameters'])) {
+                    $params = $data['request_parameters'];
+                    foreach ($params as $key => $values) {
+                        $tmp = [
+                            'name' => $key,
+                            'in' => 'query',
+                            'required' => true,
+                            'description' => $values['description'] ?? '',
+                            'schema' => [
+                                'type' => $values['type'] ?? 'string',
+                            ],
+                        ];
+
+                        $parameters[] = new Parameter($tmp);
+                    }
+                } else {
+                    $params = explode(',', $data['request_parameters']);
+                    $parameters = array_map(function ($param) {
+                        return new Parameter([
+                            'name' => $param,
+                            'in' => 'query',
+                            'required' => true,
+                            'description' => '',
+                            'schema' => [
+                                'type' => 'string',
+                            ],
+                        ]);
+                    }, $params);
+                }
             }
 
             $values = [
