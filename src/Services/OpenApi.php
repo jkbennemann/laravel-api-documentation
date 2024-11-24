@@ -24,6 +24,7 @@ use PhpParser\Node\Expr\New_;
 use PhpParser\Node\Expr\Variable;
 use PhpParser\Node\Scalar\LNumber;
 use PhpParser\Node\Scalar\String_;
+use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node\Stmt\Return_;
 use PhpParser\NodeFinder;
 use PhpParser\ParserFactory;
@@ -561,7 +562,7 @@ class OpenApi
             }
 
             foreach ($properties as $property) {
-                $fields[$hasSnakeCaseMapper ? Str::snake($property->getName()) : $property->getName()] = $property->getType()->getName();
+                $fields[$hasSnakeCaseMapper ? Str::snake($property->getName()) : $property->getName()] = $property->getType()->getName() . '|' . boolval($property->getType()->allowsNull());
             }
 
             return $fields;
@@ -727,10 +728,18 @@ class OpenApi
                 }
             } else {
                 // Handle scalar types directly
-                $properties[$key] = new Schema([
+                [$value, $isNullable] = explode('|', $value);
+
+                $tmp = [
                     'type' => $this->getTypeFromValue($value),
                     'description' => 'Description for '.$key, // Customize as needed
-                ]);
+                ];
+
+                if ($isNullable) {
+                    $tmp['nullable'] = true;
+                }
+
+                $properties[$key] = new Schema($tmp);
             }
         }
 
@@ -799,8 +808,27 @@ class OpenApi
 
         if ($reflection->isSubclassOf(Data::class)) {
             if ($reflection->hasMethod('defaultWrap')) {
-                //todo get response value from AST tree of function
-                return 'data';
+                $parser = (new ParserFactory)->createForHostVersion();
+                $method = $reflection->getMethod('defaultWrap');
+                $code = file_get_contents($method->getFileName());
+                $ast = $parser->parse($code);
+
+                $nodeFinder = new NodeFinder;
+                $methodNodes = $nodeFinder->findInstanceOf($ast, ClassMethod::class);
+
+                /** @var ClassMethod $methodNode */
+                foreach ($methodNodes as $methodNode) {
+                    if ($methodNode->name->name === 'defaultWrap') {
+                        $returnNodes = $nodeFinder->findInstanceOf($methodNode, Return_::class);
+                        foreach ($returnNodes as $returnNode) {
+                            if ($returnNode->expr instanceof String_) {
+                                return $returnNode->expr->value;
+                            }
+                        }
+                    }
+                }
+
+                return null;
             }
 
             return null;
