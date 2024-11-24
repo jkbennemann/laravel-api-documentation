@@ -715,7 +715,12 @@ class OpenApi
                 }
             } else {
                 // Handle scalar types directly
-                [$value, $isNullable] = explode('|', $value);
+                try {
+                    [$value, $isNullable] = explode('|', $value);
+                } catch (Exception $e) {
+                    $isNullable = false;
+                }
+
 
                 $tmp = [
                     'type' => $this->getTypeFromValue($value),
