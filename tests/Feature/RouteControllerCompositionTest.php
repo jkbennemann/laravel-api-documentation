@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 use Illuminate\Support\Facades\Route;
 use JkBennemann\LaravelApiDocumentation\Services\RouteComposition;
+use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\DtoResponseController;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\SimpleController;
+use JkBennemann\LaravelApiDocumentation\Tests\Stubs\DTOs\Simple;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Resources\SampleResource;
 
 it('can create an instance of the service', function () {
@@ -329,4 +331,34 @@ it('can generate route information for route with a data resource', function () 
         ->toHaveKeys(['X-Header'])
         ->and($routeData[0]['responses'][200]['headers']['X-Header'])
         ->toBe('Some header');
+});
+
+it('can generate route information for route with a spatie dto resource', function () {
+    Route::get('route-1', [DtoResponseController::class, 'simple']);
+
+    $service = app(RouteComposition::class);
+    $routeData = $service->process();
+
+    expect($routeData)
+        ->toHaveCount(1)
+        ->and($routeData[0])
+        ->toBeArray()
+        ->toHaveCount(11)
+        ->and($routeData[0]['responses'])
+        ->toBeArray()
+        ->toHaveCount(1)
+        ->and($routeData[0]['responses'])
+        ->toHaveKeys([200])
+        ->and($routeData[0]['responses'][200])
+        ->toHaveKeys([
+            'description',
+            'resource',
+            'headers',
+        ])
+        ->and($routeData[0]['responses'][200]['resource'])
+        ->toBe(Simple::class)
+        ->and($routeData[0]['responses'][200]['description'])
+        ->toBe('A sample description')
+        ->and($routeData[0]['responses'][200]['headers'])
+        ->toBeEmpty();
 });

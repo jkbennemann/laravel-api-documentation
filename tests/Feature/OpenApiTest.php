@@ -2,8 +2,12 @@
 
 declare(strict_types=1);
 
+use Illuminate\Support\Facades\Route;
 use JkBennemann\LaravelApiDocumentation\Services\OpenApi;
+use JkBennemann\LaravelApiDocumentation\Services\RouteComposition;
+use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\DtoResponseController;
 use openapiphp\openapi\spec\RequestBody;
+use openapiphp\openapi\spec\Schema;
 
 it('can generate a simplistic documentation file', function () {
     config()->set('api-documentation.title', 'Laravel API Documentation');
@@ -88,7 +92,7 @@ it('can generate a documentation file from for nested Body', function () {
         ->and($openApi->paths['/route-1']->post->requestBody->content)
         ->toHaveKeys(['application/json'])
         ->and($openApi->paths['/route-1']->post->requestBody->content['application/json']->schema)
-        ->toBeInstanceOf(\openapiphp\openapi\spec\Schema::class)
+        ->toBeInstanceOf(Schema::class)
         ->and($openApi->paths['/route-1']->post->requestBody->content['application/json']->schema->type)
         ->toBe('object')
         ->and($openApi->paths['/route-1']->post->requestBody->content['application/json']->schema->properties)
@@ -137,4 +141,30 @@ it('can generate a documentation file with 200 response resource', function () {
         ->toBe('A sample description')
         ->and($openApi->paths['/route-1']->get->responses[200]->headers)
         ->toHaveKeys(['X-Header']);
+});
+
+it('can generate a documentation file with 200 DTO response by annotation', function () {
+    $apiService = app(OpenApi::class);
+    Route::get('route-1', [DtoResponseController::class, 'simple']);
+
+    $service = app(RouteComposition::class);
+    $routeData = $service->process();
+
+    $apiService->processRoutes($routeData);
+    $openApi = $apiService->get();
+
+    expect($openApi)
+        ->toBeInstanceOf(\openapiphp\openapi\spec\OpenApi::class)
+        ->and($openApi->paths)
+        ->toHaveKeys(['/route-1'])
+        ->and($openApi->paths['/route-1']->get->summary)
+        ->toBe('')
+        ->and($openApi->paths['/route-1']->get->description)
+        ->toBe('')
+        ->and($openApi->paths['/route-1']->get->responses)
+        ->toHaveCount(1)
+        ->and($openApi->paths['/route-1']->get->responses[200]->description)
+        ->toBe('A sample description')
+        ->and($openApi->paths['/route-1']->get->responses[200]->headers)
+        ->toBeEmpty();
 });
