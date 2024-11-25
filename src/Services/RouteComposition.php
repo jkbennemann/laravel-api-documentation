@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace JkBennemann\LaravelApiDocumentation\Services;
 
 use Illuminate\Config\Repository;
+use Illuminate\Http\Request;
 use Illuminate\Routing\Route;
 use Illuminate\Routing\RouteCollectionInterface;
 use Illuminate\Routing\Router;
-use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationRuleParser;
 use JkBennemann\LaravelApiDocumentation\Attributes\AdditionalDocumentation;
 use JkBennemann\LaravelApiDocumentation\Attributes\DataResponse;
@@ -20,7 +20,6 @@ use JkBennemann\LaravelApiDocumentation\Attributes\Tag;
 use ReflectionAttribute;
 use ReflectionClass;
 use ReflectionMethod;
-use Symfony\Component\HttpFoundation\Request;
 use Throwable;
 
 class RouteComposition
@@ -58,7 +57,6 @@ class RouteComposition
             }
 
             $isVendorClass = $this->isVendorClass($controller);
-            $urlParams = $this->extractPlaceholders($uri);
             $description = null;
             $summary = null;
             $tags = [];
@@ -67,19 +65,11 @@ class RouteComposition
             $responses = [];
             $availableRules = [];
 
-            if (! $this->includeVendorRoutes && $isVendorClass) {
+            if ($this->shouldBeSkipped($uri, $httpMethod, $isVendorClass)) {
                 continue;
             }
-            foreach ($this->excludedRoutes as $excludedRoute) {
-                if ($this->matchUri($uri, $excludedRoute)) {
-                    continue 2;
-                }
-            }
-            foreach ($this->excludedMethods as $excludedMethod) {
-                if ($httpMethod === strtoupper($excludedMethod)) {
-                    continue 2;
-                }
-            }
+
+            $urlParams = $this->extractPathPlaceholders($uri);
 
             try {
                 $actionMethod = new ReflectionMethod($controller, $action);
@@ -155,6 +145,19 @@ class RouteComposition
                 }
             }
 
+            if (empty($routeParams) && !empty($urlParams)) {
+                $routeParams = null;
+                foreach ($urlParams as $urlParam) {
+                    $routeParams[$urlParam] = [
+                        'description' => '',
+                        'type' => 'string',
+                        'format' => null,
+                        'required' => true,
+                        'example' => null,
+                    ];
+                }
+            }
+
             foreach ($actionMethod->getParameters() as $parameter) {
                 $parameterType = $parameter->getType();
                 if ($parameterType === null) {
@@ -209,8 +212,8 @@ class RouteComposition
                 'description' => $description,
                 'middlewares' => $middleswares,
                 'is_vendor' => $isVendorClass,
-                'request_parameters' => $routeParams,
-                'parameters' => $availableRules,
+                'request_parameters' => $routeParams,   //parameters for route
+                'parameters' => $availableRules,        //parameters for request, query/body
                 'tags' => $tags,
                 'documentation' => $url ? [
                     'url' => $url,
@@ -244,17 +247,13 @@ class RouteComposition
         }
     }
 
-    private function extractPlaceholders($url): array
+    private function extractPathPlaceholders(string $url): array
     {
         // Use regular expression to match content inside curly braces
         preg_match_all('/\{([^\/]+?)\}/', $url, $matches);
 
         // Return the matches found
         return $matches[1];
-
-        return array_map(function ($element) {
-            return Str::snake($element);
-        }, $matches[1]);
     }
 
     private function isVendorClass(mixed $controller): bool
@@ -319,5 +318,26 @@ class RouteComposition
         }
 
         return $matches;
+    }
+
+    private function shouldBeSkipped(string $uri, string $httpMethod, bool $isVendorClass): bool
+    {
+        if (! $this->includeVendorRoutes && $isVendorClass) {
+            return true;
+        }
+
+        foreach ($this->excludedRoutes as $excludedRoute) {
+            if ($this->matchUri($uri, $excludedRoute)) {
+                return true;
+            }
+        }
+
+        foreach ($this->excludedMethods as $excludedMethod) {
+            if ($httpMethod === strtoupper($excludedMethod)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

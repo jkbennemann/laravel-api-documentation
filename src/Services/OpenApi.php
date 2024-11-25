@@ -170,18 +170,27 @@ class OpenApi
             }
 
             if (! empty($data['request_parameters'])) {
+                //path parameters are specified
                 if (is_array($data['request_parameters'])) {
                     $params = $data['request_parameters'];
                     foreach ($params as $key => $values) {
                         $tmp = [
                             'name' => $key,
-                            'in' => 'query',
+                            'in' => 'path',
                             'required' => true,
                             'description' => $values['description'] ?? '',
                             'schema' => [
                                 'type' => $values['type'] ?? 'string',
                             ],
                         ];
+
+                        if (isset($values['format'])) {
+                            $tmp['schema']['format'] = $values['format'];
+                        }
+
+                        if (isset($values['example'])) {
+                            $tmp['example'] = is_array($values['example']) ? $values['example']['value'] : $values['example'];
+                        }
 
                         $parameters[] = new Parameter($tmp);
                     }
