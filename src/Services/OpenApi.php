@@ -285,7 +285,7 @@ class OpenApi
                     }
 
                     $responseSchema = null;
-                    if ($response['resource']) {
+                    if ($response['resource'] && is_string($response['resource'] ?? [])) {
                         try {
                             $responseSchema = $this->generateOpenAPIResponseSchema($response);
                             $instance = null;
@@ -347,6 +347,52 @@ class OpenApi
 
                             continue;
                         }
+                    } elseif ($response['resource'] && is_array($response['resource'])) {
+                        $propertySchemes = [];
+                        foreach ($response['resource'] as $property => $propertyValues) {
+                            if (!is_string($property)) {
+                                continue;
+                            }
+
+                            $propertySchema = [
+                                'type' => $propertyValues['type'] ?? $propertyValues[0] ?? 'string',
+                                'description' => $propertyValues['description'] ?? $propertyValues[2] ?? '',
+                            ];
+
+                            if (isset($propertyValues['format']) ||  ($propertyValues[1] ?? null)) {
+                                $propertySchema['format'] = $propertyValues['format'] ?? $propertyValues[1];
+                            }
+
+                            if (isset($propertyValues['example']) || ($propertyValues[3] ?? null)) {
+                                $propertySchema['example'] = $propertyValues['example'] ?? $propertyValues[3];
+                            }
+
+                            $propertySchemes[$property] = new Schema($propertySchema);
+                        }
+
+                        $responseSchema = new Response([
+                            'description' => $response['description'] ?? '',
+                            'content' => [
+                                'application/json' => [
+                                    'schema' => new Schema([
+                                        'type' => 'object',
+                                        'properties' => $propertySchemes,
+                                    ]),
+                                ],
+                            ],
+                        ]);
+                    } elseif ($response['resource'] && empty($response['resource'])) {
+                        $responseSchema = new Response([
+                            'description' => $response['description'] ?? '',
+                            'content' => [
+                                'application/json' => [
+                                    'schema' => new Schema([
+                                        'type' => 'object',
+                                        'properties' => [],
+                                    ]),
+                                ],
+                            ],
+                        ]);
                     }
 
                     if (! empty($headers) && $responseSchema) {
@@ -357,7 +403,9 @@ class OpenApi
                         $responseSchema = new Response($currentResponseSchema);
                     }
 
-                    $responses[$code] = $responseSchema;
+                    if ($responseSchema) {
+                        $responses[$code] = $responseSchema;
+                    }
                 }
                 $values['responses'] = $responses;
             }
