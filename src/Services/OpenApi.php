@@ -255,11 +255,11 @@ class OpenApi
             if (! empty($data['parameters'])) {
                 if (! in_array($data['method'], ['GET', 'DELETE', 'HEAD'])) {
                     // Generate RequestBody for POST/PUT
-                    $requestBody = $this->generateOpenAPIRequestBody($data['parameters']);
+                    $requestBody = $this->generateOpenAPIRequestBody($data['parameters'], $data['ignored_parameters'] ?? []);
                     //TODO: extend for description
                     $values['requestBody'] = $requestBody;
                 } else {
-                    $parameters = $this->generateOpenAPIParameters($data['parameters']);
+                    $parameters = $this->generateOpenAPIParameters($data['parameters'], '', $data['ignored_parameters'] ?? []);
                     foreach ($parameters as $parameter) {
                         $baseInfo['parameters'][] = $parameter;
                     }
@@ -474,8 +474,14 @@ class OpenApi
         ];
     }
 
-    private function generateOpenAPIRequestBody(array $validationRules): RequestBody
+    private function generateOpenAPIRequestBody(array $validationRules, array $ignoredParameters): RequestBody
     {
+        foreach ($validationRules as $name => $parameter) {
+            if (in_array($name, $ignoredParameters)) {
+                unset($validationRules[$name]);
+            }
+        }
+
         // Generate properties and required fields for the schema
         $schemaData = $this->generateOpenAPISchema($validationRules);
 
@@ -495,8 +501,14 @@ class OpenApi
         ]);
     }
 
-    private function generateOpenAPIParameters(array $validationRules, string $parentName = ''): array
+    private function generateOpenAPIParameters(array $validationRules, string $parentName = '', array $ignoredParameters = []): array
     {
+        foreach ($validationRules as $name => $parameter) {
+            if (in_array($name, $ignoredParameters)) {
+                unset($validationRules[$name]);
+            }
+        }
+
         $parameters = [];
 
         foreach ($validationRules as $name => $parameter) {

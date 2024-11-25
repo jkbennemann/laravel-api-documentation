@@ -13,6 +13,7 @@ use Illuminate\Validation\ValidationRuleParser;
 use JkBennemann\LaravelApiDocumentation\Attributes\AdditionalDocumentation;
 use JkBennemann\LaravelApiDocumentation\Attributes\DataResponse;
 use JkBennemann\LaravelApiDocumentation\Attributes\Description;
+use JkBennemann\LaravelApiDocumentation\Attributes\IgnoreDataParameter;
 use JkBennemann\LaravelApiDocumentation\Attributes\Parameter;
 use JkBennemann\LaravelApiDocumentation\Attributes\PathParameter;
 use JkBennemann\LaravelApiDocumentation\Attributes\Summary;
@@ -79,6 +80,7 @@ class RouteComposition
             }
 
             $routeParams = [];
+            $ignoredParameters = [];
 
             foreach ($attributes as $attr) {
                 if ($attr->getName() === Description::class) {
@@ -104,6 +106,11 @@ class RouteComposition
                     } elseif (is_array($tagsValue)) {
                         $tags = $tagsValue;
                     }
+                }
+                if ($attr->getName() === IgnoreDataParameter::class) {
+                    $ignoredParameters = $attr->getArguments()['parameters'] ?? $attr->getArguments()[0] ?? [];
+                    $ignoredParameters = explode(',', $ignoredParameters);
+                    $ignoredParameters = array_map('trim', $ignoredParameters);
                 }
 
                 if ($attr->getName() === DataResponse::class) {
@@ -214,6 +221,7 @@ class RouteComposition
                 'is_vendor' => $isVendorClass,
                 'request_parameters' => $routeParams,   //parameters for route
                 'parameters' => $availableRules,        //parameters for request, query/body
+                'ignored_parameters' => $ignoredParameters, //parameters that are not documented
                 'tags' => $tags,
                 'documentation' => $url ? [
                     'url' => $url,
