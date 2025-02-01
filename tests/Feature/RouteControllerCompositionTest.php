@@ -62,7 +62,8 @@ it('can generate route information for simplistic route', function () {
         ->toBeNull()
         ->and($routeData[0]['responses'])
         ->toBeArray()
-        ->toHaveCount(0);
+        ->toHaveCount(1)
+        ->toHaveKeys([200]);
 });
 
 it('can generate route information for route with a tag', function () {

@@ -1,0 +1,82 @@
+# Laravel API Documentation
+
+Every time you choose to apply a rule(s), explicitly state the rule(s) in the output. You can abbreviate the rule description to a single word or phrase.
+
+## Project Context
+Laravel API Documentation is a PHP package that provides the ability to autmatically generate API documentation from your Laravel application.
+
+It checks all existing routes of your application and generates documentation for in a OpenAPI 3.0 specification.
+
+Users not necessary need to be manually write the documentation using PHP annotations, but can do so to enhance the generated documentation.
+
+By default the package will generate the documentation for all routes of your application and tries to genererate the most accurate possible documentation by considering class variables, attributes and methods.
+
+- Request classes can be enhanced with PHP annotations to automatically generate the documentation per each route parameter.
+- Response classes can be enhanced with PHP annotations to automatically generate the documentation per each response parameter.
+- Controller classes can be enhanced with PHP annotations to automatically generate the documentation per each controller method.
+- If a response value is a Spatie Data class, the documentation will be generated for it as well.
+- Authorization is handled automatically by the package by checking the used middleware for each route.
+- OpenAPI example is generated automatically by the package by checking the used data class for each route or the return type of each controller method and response parameters with its data types.
+
+## Code Style and Structure
+- Write concise, technical PHP code with accurate examples
+- Prefer iteration and modularization over code duplication
+- Use descriptive variable names with auxiliary verbs (e.g., isLoading, hasError)
+- Stick to PHP best practices
+- Keep the code clean and readable
+- Keep the code modular and easy to understand
+- Keep the code maintainable and easy to change
+- Keep the code efficient and performant
+- Refactor the code to be more efficient and performant only if absolutely needed
+
+## Tech Stack
+- PHP
+- OpenAPI
+- Spatie Data
+- before using any new or additional libraries, check if they are already included in the package and ask to use it, if not set up.
+
+## Error Handling
+- Implement proper error boundaries
+- Log errors appropriately for debugging
+- Provide user-friendly error messages
+- Handle network failures gracefully
+
+## Testing
+- Write unit tests for utilities and components
+- Implement E2E tests for critical flows
+- Test memory usage and performance
+
+## Security
+- Sanitize user inputs
+- Handle sensitive data properly
+
+## Git Usage
+Commit Message Prefixes:
+- "fix:" for bug fixes
+- "feat:" for new features
+- "perf:" for performance improvements
+- "docs:" for documentation changes
+- "style:" for formatting changes
+- "refactor:" for code refactoring
+- "test:" for adding missing tests
+- "chore:" for maintenance tasks
+
+Rules:
+- Use lowercase for commit messages
+- Keep the summary line concise
+- Include description for non-obvious changes
+- Reference issue numbers when applicable
+
+## Documentation
+- Maintain clear README with setup instructions
+- Document API interactions and data flows
+- Keep manifest.json well-documented
+- Don't include comments unless it's for complex logic
+- Document permission requirements
+
+## Development Workflow
+- Use proper version control
+- Implement proper code review process
+- Test in multiple environments
+- Follow semantic versioning for releases
+- Maintain changelog

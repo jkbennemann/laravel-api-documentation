@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\SimpleController;
 use openapiphp\openapi\Reader;
+use openapiphp\openapi\spec\Components;
 
 it('can execute the command', function () {
     $this->artisan('documentation:generate');
@@ -34,7 +35,7 @@ it('can generate a simplistic documentation file', function () {
         ->and($parsedFile->paths)
         ->toHaveCount(1)
         ->and($parsedFile->components)
-        ->toBeNull();
+        ->toBeInstanceOf(Components::class);
 });
 
 it('can generate a simplistic documentation file with a different title', function () {

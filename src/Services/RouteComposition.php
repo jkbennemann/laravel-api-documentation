@@ -5,15 +5,18 @@ declare(strict_types=1);
 namespace JkBennemann\LaravelApiDocumentation\Services;
 
 use Illuminate\Config\Repository;
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Http\Resources\Json\ResourceCollection;
 use Illuminate\Routing\Route;
 use Illuminate\Routing\RouteCollectionInterface;
 use Illuminate\Routing\Router;
-use Illuminate\Validation\ValidationRuleParser;
-use JkBennemann\LaravelApiDocumentation\Attributes\AdditionalDocumentation;
+use Illuminate\Support\Collection;
 use JkBennemann\LaravelApiDocumentation\Attributes\DataResponse;
 use JkBennemann\LaravelApiDocumentation\Attributes\Description;
-use JkBennemann\LaravelApiDocumentation\Attributes\IgnoreDataParameter;
 use JkBennemann\LaravelApiDocumentation\Attributes\Parameter;
 use JkBennemann\LaravelApiDocumentation\Attributes\PathParameter;
 use JkBennemann\LaravelApiDocumentation\Attributes\Summary;
@@ -43,255 +46,443 @@ class RouteComposition
 
     public function process(): array
     {
-        $all = [];
+        $routes = [];
 
-        /** @var Route $route */
         foreach ($this->routes as $route) {
             $httpMethod = $route->methods()[0];
-            $uri = $route->uri();
+            $uri = $this->getSimplifiedRoute($route->uri());
+            $controller = $route->getController();
+            $action = $route->getActionMethod();
 
-            $middleswares = $this->getMiddlewares($route);
-            [$controller, $action] = $this->getControllerData($route);
-
-            if ($controller === null || $action === null) {
+            if (! $controller || ! $action) {
                 continue;
             }
 
-            $isVendorClass = $this->isVendorClass($controller);
-            $description = null;
-            $summary = null;
-            $tags = [];
-            $url = null;
-            $additionalDescription = null;
-            $responses = [];
-            $availableRules = [];
+            $actionMethod = new ReflectionMethod($controller, $action);
+            $middlewares = $route->middleware();
+            $isVendorClass = $this->isVendorClass(get_class($controller));
+            $tags = $this->processTags($controller, $action);
+            $description = $this->processDescription($controller, $action);
 
-            if ($this->shouldBeSkipped($uri, $httpMethod, $isVendorClass)) {
-                continue;
-            }
-
-            $urlParams = $this->extractPathPlaceholders($uri);
-
-            try {
-                $actionMethod = new ReflectionMethod($controller, $action);
-                $attributes = $actionMethod->getAttributes();
-            } catch (Throwable) {
-                continue;
-            }
-
-            $routeParams = [];
-            $ignoredParameters = [];
-
-            foreach ($attributes as $attr) {
-                if ($attr->getName() === Description::class) {
-                    $description = $attr->getArguments()[0] ?? null;
-                }
-                if ($attr->getName() === Summary::class) {
-                    $summary = $attr->getArguments()[0] ?? null;
-                }
-                if ($attr->getName() === AdditionalDocumentation::class) {
-                    $url = $attr->getArguments()['url'] ?? null;
-                    $additionalDescription = $attr->getArguments()['description'] ?? null;
-                }
-                if ($attr->getName() === Tag::class) {
-                    $tagsValue = $attr->getArguments()[0] ?? null;
-                    if (empty($tagsValue)) {
-                        $tags = null;
-                    }
-
-                    if (is_string($tagsValue)) {
-                        $value = explode(',', $tagsValue);
-                        $tags = array_map('trim', $value);
-                        $tags = array_filter($tags);
-                    } elseif (is_array($tagsValue)) {
-                        $tags = $tagsValue;
-                    }
-                }
-                if ($attr->getName() === IgnoreDataParameter::class) {
-                    $ignoredParameters = $attr->getArguments()['parameters'] ?? $attr->getArguments()[0] ?? [];
-                    $ignoredParameters = explode(',', $ignoredParameters);
-                    $ignoredParameters = array_map('trim', $ignoredParameters);
-                }
-
-                if ($attr->getName() === DataResponse::class) {
-                    $status = $attr->getArguments()['status'] ?? $attr->getArguments()[0];
-                    $responses[$status] = [
-                        'description' => $attr->getArguments()['description'] ?? $attr->getArguments()[1] ?? '',
-                        'resource' => $attr->getArguments()['resource'] ?? $attr->getArguments()[2] ?? '',
-                        'headers' => $attr->getArguments()['headers'] ?? $attr->getArguments()[3] ?? [],
-                    ];
-                }
-
-                if ($attr->getName() === PathParameter::class) {
-                    $name = $attr->getArguments()['name'] ?? $attr->getArguments()[0];
-                    $routeParams[$name] = [
-                        'description' => $attr->getArguments()['description'] ?? $attr->getArguments()[1] ?? '',
-                        'type' => $attr->getArguments()['type'] ?? $attr->getArguments()[2] ?? 'string',
-                        'format' => $attr->getArguments()['format'] ?? $attr->getArguments()[3] ?? null,
-                        'required' => $attr->getArguments()['required'] ?? $attr->getArguments()[4] ?? true,
-                        'example' => null,
-                    ];
-
-                    if ($routeParams[$name]['type'] === 'int') {
-                        $routeParams[$name]['type'] = 'integer';
-                    }
-
-                    if ($value = $attr->getArguments()['example'] ?? $attr->getArguments()[5] ?? null) {
-                        $routeParams[$name]['example'] = [
-                            'type' => $routeParams[$name]['type'],
-                            'value' => null,
-                            'format' => $routeParams[$name]['format'],
-                        ];
-                        $routeParams[$name]['example']['type'] = $routeParams[$name]['type'];
-                        $routeParams[$name]['example']['value'] = $value;
-
-                        if ($routeParams[$name]['format'] !== null) {
-                            $routeParams[$name]['example']['format'] = $routeParams[$name]['format'];
-                        }
-                    }
-                }
-            }
-
-            if (empty($routeParams) && !empty($urlParams)) {
-                $routeParams = null;
-                foreach ($urlParams as $urlParam) {
-                    $routeParams[$urlParam] = [
-                        'description' => '',
-                        'type' => 'string',
-                        'format' => null,
-                        'required' => true,
-                        'example' => null,
-                    ];
-                }
-            }
-
-            foreach ($actionMethod->getParameters() as $parameter) {
-                $parameterType = $parameter->getType();
-                if ($parameterType === null) {
-                    continue;
-                }
-                if (! $parameterType->isBuiltin()) {
-                    try {
-                        $classInstance = new ReflectionClass($parameterType->getName());
-                        $classInstance = $classInstance->newInstanceWithoutConstructor();
-                    } catch (Throwable) {
-                        $classInstance = app($parameterType->getName());
-                    }
-
-                    if ($classInstance instanceof Request) {
-                        //rules
-                        $rulesExist = method_exists($classInstance, 'rules');
-                        if ($rulesExist) {
-                            $actionMethod = new ReflectionMethod($classInstance, 'rules');
-                            $attributes = $actionMethod->getAttributes();
-
-                            $parser = new ValidationRuleParser([]);
-                            try {
-                                $rules = app()->call([$classInstance, 'rules']);
-                            } catch (Throwable) {
-                                continue;
-                            }
-                            $availableRules = $parser->explode($rules)->rules ?? [];
-                            ksort($availableRules);
-
-                            $availableRules = RuleParser::parse($rules);
-
-                            //enhance rules with additional parameter data
-                            foreach ($availableRules as $key => $value) {
-                                $attribute = $this->getRuleAttribute($key, $attributes);
-                                if ($attribute) {
-                                    $availableRules[$key]['description'] = $attribute->getArguments()['description'] ?? $value['description'];
-                                    $availableRules[$key]['required'] = $attribute->getArguments()['required'] ?? $availableRules[$key]['required'];
-                                    $availableRules[$key]['deprecated'] = $attribute->getArguments()['deprecated'] ?? $availableRules[$key]['deprecated'];
-                                    $availableRules[$key]['type'] = $attribute->getArguments()['type'] ?? $availableRules[$key]['type'];
-                                    $availableRules[$key]['format'] = $attribute->getArguments()['type'] ?? $availableRules[$key]['format'];
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            $all[] = [
+            $routes[] = [
                 'method' => $httpMethod,
                 'uri' => $uri,
-                'summary' => $summary,
+                'summary' => $this->processSummary($controller, $action),
                 'description' => $description,
-                'middlewares' => $middleswares,
+                'middlewares' => $middlewares,
                 'is_vendor' => $isVendorClass,
-                'request_parameters' => $routeParams,   //parameters for route
-                'parameters' => $availableRules,        //parameters for request, query/body
-                'ignored_parameters' => $ignoredParameters, //parameters that are not documented
-                'tags' => $tags,
-                'documentation' => $url ? [
-                    'url' => $url,
-                    'description' => $additionalDescription,
-                ] : null,
-                'responses' => $responses,
+                'parameters' => $this->processRequestParameters($controller, $action),
+                'request_parameters' => $this->processPathParameters($uri, $controller, $action),
+                'tags' => array_filter($tags),
+                'documentation' => null,
+                'responses' => $this->processReturnType($actionMethod),
+                'action' => [
+                    'controller' => get_class($controller),
+                    'method' => $action,
+                ],
             ];
         }
 
-        return $all;
+        return $routes;
     }
 
-    private function getMiddlewares(Route $route): array
+    private function extractPathPlaceholders(string $uri): array
     {
-        $middlewares = $route->getAction('middleware') ?? [];
-        if (is_string($middlewares)) {
-            $middlewares = [$middlewares];
+        $parameters = [];
+        preg_match_all('/{([^}]+)}/', $uri, $matches);
+
+        foreach ($matches[1] as $name) {
+            $parameters[$name] = [
+                'name' => $name,
+                'description' => '',
+                'type' => 'string',
+                'format' => null,
+                'required' => true,
+                'deprecated' => false,
+                'parameters' => [],
+            ];
         }
 
-        return $middlewares;
+        return $parameters;
     }
 
-    private function getControllerData(Route $route): array
+    private function processRequestParameters($controller, string $action): array
     {
-        $controllerAction = $route->getAction()['uses'];
-
+        $parameters = [];
         try {
-            return explode('@', $controllerAction);
-        } catch (Throwable) {
-            return [null, null];
-        }
-    }
+            $method = new ReflectionMethod($controller, $action);
 
-    private function extractPathPlaceholders(string $url): array
-    {
-        // Use regular expression to match content inside curly braces
-        preg_match_all('/\{([^\/]+?)\}/', $url, $matches);
+            // First try to get parameters from FormRequest
+            foreach ($method->getParameters() as $parameter) {
+                $parameterType = $parameter->getType();
+                if (! $parameterType) {
+                    continue;
+                }
 
-        // Return the matches found
-        return $matches[1];
-    }
+                $typeName = $parameterType->getName();
+                if (is_a($typeName, FormRequest::class, true)) {
+                    $requestClass = new $typeName;
+                    $rules = $requestClass->rules();
 
-    private function isVendorClass(mixed $controller): bool
-    {
-        $class = new ReflectionClass($controller);
+                    // Get Parameter attributes from the class
+                    $requestReflection = new ReflectionClass($typeName);
+                    $rulesMethod = $requestReflection->getMethod('rules');
+                    $parameterAttributes = $rulesMethod->getAttributes('JkBennemann\\LaravelApiDocumentation\\Attributes\\Parameter');
 
-        return str_contains($class->getFileName(), 'vendor/');
-    }
+                    $attributeParams = [];
+                    foreach ($parameterAttributes as $attribute) {
+                        $args = $attribute->getArguments();
+                        $name = $args['name'];
+                        $attributeParams[$name] = [
+                            'description' => $args['description'] ?? null,
+                            'format' => $args['format'] ?? null,
+                            'required' => $args['required'] ?? false,
+                        ];
+                    }
 
-    private function getRuleAttribute(int|string $ruleName, array $attributes): ?ReflectionAttribute
-    {
-        /** @var ReflectionAttribute $data */
-        foreach ($attributes as $data) {
-            if ($data->getName() !== Parameter::class) {
-                continue;
+                    // Group rules by base parameter
+                    $groupedRules = [];
+                    foreach ($rules as $name => $rule) {
+                        $parts = explode('.', $name);
+                        $base = $parts[0];
+
+                        if (! isset($groupedRules[$base])) {
+                            $groupedRules[$base] = [];
+                        }
+
+                        if (count($parts) > 1) {
+                            $subKey = implode('.', array_slice($parts, 1));
+                            $groupedRules[$base][$subKey] = $rule;
+                        } else {
+                            $groupedRules[$base]['_rule'] = $rule;
+                        }
+                    }
+
+                    // Process each base parameter
+                    foreach ($groupedRules as $base => $baseRules) {
+                        $baseRule = $baseRules['_rule'] ?? '';
+                        $baseRuleArray = is_string($baseRule) ? explode('|', $baseRule) : $baseRule;
+
+                        $parameters[$base] = [
+                            'name' => $base,
+                            'description' => $attributeParams[$base]['description'] ?? null,
+                            'type' => $this->determineParameterType($baseRuleArray),
+                            'format' => $this->determineParameterFormat($baseRuleArray),
+                            'required' => in_array('required', $baseRuleArray),
+                            'deprecated' => false,
+                            'parameters' => [],
+                        ];
+
+                        // Process nested parameters
+                        unset($baseRules['_rule']);
+                        foreach ($baseRules as $subKey => $subRule) {
+                            $subRuleArray = is_string($subRule) ? explode('|', $subRule) : $subRule;
+                            $subParts = explode('.', $subKey);
+                            $subName = end($subParts);
+
+                            $parameters[$base]['parameters'][$subName] = [
+                                'name' => $subName,
+                                'description' => $attributeParams[$subKey]['description'] ?? null,
+                                'type' => $this->determineParameterType($subRuleArray),
+                                'format' => $this->determineParameterFormat($subRuleArray),
+                                'required' => in_array('required', $subRuleArray),
+                                'deprecated' => false,
+                            ];
+                        }
+                    }
+
+                    return $parameters;
+                }
             }
 
-            $name = $data->getArguments()['name'] ?? null;
+            // If no FormRequest found, try to get parameters from method body
+            $methodBody = file_get_contents($method->getFileName());
+            $startLine = $method->getStartLine() - 1;
+            $endLine = $method->getEndLine() - $startLine;
+            $methodCode = implode('', array_slice(file($method->getFileName()), $startLine, $endLine));
 
-            if ($name && $name === $ruleName) {
-                return $data;
+            // Extract validation rules from $request->validate() calls
+            if (preg_match('/\$request->validate\(\s*\[(.*?)\]\s*\)/s', $methodCode, $matches)) {
+                $rulesString = $matches[1];
+                // Parse the validation rules
+                preg_match_all("/['\"]([\w_-]+)['\"](?:\s*=>\s*)['\"](.*?)['\"]/", $rulesString, $ruleMatches);
+
+                for ($i = 0; $i < count($ruleMatches[1]); $i++) {
+                    $name = $ruleMatches[1][$i];
+                    $rules = explode('|', $ruleMatches[2][$i]);
+
+                    $parameters[$name] = [
+                        'name' => $name,
+                        'description' => null,
+                        'type' => $this->determineParameterType($rules),
+                        'format' => $this->determineParameterFormat($rules),
+                        'required' => in_array('required', $rules),
+                        'deprecated' => false,
+                    ];
+                }
+            }
+        } catch (Throwable $e) {
+            // Log error but continue processing
+        }
+
+        return $parameters;
+    }
+
+    private function determineParameterType(array $rules): string
+    {
+        $typeMap = [
+            'numeric' => 'number',
+            'integer' => 'integer',
+            'boolean' => 'boolean',
+            'array' => 'array',
+            'file' => 'string',
+            'string' => 'string',
+            'email' => 'string',
+        ];
+
+        foreach ($rules as $rule) {
+            if (isset($typeMap[$rule])) {
+                return $typeMap[$rule];
+            }
+        }
+
+        return 'string';
+    }
+
+    private function determineParameterFormat(array $rules): ?string
+    {
+        if (! $rules) {
+            return null;
+        }
+
+        $formatMap = [
+            'email' => 'email',
+            'url' => 'url',
+            'date' => 'date',
+            'date_format' => 'date-time',
+            'uuid' => 'uuid',
+            'ip' => 'ipv4',
+            'ipv4' => 'ipv4',
+            'ipv6' => 'ipv6',
+        ];
+
+        foreach ($rules as $rule) {
+            if (isset($formatMap[$rule])) {
+                return $formatMap[$rule];
             }
         }
 
         return null;
     }
 
+    private function getControllerData(Route $route): array
+    {
+        $action = $route->getAction();
+
+        if (! isset($action['controller'])) {
+            return [null, null];
+        }
+
+        $parts = explode('@', $action['controller']);
+        if (count($parts) !== 2) {
+            return [null, null];
+        }
+
+        return $parts;
+    }
+
+    private function shouldBeSkipped(string $uri, string $httpMethod, bool $isVendorClass): bool
+    {
+        if (! $this->includeVendorRoutes && $isVendorClass) {
+            return true;
+        }
+
+        if (in_array($httpMethod, $this->excludedMethods, true)) {
+            return true;
+        }
+
+        foreach ($this->excludedRoutes as $excludedRoute) {
+            if (str_is($excludedRoute, $uri)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function getMiddlewares(Route $route): array
+    {
+        return array_map(function ($middleware) {
+            if (is_string($middleware)) {
+                return $middleware;
+            }
+            if (is_array($middleware) && isset($middleware[0])) {
+                return $middleware[0];
+            }
+
+            return '';
+        }, $route->gatherMiddleware());
+    }
+
+    private function isVendorClass(string $class): bool
+    {
+        return str_contains($class, 'vendor');
+    }
+
+    private function processParameters(Route $route): array
+    {
+        $parameters = [];
+        $parameterNames = $route->parameterNames();
+
+        foreach ($parameterNames as $name) {
+            $parameters[$name] = [
+                'name' => $name,
+                'description' => '',
+                'type' => 'string',
+                'format' => null,
+                'required' => true,
+                'deprecated' => false,
+                'parameters' => [],
+            ];
+        }
+
+        return $parameters;
+    }
+
+    private function processReturnType(ReflectionMethod $method): array
+    {
+        $responses = [];
+        $returnType = $method->getReturnType();
+        $statusCode = 200;
+        $description = '';
+        $headers = [];
+        $resource = null;
+
+        // Check for DataResponse attribute
+        $dataResponseAttr = $method->getAttributes(DataResponse::class)[0] ?? null;
+        if ($dataResponseAttr) {
+            $args = $dataResponseAttr->getArguments();
+            $statusCode = $args['status'] ?? 200;
+            $description = $args['description'] ?? '';
+            $headers = $args['headers'] ?? [];
+            $resource = $args['resource'] ?? null;
+        }
+
+        if ($returnType === null) {
+            $responses[$statusCode] = [
+                'description' => $description,
+                'resource' => $resource,
+                'headers' => $headers,
+                'type' => 'object',
+                'content_type' => 'application/json',
+            ];
+        } else {
+            $typeName = $returnType->getName();
+
+            if (is_a($typeName, Collection::class, true)) {
+                $responses[$statusCode] = [
+                    'description' => $description,
+                    'resource' => $resource ?? $typeName,
+                    'headers' => $headers,
+                    'type' => 'array',
+                    'content_type' => 'application/json',
+                    'items' => [
+                        'type' => 'object',
+                    ],
+                ];
+            } elseif (is_a($typeName, ResourceCollection::class, true) || is_a($typeName, AnonymousResourceCollection::class, true)) {
+                $responses[$statusCode] = [
+                    'description' => $description,
+                    'resource' => $resource ?? $typeName,
+                    'headers' => $headers,
+                    'type' => 'object',
+                    'content_type' => 'application/json',
+                    'properties' => [
+                        'data' => [
+                            'type' => 'array',
+                            'items' => [
+                                'type' => 'object',
+                            ],
+                        ],
+                        'meta' => ['type' => 'object'],
+                        'links' => ['type' => 'object'],
+                    ],
+                ];
+            } elseif (is_a($typeName, JsonResource::class, true)) {
+                $responses[$statusCode] = [
+                    'description' => $description,
+                    'resource' => $resource ?? $typeName,
+                    'headers' => $headers,
+                    'type' => 'object',
+                    'content_type' => 'application/json',
+                ];
+            } elseif (is_a($typeName, JsonResponse::class, true)) {
+                $responses[$statusCode] = [
+                    'description' => $description,
+                    'resource' => $resource ?? $typeName,
+                    'headers' => $headers,
+                    'type' => 'object',
+                    'content_type' => 'application/json',
+                ];
+            } else {
+                $responses[$statusCode] = [
+                    'description' => $description,
+                    'resource' => $resource ?? $typeName,
+                    'headers' => $headers,
+                    'type' => 'object',
+                    'content_type' => 'application/json',
+                ];
+            }
+        }
+
+        // Add validation error response if method has validation
+        if ($this->hasValidation($method)) {
+            $responses[422] = [
+                'description' => 'Validation error response',
+                'resource' => null,
+                'headers' => [],
+                'type' => 'object',
+                'content_type' => 'application/json',
+                'properties' => [
+                    'message' => ['type' => 'string'],
+                    'errors' => ['type' => 'object'],
+                ],
+            ];
+        }
+
+        return $responses;
+    }
+
+    private function hasValidation(ReflectionMethod $method): bool
+    {
+        try {
+            $methodBody = file_get_contents($method->getFileName());
+            $startLine = $method->getStartLine() - 1;
+            $endLine = $method->getEndLine() - $startLine;
+            $methodCode = implode('', array_slice(file($method->getFileName()), $startLine, $endLine));
+
+            return str_contains($methodCode, '$request->validate') ||
+                   str_contains($methodCode, 'ValidationException');
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
     private function getSimplifiedRoute(string $uri): string
     {
-        return preg_replace('/\{[^}]+\}/', '*', $uri);
+        return $uri;
+    }
+
+    private function getRuleAttribute(string $ruleName, array $attributes): ?ReflectionAttribute
+    {
+        /** @var ReflectionAttribute $data */
+        foreach ($attributes as $data) {
+            if (str_ends_with($data->getName(), $ruleName)) {
+                return $data;
+            }
+        }
+
+        return null;
     }
 
     private function matchUri(string $uri, string $pattern): bool
@@ -328,24 +519,191 @@ class RouteComposition
         return $matches;
     }
 
-    private function shouldBeSkipped(string $uri, string $httpMethod, bool $isVendorClass): bool
+    private function processValidationRules(ReflectionMethod $method): array
     {
-        if (! $this->includeVendorRoutes && $isVendorClass) {
-            return true;
-        }
+        $parameters = [];
 
-        foreach ($this->excludedRoutes as $excludedRoute) {
-            if ($this->matchUri($uri, $excludedRoute)) {
-                return true;
+        // Get validation rules from method parameters
+        foreach ($method->getParameters() as $parameter) {
+            if ($parameter->getType() && ! $parameter->getType()->isBuiltin()) {
+                $typeName = $parameter->getType()->getName();
+                if (is_a($typeName, Request::class, true)) {
+                    try {
+                        // Check for validate method call in the method body
+                        $methodBody = file_get_contents($method->getFileName());
+                        $startLine = $method->getStartLine() - 1;
+                        $endLine = $method->getEndLine() - $startLine;
+                        $methodCode = implode('', array_slice(file($method->getFileName()), $startLine, $endLine));
+
+                        if (preg_match('/\$request->validate\(\s*\[(.*?)\]\s*\)/s', $methodCode, $matches)) {
+                            $rulesString = $matches[1];
+                            // Parse the validation rules
+                            preg_match_all('/\'(.*?)\'\s*=>\s*\'(.*?)\'/', $rulesString, $ruleMatches);
+
+                            for ($i = 0; $i < count($ruleMatches[1]); $i++) {
+                                $field = $ruleMatches[1][$i];
+                                $rules = explode('|', $ruleMatches[2][$i]);
+
+                                $parameter = [
+                                    'name' => $field,
+                                    'description' => '',
+                                    'type' => 'string',
+                                    'format' => null,
+                                    'required' => in_array('required', $rules),
+                                    'deprecated' => false,
+                                ];
+
+                                // Process rules
+                                foreach ($rules as $rule) {
+                                    if ($rule === 'email') {
+                                        $parameter['format'] = 'email';
+                                    } elseif (in_array($rule, ['numeric', 'integer'])) {
+                                        $parameter['type'] = 'integer';
+                                    }
+                                }
+
+                                $parameters[$field] = $parameter;
+                            }
+                        }
+                    } catch (Throwable $e) {
+                        error_log('Error processing validation rules: '.$e->getMessage());
+                    }
+                }
             }
         }
 
-        foreach ($this->excludedMethods as $excludedMethod) {
-            if ($httpMethod === strtoupper($excludedMethod)) {
-                return true;
+        return $parameters;
+    }
+
+    private function normalizeType(string $type): string
+    {
+        return match ($type) {
+            'int' => 'integer',
+            default => $type,
+        };
+    }
+
+    private function processPathParameters(string $uri, $controller, string $action): array
+    {
+        $parameters = [];
+        preg_match_all('/{([^}]+)}/', $uri, $matches);
+        $method = new ReflectionMethod($controller, $action);
+        $pathParamAttrs = $method->getAttributes(PathParameter::class);
+
+        // First, collect all PathParameter attributes
+        $pathParams = [];
+        foreach ($pathParamAttrs as $attr) {
+            $args = $attr->getArguments();
+            if (isset($args['name'])) {
+                $pathParams[] = $args;
             }
         }
 
-        return false;
+        // Then process each URI parameter
+        foreach ($matches[1] as $index => $name) {
+            $cleanName = trim($name, '?');
+            $isOptional = str_contains($name, '?');
+
+            // Find matching PathParameter attribute
+            $pathParam = $pathParams[$index] ?? null;
+
+            if ($pathParam) {
+                $type = $this->normalizeType($pathParam['type'] ?? 'string');
+                $format = $pathParam['format'] ?? null;
+                $example = $pathParam['example'] ?? null;
+
+                $parameters[$pathParam['name']] = [
+                    'description' => $pathParam['description'] ?? '',
+                    'required' => $isOptional ? false : ($pathParam['required'] ?? true),
+                    'type' => $type,
+                    'format' => $format,
+                    'example' => $example ? [
+                        'type' => $type,
+                        'format' => $format,
+                        'value' => $example,
+                    ] : null,
+                ];
+            } else {
+                // Default values if no attribute found
+                $parameters[$cleanName] = [
+                    'description' => '',
+                    'required' => ! $isOptional,
+                    'type' => 'string',
+                    'format' => null,
+                    'example' => null,
+                ];
+            }
+        }
+
+        return $parameters;
+    }
+
+    private function processTags($controller, string $action): array
+    {
+        $tags = [];
+        try {
+            $method = new ReflectionMethod($controller, $action);
+            $attributes = $method->getAttributes();
+
+            foreach ($attributes as $attribute) {
+                if ($attribute->getName() === Tag::class) {
+                    $args = $attribute->getArguments();
+                    if (empty($args)) {
+                        continue;
+                    }
+
+                    $tagValue = $args[0];
+                    if (is_string($tagValue)) {
+                        $tags = array_merge($tags, explode(',', $tagValue));
+                    } elseif (is_array($tagValue)) {
+                        $tags = array_merge($tags, $tagValue);
+                    }
+                }
+            }
+        } catch (Throwable) {
+            // Ignore reflection errors
+        }
+
+        return array_map('trim', $tags);
+    }
+
+    private function processSummary($controller, string $action): ?string
+    {
+        try {
+            $method = new ReflectionMethod($controller, $action);
+            $attributes = $method->getAttributes();
+
+            foreach ($attributes as $attribute) {
+                if ($attribute->getName() === Summary::class) {
+                    $args = $attribute->getArguments();
+
+                    return $args[0] ?? null;
+                }
+            }
+        } catch (Throwable) {
+            // Ignore reflection errors
+        }
+
+        return null;
+    }
+
+    private function processDescription($controller, string $action): ?string
+    {
+        try {
+            $method = new ReflectionMethod($controller, $action);
+            $attributes = $method->getAttributes();
+
+            foreach ($attributes as $attribute) {
+                if ($attribute->getName() === Description::class) {
+                    $args = $attribute->getArguments();
+
+                    return $args[0] ?? null;
+                }
+            }
+        } catch (Throwable) {
+            // Ignore reflection errors
+        }
+
+        return null;
     }
 }

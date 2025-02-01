@@ -17,6 +17,5 @@ class Simple extends Data
     public function __construct(
         public string $firstName,
         public int $age,
-    ) {
-    }
+    ) {}
 }
