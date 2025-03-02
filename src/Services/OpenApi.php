@@ -57,7 +57,7 @@ class OpenApi
         $this->excludedRoutes = $repository->get('api-documentation.excluded_routes', []);
         $this->excludedMethods = $repository->get('api-documentation.excluded_methods', []);
         $this->includedSecuritySchemes = [];
-        
+
         $this->openApi = new \openapiphp\openapi\spec\OpenApi([
             'openapi' => '3.0.2',
             'info' => new Info([
@@ -231,6 +231,7 @@ class OpenApi
             $responses = [];
             foreach ($route['responses'] as $code => $response) {
                 $schema = null;
+                $customResponse = null;
                 $contentType = $response['content_type'] ?? 'application/json';
                 $type = $response['type'] ?? 'object';
 
@@ -280,6 +281,14 @@ class OpenApi
                                 ]);
                             }
                         }
+                    } else {
+                        if (isset($response['resource']) && is_string($response['resource'])) {
+                            //check if resource is valid class
+                            try {
+                                $customResponse = $this->generateOpenAPIResponseSchema($response);
+                            } catch (Throwable $e) {
+                            }
+                        }
                     }
 
                     $schema = new Schema([
@@ -290,15 +299,19 @@ class OpenApi
                     $schema = new Schema(['type' => $type]);
                 }
 
-                // Create response object
-                $responseObj = new Response([
-                    'description' => $response['description'] ?? '',
-                    'content' => [
-                        $contentType => new MediaType([
-                            'schema' => $schema,
-                        ]),
-                    ],
-                ]);
+                if (isset($customResponse)) {
+                    $responseObj = $customResponse;
+                } else {
+                    // Create response object
+                    $responseObj = new Response([
+                        'description' => $response['description'] ?? '',
+                        'content' => [
+                            $contentType => new MediaType([
+                                'schema' => $schema,
+                            ]),
+                        ],
+                    ]);
+                }
 
                 // Add headers if present
                 if (!empty($response['headers'])) {
