@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Route;
 use JkBennemann\LaravelApiDocumentation\Services\OpenApi;
 use JkBennemann\LaravelApiDocumentation\Services\RouteComposition;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\DtoResponseController;
+use openapiphp\openapi\spec\PathItem;
 use openapiphp\openapi\spec\RequestBody;
 use openapiphp\openapi\spec\Schema;
 
@@ -40,7 +41,8 @@ it('can generate a simplistic documentation file', function () {
         ->and($openApi->servers[0]->description)
         ->toBe('Service')
         ->and($openApi->paths)
-        ->toHaveKeys(['/route-1'])
+        ->and($openApi->paths->getPath('/route-1'))
+        ->toBeInstanceOf(PathItem::class)
         ->and($openApi->paths['/route-1']->get->summary)
         ->toBe('')
         ->and($openApi->paths['/route-1']->get->description)
@@ -61,7 +63,8 @@ it('can generate a documentation file from a request parameter', function () {
     expect($openApi)
         ->toBeInstanceOf(\openapiphp\openapi\spec\OpenApi::class)
         ->and($openApi->paths)
-        ->toHaveKeys(['/route-1'])
+        ->and($openApi->paths->getPath('/route-1'))
+        ->toBeInstanceOf(PathItem::class)
         ->and($openApi->paths['/route-1']->get->summary)
         ->toBe('')
         ->and($openApi->paths['/route-1']->get->description)
@@ -82,7 +85,8 @@ it('can generate a documentation file from for nested Body', function () {
     expect($openApi)
         ->toBeInstanceOf(\openapiphp\openapi\spec\OpenApi::class)
         ->and($openApi->paths)
-        ->toHaveKeys(['/route-1'])
+        ->and($openApi->paths->getPath('/route-1'))
+        ->toBeInstanceOf(PathItem::class)
         ->and($openApi->paths['/route-1']->post->summary)
         ->toBe('')
         ->and($openApi->paths['/route-1']->post->description)
@@ -127,10 +131,12 @@ it('can generate a documentation file with 200 response resource', function () {
     $service->processRoutes($routeData);
     $openApi = $service->get();
 
+    ray($openApi->paths);
+
     expect($openApi)
         ->toBeInstanceOf(\openapiphp\openapi\spec\OpenApi::class)
-        ->and($openApi->paths)
-        ->toHaveKeys(['/route-1'])
+        ->and($openApi->paths->getPath('/route-1'))
+        ->toBeInstanceOf(PathItem::class)
         ->and($openApi->paths['/route-1']->get->summary)
         ->toBe('')
         ->and($openApi->paths['/route-1']->get->description)
@@ -155,8 +161,8 @@ it('can generate a documentation file with 200 DTO response by annotation', func
 
     expect($openApi)
         ->toBeInstanceOf(\openapiphp\openapi\spec\OpenApi::class)
-        ->and($openApi->paths)
-        ->toHaveKeys(['/route-1'])
+        ->and($openApi->paths->getPath('/route-1'))
+        ->toBeInstanceOf(PathItem::class)
         ->and($openApi->paths['/route-1']->get->summary)
         ->toBe('')
         ->and($openApi->paths['/route-1']->get->description)

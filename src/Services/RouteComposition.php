@@ -48,17 +48,27 @@ class RouteComposition
     {
         $routes = [];
 
+        /** @var Route $route */
         foreach ($this->routes as $route) {
             $httpMethod = $route->methods()[0];
             $uri = $this->getSimplifiedRoute($route->uri());
-            $controller = $route->getController();
+            try {
+                $controller = $route->getController();
+            } catch (Throwable) {
+                continue;
+            }
+
             $action = $route->getActionMethod();
 
             if (! $controller || ! $action) {
                 continue;
             }
 
-            $actionMethod = new ReflectionMethod($controller, $action);
+            try {
+                $actionMethod = new ReflectionMethod($controller, $action);
+            } catch (\ReflectionException $e) {
+                continue;
+            }
             $middlewares = $route->middleware();
             $isVendorClass = $this->isVendorClass(get_class($controller));
             $tags = $this->processTags($controller, $action);

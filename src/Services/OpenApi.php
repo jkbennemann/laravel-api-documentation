@@ -45,9 +45,19 @@ class OpenApi
 
     private Repository $repository;
 
+    private array $excludedRoutes;
+
+    private array $excludedMethods;
+
+    private array $includedSecuritySchemes = [];
+
     public function __construct(Repository $repository)
     {
         $this->repository = $repository;
+        $this->excludedRoutes = $repository->get('api-documentation.excluded_routes', []);
+        $this->excludedMethods = $repository->get('api-documentation.excluded_methods', []);
+        $this->includedSecuritySchemes = [];
+        
         $this->openApi = new \openapiphp\openapi\spec\OpenApi([
             'openapi' => '3.0.2',
             'info' => new Info([
@@ -102,18 +112,32 @@ class OpenApi
 
     public function processRoutes(array $routes): self
     {
-        $paths = new \ArrayObject;
+        $paths = new \openapiphp\openapi\spec\Paths([]);
 
         foreach ($routes as $route) {
+            if ($this->shouldSkipRoute($route)) {
+                continue;
+            }
+
             $uri = $route['uri'];
             if (! str_starts_with($uri, '/')) {
                 $uri = '/'.$uri;
             }
 
-            $pathItem = new PathItem([]);
+            // Get or create path item
+            $pathItem = $paths[$uri] ?? new PathItem([]);
+
+            // Create operation
             $operation = $this->createOperation($route);
 
-            switch (strtolower($route['method'])) {
+            // Add security if middleware contains auth
+            if (!empty($route['middlewares'])) {
+                $this->processSecuritySchemes($route['middlewares'], $operation, $this->includedSecuritySchemes);
+            }
+
+            // Set operation based on HTTP method
+            $method = strtolower($route['method']);
+            switch ($method) {
                 case 'get':
                     $pathItem->get = $operation;
                     break;
@@ -144,16 +168,31 @@ class OpenApi
         }
 
         $this->openApi->paths = $paths;
+        $this->setSecuritySchemes();
 
         return $this;
     }
 
     private function createOperation(array $route): Operation
     {
+        // Initialize with default response
+        $defaultResponse = new Response([
+            'description' => '',
+            'content' => [
+                'application/json' => new MediaType([
+                    'schema' => new Schema(['type' => 'object']),
+                ]),
+            ],
+        ]);
+
         $operation = new Operation([
             'summary' => $route['summary'] ?? '',
             'description' => $route['description'] ?? '',
             'tags' => array_values(array_filter($route['tags'] ?? [])),
+            'parameters' => [],
+            'responses' => [
+                '200' => $defaultResponse,
+            ],
         ]);
 
         // Add path parameters
@@ -188,8 +227,8 @@ class OpenApi
         }
 
         // Add responses
-        $responses = new \ArrayObject;
         if (! empty($route['responses'])) {
+            $responses = [];
             foreach ($route['responses'] as $code => $response) {
                 $schema = null;
                 $contentType = $response['content_type'] ?? 'application/json';
@@ -251,28 +290,34 @@ class OpenApi
                     $schema = new Schema(['type' => $type]);
                 }
 
-                $responses[$code] = new Response([
+                // Create response object
+                $responseObj = new Response([
                     'description' => $response['description'] ?? '',
                     'content' => [
                         $contentType => new MediaType([
                             'schema' => $schema,
                         ]),
                     ],
-                    'headers' => $this->processResponseHeaders($response['headers'] ?? []),
                 ]);
-            }
-        } else {
-            $responses['200'] = new Response([
-                'description' => '',
-                'content' => [
-                    'application/json' => new MediaType([
-                        'schema' => new Schema(['type' => 'object']),
-                    ]),
-                ],
-            ]);
-        }
 
-        $operation->responses = $responses;
+                // Add headers if present
+                if (!empty($response['headers'])) {
+                    $headers = [];
+                    foreach ($response['headers'] as $name => $header) {
+                        $headers[$name] = new Header([
+                            'description' => $header['description'] ?? '',
+                            'schema' => new Schema([
+                                'type' => $header['type'] ?? 'string',
+                            ]),
+                        ]);
+                    }
+                    $responseObj->headers = $headers;
+                }
+
+                $responses[$code] = $responseObj;
+            }
+            $operation->responses = $responses;
+        }
 
         return $operation;
     }

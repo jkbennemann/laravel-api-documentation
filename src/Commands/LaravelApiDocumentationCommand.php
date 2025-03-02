@@ -28,7 +28,9 @@ class LaravelApiDocumentationCommand extends Command
         $this->line(count($routesData).' routes generated for documentation');
 
         try {
-            $json = Writer::writeToJson($openApiService->processRoutes($routesData)->get());
+            $openApi = $openApiService->processRoutes($routesData)->get();
+
+            $json = Writer::writeToJson($openApi);
 
             $path = $this->getPath();
 
