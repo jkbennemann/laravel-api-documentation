@@ -17,6 +17,7 @@ use Illuminate\Routing\Router;
 use Illuminate\Support\Collection;
 use JkBennemann\LaravelApiDocumentation\Attributes\DataResponse;
 use JkBennemann\LaravelApiDocumentation\Attributes\Description;
+use JkBennemann\LaravelApiDocumentation\Attributes\DocumentationFile;
 use JkBennemann\LaravelApiDocumentation\Attributes\Parameter;
 use JkBennemann\LaravelApiDocumentation\Attributes\PathParameter;
 use JkBennemann\LaravelApiDocumentation\Attributes\Summary;
@@ -36,15 +37,18 @@ class RouteComposition
 
     private array $excludedMethods;
 
+    private ?string $defaultDocFile;
+
     public function __construct(protected Router $router, private readonly Repository $configuration)
     {
         $this->routes = $router->getRoutes();
         $this->includeVendorRoutes = $this->configuration->get('api-documentation.include_vendor_routes', false);
         $this->excludedRoutes = $this->configuration->get('api-documentation.excluded_routes', []);
         $this->excludedMethods = $this->configuration->get('api-documentation.excluded_methods', []);
+        $this->defaultDocFile = $this->configuration->get('api-documentation.ui.storage.default_file', null);
     }
 
-    public function process(): array
+    public function process(?string $docName = null): array
     {
         $routes = [];
 
@@ -69,6 +73,12 @@ class RouteComposition
             } catch (\ReflectionException $e) {
                 continue;
             }
+
+            if (!is_null($docName) && !$this->belongsToDoc($docName, $controller, $action)) {
+                // Check belonging to doc only if doc is provided
+                continue;
+            }
+
             $middlewares = $route->middleware();
             $isVendorClass = $this->isVendorClass(get_class($controller));
             $tags = $this->processTags($controller, $action);
@@ -646,6 +656,38 @@ class RouteComposition
         }
 
         return $parameters;
+    }
+
+    private function belongsToDoc(string $docName, $controller, string $action): bool
+    {
+        $docFiles = [];
+        try {
+            $method = new ReflectionMethod($controller, $action);
+            $attributes = $method->getAttributes();
+
+            foreach ($attributes as $attribute) {
+                if ($attribute->getName() === DocumentationFile::class) {
+                    $args = $attribute->getArguments();
+
+                    $docFileValue = $args[0];
+                    if (is_string($docFileValue)) {
+                        $docFiles = array_merge($docFiles, explode(',', $docFileValue));
+                    } elseif (is_array($docFileValue)) {
+                        $docFiles = array_merge($docFiles, $docFileValue);
+                    }
+                }
+            }
+
+            if(empty($docFiles)) {
+                // If no doc attributes provided - try default doc
+                return $docName === $this->defaultDocFile;
+            }
+
+            return in_array($docName, $docFiles);
+        } catch (Throwable) {
+            // Ignore reflection errors
+        }
+        return false;
     }
 
     private function processTags($controller, string $action): array
