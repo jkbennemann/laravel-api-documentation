@@ -34,7 +34,16 @@
         // Build a system
         const ui = SwaggerUIBundle({
             dom_id: '#swagger-ui',
-            url: "<?php echo $documentationFile; ?>",
+            @isset($documentationFile)
+                url: "{!! $documentationFile !!}",
+            @endisset
+            @if(!empty($documentationFiles))
+                urls: [
+                    @foreach($documentationFiles as $file)
+                        { url: "{!! $file['filename'] !!}", name: "{!! $file['name'] !!}" },
+                    @endforeach
+                ],
+            @endif
 
             operationsSorter: {!! isset($operationsSorter) ? '"' . $operationsSorter . '"' : 'null' !!},
             configUrl: {!! isset($additionalConfigUrl) ? '"' . $additionalConfigUrl . '"' : 'null' !!},

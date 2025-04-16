@@ -53,6 +53,14 @@ return [
         'storage' => [
             'disk' => 'public',
             'filename' => 'api-documentation.json',
+            'default_file' => 'default',
+            'files' => [
+                'default' => [
+                    'name' => 'Default doc',
+                    'filename' => 'api-documentation.json',
+                    'process' => true
+                ],
+            ],
         ],
     ],
 

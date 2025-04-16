@@ -5,13 +5,8 @@ declare(strict_types=1);
 namespace JkBennemann\LaravelApiDocumentation\Commands;
 
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\File;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
-use JkBennemann\LaravelApiDocumentation\Services\OpenApi;
-use JkBennemann\LaravelApiDocumentation\Services\RouteComposition;
-use openapiphp\openapi\Writer;
-use Throwable;
+use JkBennemann\LaravelApiDocumentation\Exceptions\DocumentationException;
+use JkBennemann\LaravelApiDocumentation\Services\DocumentationBuilder;
 
 class LaravelApiDocumentationCommand extends Command
 {
@@ -19,68 +14,70 @@ class LaravelApiDocumentationCommand extends Command
 
     public $description = 'Documentation generator for Laravel API';
 
-    public function handle(RouteComposition $routeService, OpenApi $openApiService): int
+    public function handle(DocumentationBuilder $builder): int
     {
         $this->comment('Generating documentation...');
 
-        $routesData = $routeService->process();
+        $docFiles = config('api-documentation.ui.storage.files', []);
 
-        $this->line(count($routesData).' routes generated for documentation');
+        foreach ($docFiles as $docName => $file) {
+            // Delete all non-processable files
+            if(!isset($file['process']) || !$file['process']) {
+                unset($docFiles[$docName]);
+            }
+        }
 
-        try {
-            $openApi = $openApiService->processRoutes($routesData)->get();
+        foreach ($docFiles as $docName => $file) {
+            if(!isset($file['filename'])) {
+                $this->error("Configuration error at doc {$docName} - all storages must have a filename");
+            }
 
-            $json = Writer::writeToJson($openApi);
+            try {
+                foreach ($builder->build($file['filename'], $file['name'] ?? null, $docName) as $message) {
+                    $this->info($message);
+                }
+                $this->newLine();
+            } catch (DocumentationException $e) {
+                $this->error($e->getMessage());
+                continue;
+            }
+        }
 
-            $path = $this->getPath();
+        if (empty($docFiles)) {
+            // If there are no processable doc files - work with single json file the old way
+            // (for backward compatibility)
+            $filename = config('api-documentation.ui.storage.filename', 'api-documentation.json');
 
-            $success = File::put($path, $json);
-
-            if ($success === false) {
-                $this->error('Error writing documentation to file: Could not write to file.');
+            try {
+                foreach ($builder->build($filename) as $message) {
+                    $this->info($message);
+                }
+                $this->newLine();
+            } catch (DocumentationException $e) {
+                $this->error($e->getMessage());
 
                 return self::FAILURE;
             }
+        }
 
-            $this->info('Generation completed.');
-            $this->newLine();
+        if (config('api-documentation.ui.swagger.enabled', false) === true ||
+            config('api-documentation.ui.redoc.enabled', false) === true) {
+            $default = config('api-documentation.ui.default', false);
 
-            if (config('api-documentation.ui.swagger.enabled', false) === true ||
-                config('api-documentation.ui.redoc.enabled', false) === true) {
-                $default = config('api-documentation.ui.default', false);
+            $this->line('You can view the documentation at:');
+            $this->line('Default Documentation ('.$default.'): '.config('app.url').'/documentation');
 
-                $this->line('You can view the documentation at:');
-                $this->line('Default Documentation ('.$default.'): '.config('app.url').'/documentation');
-
-                if (config('api-documentation.ui.swagger.enabled', false) === true) {
-                    $this->line('Swagger: '.config('app.url').config('api-documentation.ui.swagger.route'));
-                }
-                if (config('api-documentation.ui.redoc.enabled', false) === true) {
-                    $this->line('Redoc: '.config('app.url').config('api-documentation.ui.redoc.route'));
-                }
-            } else {
-                $this->comment('You need to enable at least one UI inside "config/api-documentation.php" to view the documentation!');
-                $this->comment('To publish the configuration file run: "php artisan vendor:publish --tag=api-documentation-config"');
+            if (config('api-documentation.ui.swagger.enabled', false) === true) {
+                $this->line('Swagger: '.config('app.url').config('api-documentation.ui.swagger.route'));
             }
-
-            return self::SUCCESS;
-
-        } catch (Throwable $e) {
-            $this->error('Error writing documentation to file: '.$e->getMessage());
-
-            return self::FAILURE;
-        }
-    }
-
-    private function getPath(): string
-    {
-        $filename = config('api-documentation.ui.storage.filename', 'api-documentation.json');
-
-        if (Str::endsWith($filename, '.json') === false) {
-            $filename .= '.json';
+            if (config('api-documentation.ui.redoc.enabled', false) === true) {
+                $this->line('Redoc: '.config('app.url').config('api-documentation.ui.redoc.route'));
+            }
+        } else {
+            $this->comment('You need to enable at least one UI inside "config/api-documentation.php" to view the documentation!');
+            $this->comment('To publish the configuration file run: "php artisan vendor:publish --tag=api-documentation-config"');
         }
 
-        return Storage::disk(config('api-documentation.ui.storage.disk', 'public'))
-            ->path($filename);
+        return self::SUCCESS;
     }
 }
