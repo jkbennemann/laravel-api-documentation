@@ -34,7 +34,7 @@ class DocumentationBuilder
             $path = $this->getPath($filename);
             $success = File::put($path, $json);
             if ($success === false) {
-                throw new DocumentationException("Error writing documentation to file {$filename}: Could not write to file.");
+                throw new DocumentationException("Could not write to file.");
             }
 
             yield "Generation for {$name} completed.";
