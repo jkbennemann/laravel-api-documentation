@@ -12,7 +12,7 @@ use Spatie\LaravelData\Mappers\SnakeCaseMapper;
 #[MapName(SnakeCaseMapper::class)]
 #[Parameter(name: 'first_name', type: 'string', format: 'email', description: 'The first name')]
 #[Parameter(name: 'age', type: 'integer')]
-class Simple extends Data
+class SimpleAnnotated extends Data
 {
     public function __construct(
         public string $firstName,
