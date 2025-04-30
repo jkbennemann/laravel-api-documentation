@@ -5,11 +5,12 @@ declare(strict_types=1);
 namespace JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers;
 
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Routing\Controller;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\DTOs\NestedData;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Resources\DataResource;
 
-class DtoControllerController extends Controller
+class DtoController extends Controller
 {
     public function nestedSimple(): NestedData
     {
@@ -19,6 +20,16 @@ class DtoControllerController extends Controller
     public function nestedResource(): DataResource
     {
         return new DataResource($this->dto());
+    }
+
+    public function nestedResourceCollection(): AnonymousResourceCollection
+    {
+        $data = collect([
+            $this->dto(),
+            $this->dto(),
+        ]);
+
+        return DataResource::collection($data);
     }
 
     public function nestedJsonData(): JsonResponse
