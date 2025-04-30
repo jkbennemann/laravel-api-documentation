@@ -131,8 +131,6 @@ it('can generate a documentation file with 200 response resource', function () {
     $service->processRoutes($routeData);
     $openApi = $service->get();
 
-    ray($openApi->paths);
-
     expect($openApi)
         ->toBeInstanceOf(\openapiphp\openapi\spec\OpenApi::class)
         ->and($openApi->paths->getPath('/route-1'))
