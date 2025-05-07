@@ -27,13 +27,14 @@
 <body>
 
 <select id="doc-switcher">
-    @isset($documentationFile)
-        <option value="<?php echo $documentationFile; ?>">Default</option>
-    @endisset
     @if(!empty($documentationFiles))
         @foreach($documentationFiles as $file)
             <option value="{!! $file['filename'] !!}">{!! $file['name'] !!}</option>
         @endforeach
+    @else
+        @isset($documentationFile)
+            <option value="<?php echo $documentationFile; ?>">Default</option>
+        @endisset
     @endif
 </select>
 

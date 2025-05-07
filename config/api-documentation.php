@@ -63,6 +63,18 @@ return [
             ],
         ],
     ],
+    'domains' => [
+        'default' => [
+            'title' => Str::title(env('APP_NAME', 'Service')).' API Documentation',
+            'main' => env('APP_URL', 'http://localhost'),
+            'servers' => [
+                [
+                    'url' => env('APP_URL', 'http://localhost'),
+                    'description' => env('APP_NAME', 'Service'),
+                ],
+            ],
+        ]
+    ],
 
     /*
     |--------------------------------------------------------------------------
