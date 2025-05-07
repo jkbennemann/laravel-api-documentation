@@ -25,6 +25,9 @@ class DocumentationBuilder
         if (!isset($name)) {
             $name = $filename;
         }
+
+        $this->setSwaggerDetails($docName);
+
         $routesData = $this->routeService->process($docName);
 
         yield count($routesData).' routes generated for ' . $name;
@@ -52,5 +55,15 @@ class DocumentationBuilder
 
         return Storage::disk(config('api-documentation.ui.storage.disk', 'public'))
             ->path($filename);
+    }
+
+    private function setSwaggerDetails($docName)
+    {
+        $prefix = 'api-documentation.domains.' . $docName;
+
+        if (config($prefix)) {
+            $this->openApiService->get()->servers = config($prefix . '.servers');
+            $this->openApiService->get()->info->title = config($prefix . '.title');
+        }
     }
 }

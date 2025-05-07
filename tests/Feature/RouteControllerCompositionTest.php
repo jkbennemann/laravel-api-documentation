@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Route;
 use JkBennemann\LaravelApiDocumentation\Services\RouteComposition;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\DtoResponseController;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\SimpleController;
-use JkBennemann\LaravelApiDocumentation\Tests\Stubs\DTOs\Simple;
+use JkBennemann\LaravelApiDocumentation\Tests\Stubs\DTOs\SimpleAnnotated;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Resources\SampleResource;
 
 it('can create an instance of the service', function () {
@@ -357,7 +357,7 @@ it('can generate route information for route with a spatie dto resource', functi
             'headers',
         ])
         ->and($routeData[0]['responses'][200]['resource'])
-        ->toBe(Simple::class)
+        ->toBe(SimpleAnnotated::class)
         ->and($routeData[0]['responses'][200]['description'])
         ->toBe('A sample description')
         ->and($routeData[0]['responses'][200]['headers'])
