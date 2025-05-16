@@ -62,16 +62,17 @@ class LaravelApiDocumentationCommand extends Command
 
         if (config('api-documentation.ui.swagger.enabled', false) === true ||
             config('api-documentation.ui.redoc.enabled', false) === true) {
+            $appURL = config('app.url').(config('api-documentation.app.port') ? ':'.config('api-documentation.app.port') : '');
             $default = config('api-documentation.ui.default', false);
 
             $this->line('You can view the documentation at:');
-            $this->line('Default Documentation ('.$default.'): '.config('app.url').'/documentation');
+            $this->line('Default Documentation ('.$default.'): '.$appURL.'/documentation');
 
             if (config('api-documentation.ui.swagger.enabled', false) === true) {
-                $this->line('Swagger: '.config('app.url').config('api-documentation.ui.swagger.route'));
+                $this->line('Swagger: '.$appURL.config('api-documentation.ui.swagger.route'));
             }
             if (config('api-documentation.ui.redoc.enabled', false) === true) {
-                $this->line('Redoc: '.config('app.url').config('api-documentation.ui.redoc.route'));
+                $this->line('Redoc: '.$appURL.config('api-documentation.ui.redoc.route'));
             }
         } else {
             $this->comment('You need to enable at least one UI inside "config/api-documentation.php" to view the documentation!');
