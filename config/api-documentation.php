@@ -168,4 +168,7 @@ return [
             'uuid' => ['type' => 'string', 'format' => 'uuid'],
         ],
     ],
+    'app' => [
+        'port' => env('APP_PORT'),
+    ],
 ];
