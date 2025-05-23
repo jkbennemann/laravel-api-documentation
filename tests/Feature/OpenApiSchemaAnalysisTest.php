@@ -23,20 +23,20 @@ class OpenApiSchemaAnalysisTest extends TestCase
         Route::get('users', [EnhancedApiController::class, 'index'])->name('users.index');
         Route::post('users', [EnhancedApiController::class, 'store'])->name('users.store');
         Route::get('users/{id}', [EnhancedApiController::class, 'show'])->name('users.show');
-        
+
         Route::get('dto', [DtoController::class, 'getData'])->name('dto.get');
         Route::post('dto', [DtoController::class, 'postData'])->name('dto.post');
-        
+
         Route::get('dynamic/{id}', [DynamicResponseController::class, 'attach'])->name('dynamic.attach');
         Route::get('dynamic/collection', [DynamicResponseController::class, 'getSubscriptionEntitiesResource'])->name('dynamic.collection');
-        
+
         $routeComposition = app(RouteComposition::class);
         $openApi = app(OpenApi::class);
-        
+
         // Generate complete documentation
         $routes = $routeComposition->process();
         $openApiSpec = $openApi->processRoutes($routes)->get();
-        
+
         // Analyze generated schema for completeness
         $this->analyzeQueryParameterHandling($openApiSpec);
         $this->analyzeRequestBodyHandling($openApiSpec);
@@ -45,11 +45,10 @@ class OpenApiSchemaAnalysisTest extends TestCase
         $this->analyzeResponseHeaders($openApiSpec);
         $this->analyzeSpatieDataIntegration($openApiSpec);
         $this->analyzeJsonResourceDynamicAnalysis($openApiSpec);
-        
-        dump('🎯 OpenAPI Schema Analysis Complete');
+
         expect(true)->toBeTrue('Analysis completed successfully');
     }
-    
+
     /**
      * Analyze query parameter handling accuracy
      */
@@ -57,17 +56,16 @@ class OpenApiSchemaAnalysisTest extends TestCase
     {
         $usersGetOperation = $spec->paths['/users']->get ?? null;
         expect($usersGetOperation)->not()->toBeNull('Users GET operation should exist');
-        
+
         if ($usersGetOperation && $usersGetOperation->parameters) {
             $queryParams = collect($usersGetOperation->parameters)
                 ->filter(fn($param) => $param->in === 'query')
                 ->keyBy(fn($param) => $param->name);
-                
+
             // Check if attribute-defined query parameters are properly extracted
             $expectedQueryParams = ['search', 'page', 'per_page', 'status'];
             foreach ($expectedQueryParams as $expectedParam) {
                 if ($queryParams->has($expectedParam)) {
-                    dump("✅ Query parameter '{$expectedParam}' found");
                     $param = $queryParams[$expectedParam];
                     expect($param->description)->not()->toBeEmpty("Query param '{$expectedParam}' should have description");
                     expect($param->schema->type)->not()->toBeEmpty("Query param '{$expectedParam}' should have type");
@@ -75,12 +73,11 @@ class OpenApiSchemaAnalysisTest extends TestCase
                     dump("❌ Query parameter '{$expectedParam}' missing from schema");
                 }
             }
-            
+
             // Check enum handling for status parameter
             if ($queryParams->has('status')) {
                 $statusParam = $queryParams['status'];
                 if (isset($statusParam->schema->enum)) {
-                    dump("✅ Status parameter has enum values");
                     expect($statusParam->schema->enum)->toContain('active', 'inactive', 'pending');
                 } else {
                     dump("❌ Status parameter missing enum values");
@@ -90,7 +87,7 @@ class OpenApiSchemaAnalysisTest extends TestCase
             dump("❌ No query parameters found in users GET operation");
         }
     }
-    
+
     /**
      * Analyze request body handling for Spatie Data and FormRequest
      */
@@ -98,29 +95,25 @@ class OpenApiSchemaAnalysisTest extends TestCase
     {
         $usersPostOperation = $spec->paths['/users']->post ?? null;
         expect($usersPostOperation)->not()->toBeNull('Users POST operation should exist');
-        
+
         if ($usersPostOperation && $usersPostOperation->requestBody) {
             $requestBody = $usersPostOperation->requestBody;
             $jsonContent = $requestBody->content['application/json'] ?? null;
-            
+
             if ($jsonContent && $jsonContent->schema) {
-                dump("✅ Request body schema found");
                 $schema = $jsonContent->schema;
-                
+
                 // Check if Spatie Data properties are properly extracted
                 if (isset($schema->properties)) {
                     $expectedProperties = ['name', 'email', 'password', 'is_active', 'preferences'];
                     foreach ($expectedProperties as $property) {
-                        if (isset($schema->properties[$property])) {
-                            dump("✅ Request property '{$property}' found");
-                        } else {
+                        if (!isset($schema->properties[$property])) {
                             dump("❌ Request property '{$property}' missing");
                         }
                     }
-                    
+
                     // Check required fields
                     if (isset($schema->required)) {
-                        dump("✅ Required fields defined: " . implode(', ', $schema->required));
                         expect($schema->required)->toContain('name', 'email');
                     } else {
                         dump("❌ No required fields defined in request schema");
@@ -135,7 +128,7 @@ class OpenApiSchemaAnalysisTest extends TestCase
             dump("❌ Users POST operation has no request body");
         }
     }
-    
+
     /**
      * Analyze response schema accuracy and completeness
      */
@@ -146,18 +139,15 @@ class OpenApiSchemaAnalysisTest extends TestCase
         if ($usersShowOperation && isset($usersShowOperation->responses['200'])) {
             $response = $usersShowOperation->responses['200'];
             $jsonContent = $response->content['application/json'] ?? null;
-            
+
             if ($jsonContent && $jsonContent->schema) {
-                dump("✅ Response schema found for user show");
                 $schema = $jsonContent->schema;
-                
+
                 if (isset($schema->properties)) {
                     // Check if UserData properties are properly extracted
                     $expectedProperties = ['id', 'name', 'email'];
                     foreach ($expectedProperties as $property) {
-                        if (isset($schema->properties[$property])) {
-                            dump("✅ Response property '{$property}' found");
-                        } else {
+                        if (!isset($schema->properties[$property])) {
                             dump("❌ Response property '{$property}' missing");
                         }
                     }
@@ -168,26 +158,23 @@ class OpenApiSchemaAnalysisTest extends TestCase
                 dump("❌ Response has no JSON content or schema");
             }
         }
-        
+
         // Check JsonResource dynamic analysis
         $dynamicOperation = $spec->paths['/dynamic/{id}']->get ?? null;
         if ($dynamicOperation && isset($dynamicOperation->responses['200'])) {
             $response = $dynamicOperation->responses['200'];
             $jsonContent = $response->content['application/json'] ?? null;
-            
+
             if ($jsonContent && $jsonContent->schema) {
-                dump("✅ Dynamic response schema found");
                 $schema = $jsonContent->schema;
-                
-                if (isset($schema->properties)) {
-                    dump("✅ Dynamic response has extracted properties: " . implode(', ', array_keys((array)$schema->properties)));
-                } else {
+
+                if (!isset($schema->properties)) {
                     dump("❌ Dynamic response missing extracted properties");
                 }
             }
         }
     }
-    
+
     /**
      * Analyze path parameter handling
      */
@@ -197,9 +184,8 @@ class OpenApiSchemaAnalysisTest extends TestCase
         if ($usersShowOperation && $usersShowOperation->parameters) {
             $pathParams = collect($usersShowOperation->parameters)
                 ->filter(fn($param) => $param->in === 'path');
-                
+
             if ($pathParams->isNotEmpty()) {
-                dump("✅ Path parameters found: " . $pathParams->pluck('name')->implode(', '));
                 foreach ($pathParams as $param) {
                     expect($param->required)->toBeTrue('Path parameters should be required');
                     expect($param->schema->type)->not()->toBeEmpty('Path parameter should have type');
@@ -209,7 +195,7 @@ class OpenApiSchemaAnalysisTest extends TestCase
             }
         }
     }
-    
+
     /**
      * Analyze response header handling
      */
@@ -218,16 +204,13 @@ class OpenApiSchemaAnalysisTest extends TestCase
         $usersGetOperation = $spec->paths['/users']->get ?? null;
         if ($usersGetOperation && isset($usersGetOperation->responses['200'])) {
             $response = $usersGetOperation->responses['200'];
-            
+
             if (isset($response->headers)) {
                 $headers = array_keys((array)$response->headers);
-                dump("✅ Response headers found: " . implode(', ', $headers));
-                
+
                 $expectedHeaders = ['X-Total-Count', 'X-Page-Count'];
                 foreach ($expectedHeaders as $header) {
-                    if (in_array($header, $headers)) {
-                        dump("✅ Header '{$header}' found");
-                    } else {
+                    if (!in_array($header, $headers)) {
                         dump("❌ Header '{$header}' missing");
                     }
                 }
@@ -236,7 +219,7 @@ class OpenApiSchemaAnalysisTest extends TestCase
             }
         }
     }
-    
+
     /**
      * Analyze Spatie Data integration completeness
      */
@@ -244,12 +227,12 @@ class OpenApiSchemaAnalysisTest extends TestCase
     {
         // This checks if Spatie Data objects are properly analyzed for schema generation
         $allSchemas = [];
-        
+
         foreach ($spec->paths as $path => $pathItem) {
             foreach (['get', 'post', 'put', 'patch', 'delete'] as $method) {
                 $operation = $pathItem->{$method} ?? null;
                 if (!$operation) continue;
-                
+
                 // Check request body schemas
                 if ($operation->requestBody && $operation->requestBody->content) {
                     foreach ($operation->requestBody->content as $contentType => $content) {
@@ -258,7 +241,7 @@ class OpenApiSchemaAnalysisTest extends TestCase
                         }
                     }
                 }
-                
+
                 // Check response schemas
                 if ($operation->responses) {
                     foreach ($operation->responses as $statusCode => $response) {
@@ -273,13 +256,8 @@ class OpenApiSchemaAnalysisTest extends TestCase
                 }
             }
         }
-        
-        dump("✅ Total schemas generated: " . count($allSchemas));
-        if (count($allSchemas) > 0) {
-            dump("📋 Schema locations:", $allSchemas);
-        }
     }
-    
+
     /**
      * Analyze JsonResource dynamic analysis effectiveness
      */
@@ -289,22 +267,14 @@ class OpenApiSchemaAnalysisTest extends TestCase
         if ($dynamicCollectionOperation && isset($dynamicCollectionOperation->responses['200'])) {
             $response = $dynamicCollectionOperation->responses['200'];
             $jsonContent = $response->content['application/json'] ?? null;
-            
+
             if ($jsonContent && $jsonContent->schema) {
                 $schema = $jsonContent->schema;
-                
+
                 if ($schema->type === 'array' && isset($schema->items)) {
-                    dump("✅ ResourceCollection correctly identified as array");
-                    
-                    if (isset($schema->items->properties)) {
-                        dump("✅ Resource items have dynamic properties");
-                    } else {
+                    if (!isset($schema->items->properties)) {
                         dump("❌ Resource items missing dynamic properties");
                     }
-                } elseif (isset($schema->properties)) {
-                    dump("✅ JsonResource has dynamic properties");
-                } else {
-                    dump("❌ JsonResource missing dynamic analysis");
                 }
             }
         }
