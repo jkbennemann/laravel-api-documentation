@@ -129,18 +129,24 @@ The package includes powerful automatic detection capabilities that require **no
 - **Spatie Data Integration**: Seamlessly generates schemas for Spatie Data objects
 - **Paginated Response Detection**: Automatically detects `LengthAwarePaginator` usage and generates proper paginated response structure with `data`, `meta`, and `links` properties
 
-#### **2. Smart Request Parameter Extraction**
+#### **2. Comprehensive Controller Support**
+- **Traditional Controllers**: Full support for standard Laravel controllers with method-based routes
+- **Invokable Controllers**: Complete support for single-action controllers with `__invoke()` method
+- **Class-Level Attributes**: Automatic detection of attributes placed on controller classes (essential for invokable controllers)
+- **Mixed Applications**: Seamless handling of applications using both traditional and invokable controllers
+
+#### **3. Smart Request Parameter Extraction**
 - **FormRequest Analysis**: Automatically extracts validation rules from FormRequest classes
 - **Query Parameter Detection**: Analyzes `@queryParam` annotations and generates query parameter schemas
 - **Path Parameter Processing**: Detects route parameters (`{id}`, `{user}`) and generates appropriate documentation
 - **Nested Parameter Support**: Handles complex nested parameter structures (e.g., `user.profile.name`)
 
-#### **3. Advanced Validation Detection**
+#### **4. Advanced Validation Detection**
 - **Rule Processing**: Converts Laravel validation rules to OpenAPI types and formats
 - **Required Field Detection**: Automatically determines required vs optional parameters
 - **Type Inference**: Smart type detection from validation rules (`email` → `string` with `email` format)
 
-#### **4. Resource Collection Intelligence**
+#### **5. Resource Collection Intelligence**
 - **Array vs Object Detection**: Distinguishes between generic arrays and specific resource objects
 - **Collection Type Analysis**: Automatically determines if ResourceCollection contains specific DTOs or generic data
 - **Pagination Support**: Generates proper schemas for paginated collections
@@ -173,7 +179,7 @@ The package follows these intelligent rules for automatic documentation generati
    - Smart handling of relative class references
 
 With PHP 8 attributes it is possible to add additional information to the routes which will enhance the generated documentation.  
-These attributes are defined by the package and can be used for Controller methods, Request classes and Response classes.
+These attributes are defined by the package and can be used for Controller methods (traditional controllers), Controller classes (invokable controllers), Request classes and Response classes.
 
 In addition to that we will also include the authentication middleware of a route if it is defined in the route and add it to the OpenAPI file for each route.
 
@@ -583,7 +589,63 @@ class CreateUserRequest extends FormRequest
 }
 ```
 
-### **Example 3: Resource with Spatie Data Integration**
+### **Example 3: Invokable Controllers with Class-Level Attributes**
+
+Laravel's invokable controllers (single-action controllers) are fully supported with class-level attribute processing:
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Http\Requests\CreatePostRequest;
+use App\Http\Resources\PostResource;
+use App\Models\Post;
+use Illuminate\Http\JsonResponse;
+use JkBennemann\LaravelApiDocumentation\Attributes\{Tag, Summary, Description, DataResponse};
+
+#[Tag('Posts')]
+#[Summary('Create a new blog post')]
+#[Description('Creates a new blog post with the provided content and metadata')]
+#[DataResponse(PostResource::class, 201, 'Post created successfully')]
+class CreatePostController extends Controller
+{
+    /**
+     * Handle the incoming request to create a new post.
+     * 
+     * @param CreatePostRequest $request
+     * @return JsonResponse
+     */
+    public function __invoke(CreatePostRequest $request): JsonResponse
+    {
+        $post = Post::create($request->validated());
+        
+        return PostResource::make($post)
+            ->response()
+            ->setStatusCode(201);
+    }
+}
+```
+
+**Key Features for Invokable Controllers:**
+- **Class-Level Attributes**: `#[Tag]`, `#[Summary]`, `#[Description]` placed on the class are automatically detected
+- **Automatic Route Processing**: Both `Controller@method` and `Controller` (invokable) route formats supported
+- **Response Type Detection**: Same automatic detection as traditional controllers
+- **Request Validation**: FormRequest classes processed normally
+- **Mixed Controller Support**: Traditional and invokable controllers work seamlessly together
+
+**Route Registration:**
+```php
+// Traditional route registration for invokable controllers
+Route::post('/posts', CreatePostController::class);
+
+// Mixed with traditional controllers
+Route::get('/posts', [PostController::class, 'index']);
+Route::post('/posts', CreatePostController::class);  // Invokable
+Route::get('/posts/{id}', [PostController::class, 'show']);
+```
+
+### **Example 4: Resource with Spatie Data Integration**
 
 ```php
 <?php
@@ -621,7 +683,7 @@ class UserResource extends JsonResource
 }
 ```
 
-### **Example 4: Union Types with Multiple Response Formats**
+### **Example 5: Union Types with Multiple Response Formats**
 
 ```php
 <?php
@@ -630,38 +692,6 @@ namespace App\Http\Controllers;
 
 use App\DTOs\UserData;
 use App\DTOs\AdminData;
-
-class ProfileController extends Controller
-{
-    /**
-     * Get user profile information
-     * 
-     * Returns different data structures based on user role.
-     * 
-     * @return UserData|AdminData
-     */
-    public function show(Request $request): UserData|AdminData
-    {
-        $user = $request->user();
-        
-        if ($user->isAdmin()) {
-            return new AdminData(
-                id: $user->id,
-                name: $user->name,
-                email: $user->email,
-                adminLevel: $user->admin_level,
-                permissions: $user->permissions,
-            );
-        }
-        
-        return new UserData(
-            id: $user->id,
-            name: $user->name,
-            email: $user->email,
-            profile: $user->profile,
-        );
-    }
-}
 ```
 
 ### **🎯 Best Practices**
@@ -677,6 +707,7 @@ class ProfileController extends Controller
 ### ✅ **Completed Features**
 - [x] **Advanced Response Type Detection**: Automatic detection of return types, union types, and method body analysis
 - [x] **Smart Request Parameter Extraction**: FormRequest validation rule processing and parameter attribute support
+- [x] **Invokable Controller Support**: Full support for Laravel invokable controllers with class-level attribute processing
 - [x] **Path Parameter Documentation**: `#[PathParameter]` attribute for route parameter enhancement
 - [x] **Query Parameter Support**: `@queryParam` annotation processing
 - [x] **Nested Parameter Handling**: Complex nested parameter structures with proper grouping
