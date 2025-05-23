@@ -1,5 +1,20 @@
-<?php
 
+declare(strict_types=1);
+
+namespace JkBennemann\LaravelApiDocumentation\Tests\Stubs\DTOs;
+
+use Spatie\LaravelData\Data;
+
+class SimpleAnnotated extends Data
+{
+    public function __construct(
+        public string $name = 'John Doe',
+        public ?string $description = null,
+        public int $age = 30,
+        public bool $active = true,
+    ) {
+    }
+}
 declare(strict_types=1);
 
 namespace JkBennemann\LaravelApiDocumentation\Tests\Stubs\DTOs;

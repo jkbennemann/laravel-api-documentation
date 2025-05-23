@@ -2,146 +2,266 @@
 
 declare(strict_types=1);
 
+namespace JkBennemann\LaravelApiDocumentation\Tests\Feature;
+
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\SeveralDocsController;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\SimpleController;
+use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\SmartController;
+use JkBennemann\LaravelApiDocumentation\Tests\TestCase;
 use openapiphp\openapi\Reader;
 use openapiphp\openapi\spec\Components;
 
-it('can execute the command', function () {
-    $this->artisan('documentation:generate');
-})->throwsNoExceptions();
+class GenerationCommandTest extends TestCase
+{
+    protected function setUp(): void
+    {
+        parent::setUp();
 
-it('can generate a simplistic documentation file', function () {
-    Route::get('/route-1', [SimpleController::class, 'simple']);
+        // Clear the storage disk before each test
+        Storage::disk('public')->deleteDirectory('');
+        Storage::disk('public')->makeDirectory('');
+    }
 
-    $this->artisan('documentation:generate')
-        ->assertExitCode(0);
+    /** @test */
+    public function it_can_execute_the_command()
+    {
+        $this->artisan('documentation:generate')
+            ->assertExitCode(0);
+    }
 
-    $file = Storage::disk('public')->path('api-documentation.json');
+    /** @test */
+    public function it_can_generate_a_simplistic_documentation_file()
+    {
+        Route::get('/route-1', [SimpleController::class, 'simple']);
 
-    $this->assertFileExists($file);
-    $this->assertFileIsReadable($file);
-    $this->assertNotEmpty(file_get_contents($file));
+        $this->artisan('documentation:generate')
+            ->assertExitCode(0);
 
-    $parsedFile = Reader::readFromJson(file_get_contents($file));
+        $file = Storage::disk('public')->path('api-documentation.json');
 
-    expect($parsedFile->openapi)
-        ->toBe('3.0.2')
-        ->and($parsedFile->info->title)
-        ->toBe('Service API Documentation')
-        ->and($parsedFile->info->version)
-        ->toBe('1.0.0')
-        ->and($parsedFile->paths)
-        ->toHaveCount(1)
-        ->and($parsedFile->components)
-        ->toBeInstanceOf(Components::class);
-});
+        $this->assertFileExists($file);
+        $this->assertFileIsReadable($file);
+        $this->assertNotEmpty(file_get_contents($file));
 
-it('can generate a simplistic documentation file with old file config', function () {
-    Route::get('/route-1', [SimpleController::class, 'simple']);
-    config()->set('api-documentation.ui.storage.files', []);
-    config()->set('api-documentation.ui.storage.filename', 'api-documentation.json');
+        $parsedFile = Reader::readFromJson(file_get_contents($file));
 
-    $this->artisan('documentation:generate')
-        ->assertExitCode(0);
+        $this->assertEquals('3.0.2', $parsedFile->openapi);
+        $this->assertEquals('Service API Documentation', $parsedFile->info->title);
+        $this->assertEquals('1.0.0', $parsedFile->info->version);
+        $this->assertCount(1, $parsedFile->paths);
+        $this->assertInstanceOf(Components::class, $parsedFile->components);
+    }
 
-    $file = Storage::disk('public')->path('api-documentation.json');
+    /** @test */
+    public function it_can_generate_a_simplistic_documentation_file_with_old_file_config()
+    {
+        Route::get('/route-1', [SimpleController::class, 'simple']);
+        config()->set('api-documentation.ui.storage.files', []);
+        config()->set('api-documentation.ui.storage.filename', 'api-documentation.json');
 
-    $parsedFile = Reader::readFromJson(file_get_contents($file));
+        $this->artisan('documentation:generate')
+            ->assertExitCode(0);
 
-    expect($parsedFile->openapi)
-        ->toBe('3.0.2')
-        ->and($parsedFile->info->title)
-        ->toBe('Service API Documentation')
-        ->and($parsedFile->info->version)
-        ->toBe('1.0.0')
-        ->and($parsedFile->paths)
-        ->toHaveCount(1)
-        ->and($parsedFile->components)
-        ->toBeInstanceOf(Components::class);
-});
+        $file = Storage::disk('public')->path('api-documentation.json');
 
-it('can generate several simplistic documentation files', function () {
-    Route::get('/route-1', [SeveralDocsController::class, 'docOne']);
-    Route::get('/route-2', [SeveralDocsController::class, 'docTwo']);
-    Route::get('/route-3', [SeveralDocsController::class, 'bothDocs']);
-    Route::get('/route-4', [SeveralDocsController::class, 'defaultDoc']);
-    config()->set('api-documentation.ui.storage.files', [
-        'docOne' => [
-            'name' => 'Doc one',
-            'filename' => 'api-documentation-one.json',
-            'process' => true
-        ],
-        'docTwo' => [
-            'name' => 'Doc two',
-            'filename' => 'api-documentation-two.json',
-            'process' => true
-        ],
-        'docThree' => [
-            'name' => 'Doc Three',
-            'filename' => 'api-documentation-three.json',
-        ],
-    ]);
-    config()->set('api-documentation.ui.storage.default_file', 'docOne');
+        $parsedFile = Reader::readFromJson(file_get_contents($file));
 
-    $this->artisan('documentation:generate')
-        ->assertExitCode(0);
+        $this->assertEquals('3.0.2', $parsedFile->openapi);
+        $this->assertEquals('Service API Documentation', $parsedFile->info->title);
+        $this->assertEquals('1.0.0', $parsedFile->info->version);
+        $this->assertCount(1, $parsedFile->paths);
+        $this->assertInstanceOf(Components::class, $parsedFile->components);
+    }
 
-    $fileOne = Storage::disk('public')->path('api-documentation-one.json');
-    $fileTwo = Storage::disk('public')->path('api-documentation-two.json');
+    /** @test */
+    public function it_can_generate_several_simplistic_documentation_files_with_authentication()
+    {
+        Route::get('/route-1', [SeveralDocsController::class, 'docOne'])->middleware('auth');
+        Route::get('/route-2', [SeveralDocsController::class, 'docTwo']);
+        Route::get('/route-3', [SeveralDocsController::class, 'bothDocs']);
+        Route::get('/route-4', [SeveralDocsController::class, 'defaultDoc']);
 
-    $parsedFileOne = Reader::readFromJson(file_get_contents($fileOne));
-    $parsedFileTwo = Reader::readFromJson(file_get_contents($fileTwo));
+        config()->set('api-documentation.ui.storage.files', [
+            'docOne' => [
+                'name' => 'Doc one',
+                'filename' => 'api-documentation-one.json',
+                'process' => true
+            ],
+            'docTwo' => [
+                'name' => 'Doc two',
+                'filename' => 'api-documentation-two.json',
+                'process' => true
+            ],
+            'docThree' => [
+                'name' => 'Doc Three',
+                'filename' => 'api-documentation-three.json',
+            ],
+        ]);
+        config()->set('api-documentation.ui.storage.default_file', 'docOne');
 
-    expect($parsedFileOne->openapi)
-        ->toBe('3.0.2')
-        ->and($parsedFileOne->info->title)
-        ->toBe('Service API Documentation')
-        ->and($parsedFileOne->info->version)
-        ->toBe('1.0.0')
-        ->and($parsedFileOne->paths)
-        ->toHaveCount(3)
-        ->and($parsedFileOne->components)
-        ->toBeInstanceOf(Components::class)
-        ->and($parsedFileTwo->openapi)
-        ->toBe('3.0.2')
-        ->and($parsedFileTwo->info->title)
-        ->toBe('Service API Documentation')
-        ->and($parsedFileTwo->info->version)
-        ->toBe('1.0.0')
-        ->and($parsedFileTwo->paths)
-        ->toHaveCount(2)
-        ->and($parsedFileTwo->components)
-        ->toBeInstanceOf(Components::class);
+        $this->artisan('documentation:generate')
+            ->assertExitCode(0);
 
-});
+        $fileOne = Storage::disk('public')->path('api-documentation-one.json');
+        $fileTwo = Storage::disk('public')->path('api-documentation-two.json');
 
-it('can generate a simplistic documentation file with a different title', function () {
-    config()->set('api-documentation.title', 'Test');
+        $parsedFileOne = Reader::readFromJson(file_get_contents($fileOne));
+        $parsedFileTwo = Reader::readFromJson(file_get_contents($fileTwo));
 
-    $this->artisan('documentation:generate')
-        ->assertExitCode(0);
+        // Test first doc file
+        $this->assertEquals('3.0.2', $parsedFileOne->openapi);
+        $this->assertEquals('Service API Documentation', $parsedFileOne->info->title);
+        $this->assertEquals('1.0.0', $parsedFileOne->info->version);
+        $this->assertCount(3, $parsedFileOne->paths);
+        $this->assertInstanceOf(Components::class, $parsedFileOne->components);
 
-    $file = Storage::disk('public')->path('api-documentation.json');
+        // Test second doc file
+        $this->assertEquals('3.0.2', $parsedFileTwo->openapi);
+        $this->assertEquals('Service API Documentation', $parsedFileTwo->info->title);
+        $this->assertEquals('1.0.0', $parsedFileTwo->info->version);
+        $this->assertCount(2, $parsedFileTwo->paths);
+        $this->assertInstanceOf(Components::class, $parsedFileTwo->components);
+    }
 
-    $parsedFile = Reader::readFromJson(file_get_contents($file));
+    /** @test */
+    public function it_can_generate_a_documentation_file_with_a_different_title()
+    {
+        config()->set('api-documentation.title', 'Test');
 
-    expect($parsedFile->info->title)
-        ->toBe('Test');
-});
+        $this->artisan('documentation:generate')
+            ->assertExitCode(0);
 
-it('can generate a simplistic documentation file with a different version', function () {
-    config()->set('api-documentation.version', '0.0.1');
+        $file = Storage::disk('public')->path('api-documentation.json');
 
-    $this->artisan('documentation:generate')
-        ->assertExitCode(0);
+        $parsedFile = Reader::readFromJson(file_get_contents($file));
 
-    $file = Storage::disk('public')->path('api-documentation.json');
+        $this->assertEquals('Test', $parsedFile->info->title);
+    }
 
-    $parsedFile = Reader::readFromJson(file_get_contents($file));
+    /** @test */
+    public function it_can_generate_a_documentation_file_with_a_different_version()
+    {
+        config()->set('api-documentation.version', '0.0.1');
 
-    expect($parsedFile->info->version)
-        ->toBe('0.0.1');
-});
+        $this->artisan('documentation:generate')
+            ->assertExitCode(0);
+
+        $file = Storage::disk('public')->path('api-documentation.json');
+
+        $parsedFile = Reader::readFromJson(file_get_contents($file));
+
+        $this->assertEquals('0.0.1', $parsedFile->info->version);
+    }
+
+    /** @test */
+    public function it_can_generate_documentation_for_a_specific_file_only()
+    {
+        Route::get('/route-1', [SeveralDocsController::class, 'docOne']);
+        Route::get('/route-2', [SeveralDocsController::class, 'docTwo']);
+
+        config()->set('api-documentation.ui.storage.files', [
+            'docOne' => [
+                'name' => 'Doc one',
+                'filename' => 'api-documentation-one.json',
+                'process' => true
+            ],
+            'docTwo' => [
+                'name' => 'Doc two',
+                'filename' => 'api-documentation-two.json',
+                'process' => true
+            ]
+        ]);
+
+        // Execute command with specific file parameter
+        $this->artisan('documentation:generate --file=docOne')
+            ->assertExitCode(0);
+
+        // Only the specified file should exist
+        $fileOne = Storage::disk('public')->path('api-documentation-one.json');
+        $fileTwo = Storage::disk('public')->path('api-documentation-two.json');
+
+        $this->assertFileExists($fileOne);
+        $this->assertFileDoesNotExist($fileTwo);
+
+        // Parse and verify the content
+        $parsedFileOne = Reader::readFromJson(file_get_contents($fileOne));
+        $this->assertCount(1, $parsedFileOne->paths);
+        $this->assertArrayHasKey('/route-1', $parsedFileOne->paths);
+    }
+
+    /** @test */
+    public function it_returns_error_when_specifying_non_existent_file()
+    {
+        config()->set('api-documentation.ui.storage.files', [
+            'docOne' => [
+                'name' => 'Doc one',
+                'filename' => 'api-documentation-one.json',
+                'process' => true
+            ]
+        ]);
+
+        $this->artisan('documentation:generate --file=nonExistent')
+            ->assertExitCode(1);
+    }
+
+    /** @test */
+    public function it_can_generate_documentation_with_smart_responses()
+    {
+        Route::get('/smart-controller', [SmartController::class, 'index']);
+
+        config()->set('api-documentation.smart_responses.enabled', true);
+
+        $this->artisan('documentation:generate')
+            ->assertExitCode(0);
+
+        $file = Storage::disk('public')->path('api-documentation.json');
+        $parsedFile = Reader::readFromJson(file_get_contents($file));
+
+        $this->assertArrayHasKey('/smart-controller', $parsedFile->paths);
+        $this->assertNotNull($parsedFile->paths['/smart-controller']->get->responses[200]);
+    }
+
+    /** @test */
+    public function it_can_handle_configuration_without_processing_flag()
+    {
+        Route::get('/route-1', [SimpleController::class, 'simple']);
+
+        config()->set('api-documentation.ui.storage.files', [
+            'docOne' => [
+                'name' => 'Doc one',
+                'filename' => 'api-documentation-one.json',
+                // Note: No process flag
+            ]
+        ]);
+
+        // Should not fail, but should use default file
+        $this->artisan('documentation:generate')
+            ->assertExitCode(0);
+
+        $file = Storage::disk('public')->path('api-documentation.json');
+        $this->assertFileExists($file);
+    }
+
+    /** @test */
+    public function it_handles_missing_filename_in_config()
+    {
+        Route::get('/route-1', [SimpleController::class, 'simple']);
+
+        config()->set('api-documentation.ui.storage.files', [
+            'docOne' => [
+                'name' => 'Doc one',
+                'process' => true
+                // Note: No filename
+            ]
+        ]);
+
+        $result = $this->artisan('documentation:generate');
+        $result->assertExitCode(0);
+
+        // Should fall back to default file
+        $file = Storage::disk('public')->path('api-documentation.json');
+        $this->assertFileExists($file);
+    }
+}

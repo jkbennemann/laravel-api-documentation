@@ -10,7 +10,7 @@ use JkBennemann\LaravelApiDocumentation\Services\DocumentationBuilder;
 
 class LaravelApiDocumentationCommand extends Command
 {
-    public $signature = 'documentation:generate';
+    public $signature = 'documentation:generate {--file= : Optional file key from config to generate only one specific documentation file}';
 
     public $description = 'Documentation generator for Laravel API';
 
@@ -19,26 +19,41 @@ class LaravelApiDocumentationCommand extends Command
         $this->comment('Generating documentation...');
 
         $docFiles = config('api-documentation.ui.storage.files', []);
+        $specificFile = $this->option('file');
 
-        foreach ($docFiles as $docName => $file) {
-            // Delete all non-processable files
-            if(!isset($file['process']) || !$file['process']) {
-                unset($docFiles[$docName]);
+        // If a specific file is requested, only process that one
+        if ($specificFile) {
+            if (!isset($docFiles[$specificFile])) {
+                $this->error("Documentation file '{$specificFile}' is not defined in config.");
+                return self::FAILURE;
             }
+
+            $docFiles = [$specificFile => $docFiles[$specificFile]];
         }
 
         foreach ($docFiles as $docName => $file) {
-            if(!isset($file['filename'])) {
+            // Delete all non-processable files
+            if (!isset($file['process']) || !$file['process']) {
+                unset($docFiles[$docName]);
+                continue;
+            }
+
+            if (!isset($file['filename'])) {
                 $this->error("Configuration error at doc {$docName} - all storages must have a filename");
+                continue;
             }
 
             try {
+                $this->info("Generating documentation for '{$docName}'...");
                 foreach ($builder->build($file['filename'], $file['name'] ?? null, $docName) as $message) {
-                    $this->info($message);
+                    $this->info("  - {$message}");
                 }
                 $this->newLine();
             } catch (DocumentationException $e) {
                 $this->error($e->getMessage());
+                if ($specificFile) {
+                    return self::FAILURE;
+                }
                 continue;
             }
         }
@@ -49,17 +64,18 @@ class LaravelApiDocumentationCommand extends Command
             $filename = config('api-documentation.ui.storage.filename', 'api-documentation.json');
 
             try {
+                $this->info("Generating default documentation...");
                 foreach ($builder->build($filename) as $message) {
-                    $this->info($message);
+                    $this->info("  - {$message}");
                 }
                 $this->newLine();
             } catch (DocumentationException $e) {
                 $this->error($e->getMessage());
-
                 return self::FAILURE;
             }
         }
 
+        // Display documentation URLs
         if (config('api-documentation.ui.swagger.enabled', false) === true ||
             config('api-documentation.ui.redoc.enabled', false) === true) {
             $appURL = config('app.url').(config('api-documentation.app.port') ? ':'.config('api-documentation.app.port') : '');

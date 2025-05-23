@@ -41,43 +41,153 @@ class ResponseAnalyzer
     }
 
     /**
-     * Analyze a controller method to determine its response structure
+     * Analyze a controller method to determine its response types
+     * @throws \ReflectionException
      */
-    public function analyzeMethodResponse(string $controller, string $method): array
+    public function analyzeControllerMethod(string $controller, string $method): array
     {
-        if (! $this->enabled) {
-            return $this->getDefaultResponse();
+        if (!class_exists($controller)) {
+            return [];
         }
 
-        try {
-            $reflectionMethod = new ReflectionMethod($controller, $method);
-            $returnType = $reflectionMethod->getReturnType();
+        $reflection = new ReflectionMethod($controller, $method);
+        $returnType = $reflection->getReturnType();
 
-            if ($returnType === null) {
-                return $this->getDefaultResponse();
-            }
-
-            $returnTypeName = $returnType->getName();
-
-            // Check if it's a Resource response
-            if (is_subclass_of($returnTypeName, JsonResource::class)) {
-                return $this->analyzeResourceResponse($returnTypeName);
-            }
-
-            // Check if it's a Data object response
-            if (is_subclass_of($returnTypeName, Data::class)) {
-                return $this->analyzeDataResponse($returnTypeName);
-            }
-
-            // Check if it's a collection
-            if (is_subclass_of($returnTypeName, ResourceCollection::class)) {
-                return $this->analyzeCollectionResponse($returnTypeName);
-            }
-
-            return $this->getDefaultResponse();
-        } catch (Throwable) {
-            return $this->getDefaultResponse();
+        if (!$returnType) {
+            return $this->extractFromDocBlock($reflection);
         }
+
+        $typeName = $returnType->getName();
+
+        // Handle union types (PHP 8+)
+        if (method_exists($returnType, 'getTypes')) {
+            return $this->handleUnionTypes($returnType->getTypes());
+        }
+
+        // Check if it's a Spatie Data object
+        if (class_exists($typeName) && is_subclass_of($typeName, Data::class)) {
+            return $this->analyzeSpatieDataObject($typeName);
+        }
+
+        return [
+            'type' => $this->mapPhpTypeToOpenApi($typeName),
+            'format' => $this->getFormatForType($typeName),
+        ];
+    }
+
+    /**
+     * Handle union types by returning all possible types
+     */
+    protected function handleUnionTypes(array $types): array
+    {
+        $responseTypes = [];
+
+        foreach ($types as $type) {
+            $typeName = $type->getName();
+            $responseTypes[] = [
+                'type' => $this->mapPhpTypeToOpenApi($typeName),
+                'format' => $this->getFormatForType($typeName),
+            ];
+        }
+
+        return [
+            'oneOf' => $responseTypes,
+        ];
+    }
+
+    /**
+     * Extract type information from docblock
+     */
+    protected function extractFromDocBlock(ReflectionMethod $reflection): array
+    {
+        $docComment = $reflection->getDocComment();
+        if (!$docComment) {
+            return [];
+        }
+
+        // Extract @return tag
+        if (preg_match('/@return\s+([^\s]+)/', $docComment, $matches)) {
+            $type = $matches[1];
+            return [
+                'type' => $this->mapPhpTypeToOpenApi($type),
+                'format' => $this->getFormatForType($type),
+            ];
+        }
+
+        return [];
+    }
+
+    /**
+     * Analyze a Spatie Data object to extract its structure
+     */
+    public function analyzeSpatieDataObject(string $dataClass): array
+    {
+        if (!class_exists($dataClass) || !is_subclass_of($dataClass, Data::class)) {
+            return [];
+        }
+
+        $reflection = new ReflectionClass($dataClass);
+        $properties = $reflection->getProperties();
+
+        $schema = [
+            'type' => 'object',
+            'properties' => [],
+            'required' => [],
+        ];
+
+        foreach ($properties as $property) {
+            $propertyName = $property->getName();
+            $propertyType = $property->getType();
+
+            if (!$propertyType) {
+                continue;
+            }
+
+            $typeName = $propertyType->getName();
+            $schema['properties'][$propertyName] = [
+                'type' => $this->mapPhpTypeToOpenApi($typeName),
+                'format' => $this->getFormatForType($typeName),
+            ];
+
+            if (!$propertyType->allowsNull()) {
+                $schema['required'][] = $propertyName;
+            }
+
+            // Handle nested Data objects
+            if (class_exists($typeName) && is_subclass_of($typeName, Data::class)) {
+                $schema['properties'][$propertyName] = $this->analyzeSpatieDataObject($typeName);
+            }
+        }
+
+        return $schema;
+    }
+
+    /**
+     * Map PHP types to OpenAPI types
+     */
+    protected function mapPhpTypeToOpenApi(string $type): string
+    {
+        return match ($type) {
+            'int', 'integer' => 'integer',
+            'float', 'double' => 'number',
+            'bool', 'boolean' => 'boolean',
+            'array' => 'array',
+            'object', 'stdClass' => 'object',
+            default => 'string',
+        };
+    }
+
+    /**
+     * Get format for specific types
+     */
+    protected function getFormatForType(string $type): ?string
+    {
+        return match ($type) {
+            'float', 'double' => 'float',
+            'DateTime', '\DateTime' => 'date-time',
+            'DateTimeImmutable', '\DateTimeImmutable' => 'date-time',
+            default => null,
+        };
     }
 
     /**
@@ -239,62 +349,7 @@ class ResponseAnalyzer
             $reflection = new ReflectionClass($resourceClass);
             $properties = [];
 
-            // 1. First check for Parameter attributes on the class
-            $classAttributes = $reflection->getAttributes(Parameter::class);
-            if (! empty($classAttributes)) {
-                foreach ($classAttributes as $attribute) {
-                    $parameter = $attribute->newInstance();
-                    $properties[$parameter->name] = [
-                        'type' => $this->mapPhpTypeToOpenApi($parameter->type),
-                        'description' => $parameter->description,
-                        'required' => $parameter->required,
-                    ];
-
-                    if ($parameter->format) {
-                        $properties[$parameter->name]['format'] = $parameter->format;
-                    }
-
-                    if ($parameter->deprecated) {
-                        $properties[$parameter->name]['deprecated'] = true;
-                    }
-
-                    if ($parameter->example !== null) {
-                        $properties[$parameter->name]['example'] = $parameter->example;
-                    }
-                }
-
-                return $properties;
-            }
-
-            // 2. Check for Parameter attributes on the toArray method
-            $toArrayMethod = $reflection->getMethod('toArray');
-            $methodAttributes = $toArrayMethod->getAttributes(Parameter::class);
-            if (! empty($methodAttributes)) {
-                foreach ($methodAttributes as $attribute) {
-                    $parameter = $attribute->newInstance();
-                    $properties[$parameter->name] = [
-                        'type' => $this->mapPhpTypeToOpenApi($parameter->type),
-                        'description' => $parameter->description,
-                        'required' => $parameter->required,
-                    ];
-
-                    if ($parameter->format) {
-                        $properties[$parameter->name]['format'] = $parameter->format;
-                    }
-
-                    if ($parameter->deprecated) {
-                        $properties[$parameter->name]['deprecated'] = true;
-                    }
-
-                    if ($parameter->example !== null) {
-                        $properties[$parameter->name]['example'] = $parameter->example;
-                    }
-                }
-
-                return $properties;
-            }
-
-            // 3. Then try to get properties from PHPDoc
+            // Try to get properties from PHPDoc
             $docComment = $reflection->getDocComment();
             if ($docComment) {
                 preg_match_all('/@property\s+([^\s]+)\s+\$([^\s]+)(?:\s+(.*))?/', $docComment, $matches);
@@ -311,7 +366,7 @@ class ResponseAnalyzer
                 }
             }
 
-            // 4. If no other documentation found, analyze toArray method
+            // If no documentation found, analyze toArray method
             return $this->analyzeToArrayMethod($resourceClass);
         } catch (Throwable $e) {
             return [];
@@ -537,21 +592,6 @@ class ResponseAnalyzer
     }
 
     /**
-     * Map PHP types to OpenAPI types
-     */
-    private function mapPhpTypeToOpenApi(string $phpType): string
-    {
-        return match ($phpType) {
-            'int', 'integer' => 'integer',
-            'float', 'double' => 'number',
-            'bool', 'boolean' => 'boolean',
-            'array' => 'array',
-            'object' => 'object',
-            default => 'string',
-        };
-    }
-
-    /**
      * Extract property description from PHPDoc
      */
     private function extractPropertyDescription(ReflectionProperty $property): string
@@ -581,127 +621,5 @@ class ResponseAnalyzer
                 ],
             ],
         ];
-    }
-
-    public function analyzeResponse(ReflectionMethod $method): ?Schema
-    {
-        if (! $this->enabled) {
-            return null;
-        }
-
-        $returnType = $method->getReturnType();
-        if (! $returnType) {
-            return null;
-        }
-
-        $typeName = $returnType->getName();
-
-        // Handle collection responses
-        if (is_a($typeName, ResourceCollection::class, true)) {
-            $response = $this->analyzeCollectionResponse($typeName);
-
-            return $this->convertArrayToSchema($response);
-        }
-
-        // Handle paginated responses
-        if (is_a($typeName, AbstractPaginator::class, true)) {
-            $response = $this->getPaginatedResponse($typeName);
-
-            return $this->convertArrayToSchema($response);
-        }
-
-        // Handle array responses
-        if ($typeName === 'array') {
-            return new Schema([
-                'type' => 'array',
-                'items' => new Schema([
-                    'type' => 'object',
-                ]),
-            ]);
-        }
-
-        // Handle Data object responses
-        if (is_a($typeName, Data::class, true)) {
-            $response = $this->analyzeDataResponse($typeName);
-
-            return $this->convertArrayToSchema($response);
-        }
-
-        return new Schema([
-            'type' => 'object',
-        ]);
-    }
-
-    public function analyzeErrorResponses(ReflectionMethod $method): array
-    {
-        if (! $this->enabled) {
-            return [];
-        }
-
-        $responses = [];
-
-        // Add validation error response if the method has a form request
-        $requestClass = $this->findRequestClass($method);
-        if ($requestClass) {
-            $responses['422'] = new Schema([
-                'type' => 'object',
-                'properties' => [
-                    'message' => new Schema([
-                        'type' => 'string',
-                    ]),
-                    'errors' => new Schema([
-                        'type' => 'object',
-                        'additionalProperties' => new Schema([
-                            'type' => 'array',
-                            'items' => new Schema([
-                                'type' => 'string',
-                            ]),
-                        ]),
-                    ]),
-                ],
-            ]);
-        }
-
-        return $responses;
-    }
-
-    private function findRequestClass(ReflectionMethod $method): ?string
-    {
-        foreach ($method->getParameters() as $parameter) {
-            $type = $parameter->getType();
-            if (! $type) {
-                continue;
-            }
-
-            $typeName = $type->getName();
-            if (is_a($typeName, Request::class, true)) {
-                return $typeName;
-            }
-        }
-
-        return null;
-    }
-
-    private function convertArrayToSchema(array $array): Schema
-    {
-        $schema = new Schema([]);
-
-        foreach ($array as $key => $value) {
-            if ($key === 'type') {
-                $schema->type = $value;
-            } elseif ($key === 'properties') {
-                $properties = [];
-                foreach ($value as $propName => $propValue) {
-                    $properties[$propName] = $this->convertArrayToSchema($propValue);
-                }
-                $schema->properties = $properties;
-            } elseif ($key === 'items') {
-                $schema->items = $this->convertArrayToSchema($value);
-            } elseif ($key === 'description') {
-                $schema->description = $value;
-            }
-        }
-
-        return $schema;
     }
 }
