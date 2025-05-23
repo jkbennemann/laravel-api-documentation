@@ -77,7 +77,7 @@ it('can generate route information for route with a tag', function () {
         ->toHaveCount(1)
         ->and($routeData[0])
         ->toBeArray()
-        ->toHaveCount(13)
+        ->toHaveCount(17)
         ->and($routeData[0]['tags'])
         ->toBeArray()
         ->toHaveCount(1)
@@ -95,7 +95,7 @@ it('can generate route information for route with multiple tags', function () {
         ->toHaveCount(1)
         ->and($routeData[0])
         ->toBeArray()
-        ->toHaveCount(13)
+        ->toHaveCount(17)
         ->and($routeData[0]['tags'])
         ->toBeArray()
         ->toHaveCount(2)
@@ -115,7 +115,7 @@ it('can generate route information for route with multiple tags as string', func
         ->toHaveCount(1)
         ->and($routeData[0])
         ->toBeArray()
-        ->toHaveCount(13)
+        ->toHaveCount(17)
         ->and($routeData[0]['tags'])
         ->toBeArray()
         ->toHaveCount(2)
@@ -135,7 +135,7 @@ it('can generate route information for route with a description', function () {
         ->toHaveCount(1)
         ->and($routeData[0])
         ->toBeArray()
-        ->toHaveCount(13)
+        ->toHaveCount(17)
         ->and($routeData[0]['description'])
         ->toBe('My Description');
 });
@@ -150,7 +150,7 @@ it('can generate route information for route with a summary', function () {
         ->toHaveCount(1)
         ->and($routeData[0])
         ->toBeArray()
-        ->toHaveCount(13)
+        ->toHaveCount(17)
         ->and($routeData[0]['summary'])
         ->toBe('My Summary');
 });
@@ -165,7 +165,7 @@ it('can generate route information for route with a middleware', function () {
         ->toHaveCount(1)
         ->and($routeData[0])
         ->toBeArray()
-        ->toHaveCount(13)
+        ->toHaveCount(17)
         ->and($routeData[0]['middlewares'])
         ->toBeArray()
         ->toHaveCount(1)
@@ -183,7 +183,7 @@ it('can generate route information for route with a required path parameter', fu
         ->toHaveCount(1)
         ->and($routeData[0])
         ->toBeArray()
-        ->toHaveCount(13)
+        ->toHaveCount(17)
         ->and($routeData[0]['request_parameters'])
         ->toBeArray()
         ->toHaveCount(1)
@@ -212,7 +212,7 @@ it('can generate route information for route with a optional path parameter', fu
         ->toHaveCount(1)
         ->and($routeData[0])
         ->toBeArray()
-        ->toHaveCount(13)
+        ->toHaveCount(17)
         ->and($routeData[0]['request_parameters'])
         ->toBeArray()
         ->toHaveCount(1)
@@ -237,7 +237,7 @@ it('can generate route information for route with multiple path parameters', fun
         ->toHaveCount(1)
         ->and($routeData[0])
         ->toBeArray()
-        ->toHaveCount(13)
+        ->toHaveCount(17)
         ->and($routeData[0]['request_parameters'])
         ->toBeArray()
         ->toHaveCount(2)
@@ -273,7 +273,7 @@ it('can generate route information for route with an email example', function ()
         ->toHaveCount(1)
         ->and($routeData[0])
         ->toBeArray()
-        ->toHaveCount(13)
+        ->toHaveCount(17)
         ->and($routeData[0]['request_parameters'])
         ->toBeArray()
         ->toHaveCount(1)
@@ -312,21 +312,31 @@ it('can generate route information for route with a data resource', function () 
         ->toHaveCount(1)
         ->and($routeData[0])
         ->toBeArray()
-        ->toHaveCount(13)
+        ->toHaveCount(17)
         ->and($routeData[0]['responses'])
         ->toBeArray()
         ->toHaveCount(1)
         ->and($routeData[0]['responses'])
-        ->toHaveKeys([200])
-        ->and($routeData[0]['responses'][200])
+        ->toHaveKeys([200]);
+
+    // Rule: Error Handling - Implement proper error boundaries
+    expect($routeData[0]['responses'][200])
         ->toHaveKeys([
             'description',
-            'resource',
+            'type',
+            'properties',
             'headers',
-        ])
-        ->and($routeData[0]['responses'][200]['resource'])
-        ->toBe(SampleResource::class)
-        ->and($routeData[0]['responses'][200]['description'])
+        ]);
+        
+    // Enhanced analysis may or may not be present depending on the response type
+    if (isset($routeData[0]['responses'][200]['enhanced_analysis'])) {
+        expect($routeData[0]['responses'][200]['enhanced_analysis'])->toBeTrue();
+    }
+    
+    expect($routeData[0]['responses'][200]['type'])
+        ->toBe('object');
+        
+    expect($routeData[0]['responses'][200]['description'])
         ->toBe('A sample description')
         ->and($routeData[0]['responses'][200]['headers'])
         ->toBeArray()
@@ -345,20 +355,24 @@ it('can generate route information for route with a spatie dto resource', functi
         ->toHaveCount(1)
         ->and($routeData[0])
         ->toBeArray()
-        ->toHaveCount(13)
+        ->toHaveCount(17)
         ->and($routeData[0]['responses'])
         ->toBeArray()
         ->toHaveCount(1)
         ->and($routeData[0]['responses'])
-        ->toHaveKeys([200])
-        ->and($routeData[0]['responses'][200])
+        ->toHaveKeys([200]);
+
+    expect($routeData[0]['responses'][200])
         ->toHaveKeys([
             'description',
             'resource',
+            'type',
             'headers',
         ])
         ->and($routeData[0]['responses'][200]['resource'])
         ->toBe(SimpleAnnotated::class)
+        ->and($routeData[0]['responses'][200]['type'])
+        ->toBe('object')
         ->and($routeData[0]['responses'][200]['description'])
         ->toBe('A sample description')
         ->and($routeData[0]['responses'][200]['headers'])

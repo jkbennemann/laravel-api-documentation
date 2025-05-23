@@ -7,6 +7,8 @@ namespace JkBennemann\LaravelApiDocumentation\Services;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Http\Resources\Json\ResourceCollection;
 use Illuminate\Pagination\AbstractPaginator;
+use Illuminate\Contracts\Config\Repository;
+use openapiphp\openapi\spec\Schema;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Identifier;
 use PhpParser\Node\Scalar\String_;
@@ -58,16 +60,31 @@ class ResponseAnalyzer
             return $this->extractFromDocBlock($reflection);
         }
 
-        $typeName = $returnType->getName();
-
-        // Handle union types (PHP 8+)
+        // Handle union types (PHP 8+) FIRST before calling getName()
         if (method_exists($returnType, 'getTypes')) {
             return $this->handleUnionTypes($returnType->getTypes());
         }
 
+        $typeName = $returnType->getName();
+
         // Check if it's a Spatie Data object
         if (class_exists($typeName) && is_subclass_of($typeName, Data::class)) {
             return $this->analyzeSpatieDataObject($typeName);
+        }
+
+        // Check if it's a ResourceCollection - these should be arrays
+        if (class_exists($typeName) && is_a($typeName, \Illuminate\Http\Resources\Json\ResourceCollection::class, true)) {
+            return [
+                'type' => 'array',
+                'items' => [
+                    'type' => 'object',
+                ],
+            ];
+        }
+
+        // Check if it's a JsonResource and analyze its toArray method (but not ResourceCollection)
+        if (class_exists($typeName) && is_subclass_of($typeName, JsonResource::class)) {
+            return $this->analyzeJsonResourceResponse($typeName);
         }
 
         return [
@@ -141,6 +158,21 @@ class ResponseAnalyzer
                 return $this->analyzeSpatieDataObject($resolvedType);
             }
             
+            // Check if it's a ResourceCollection - these should be arrays
+            if (class_exists($resolvedType) && is_a($resolvedType, \Illuminate\Http\Resources\Json\ResourceCollection::class, true)) {
+                return [
+                    'type' => 'array',
+                    'items' => [
+                        'type' => 'object',
+                    ],
+                ];
+            }
+            
+            // Check if it's a JsonResource and analyze its toArray method
+            if (class_exists($resolvedType) && is_subclass_of($resolvedType, JsonResource::class)) {
+                return $this->analyzeJsonResourceResponse($resolvedType);
+            }
+            
             return [
                 'type' => $this->mapPhpTypeToOpenApi($type),
                 'format' => $this->getFormatForType($type),
@@ -207,8 +239,14 @@ class ResponseAnalyzer
                 $schema['required'][] = $outputName;
             }
 
+            // Get the corresponding property for attribute checking
+            $property = null;
+            if ($reflection->hasProperty($propertyName)) {
+                $property = $reflection->getProperty($propertyName);
+            }
+
             // Handle different parameter types
-            $propertySchema = $this->buildPropertySchema($type, $processedClasses);
+            $propertySchema = $this->buildPropertySchema($type, $processedClasses, $parameter, $property);
             
             // Add property description from docblock if available
             $propertySchema['description'] = $this->getParameterDescription($constructor, $propertyName);
@@ -222,7 +260,7 @@ class ResponseAnalyzer
     /**
      * Build schema for individual property types
      */
-    private function buildPropertySchema(\ReflectionType $type, array $processedClasses = []): array
+    private function buildPropertySchema(\ReflectionType $type, array $processedClasses = [], ?\ReflectionParameter $parameter = null, ?\ReflectionProperty $property = null): array
     {
         $typeName = $type->getName();
 
@@ -239,7 +277,19 @@ class ResponseAnalyzer
 
         // Handle collections with DataCollectionOf attribute
         if ($this->isCollection($typeName)) {
-            return array_merge($schema, $this->handleCollectionType($typeName, $processedClasses));
+            $collectionItemType = null;
+            
+            // Extract DataCollectionOf attribute from property
+            if ($property) {
+                $collectionOfAttributes = $property->getAttributes(\Spatie\LaravelData\Attributes\DataCollectionOf::class);
+                
+                if (!empty($collectionOfAttributes)) {
+                    $instance = $collectionOfAttributes[0]->newInstance();
+                    $collectionItemType = $instance->class;
+                }
+            }
+            
+            return array_merge($schema, $this->handleCollectionType($typeName, $processedClasses, $collectionItemType));
         }
 
         // Handle nested Spatie Data objects
@@ -292,7 +342,7 @@ class ResponseAnalyzer
     /**
      * Handle collection types (arrays, Collections, etc.)
      */
-    private function handleCollectionType(string $typeName, array $processedClasses = []): array
+    private function handleCollectionType(string $typeName, array $processedClasses = [], ?string $collectionItemType = null): array
     {
         $schema = [
             'type' => 'array',
@@ -300,7 +350,18 @@ class ResponseAnalyzer
         ];
 
         // Try to determine item type from DataCollectionOf attribute or other hints
-        // This would need to be enhanced based on the specific context where it's called
+        if ($collectionItemType) {
+            // Check if the collection item type is a Spatie Data class
+            if (class_exists($collectionItemType) && is_subclass_of($collectionItemType, Data::class)) {
+                $schema['items'] = $this->buildSpatieDataSchema($collectionItemType, $processedClasses);
+            } else {
+                // Handle primitive types
+                $schema['items'] = [
+                    'type' => $this->mapPhpTypeToOpenApi($collectionItemType),
+                    'format' => $this->getFormatForType($collectionItemType),
+                ];
+            }
+        }
         
         return $schema;
     }
@@ -446,25 +507,85 @@ class ResponseAnalyzer
     /**
      * Analyze a Data class to determine its structure
      */
-    private function analyzeDataResponse(string $dataClass): array
+    public function analyzeDataResponse(string $dataClass): array
     {
+        // Rule: Project Context - Response classes can be enhanced with PHP annotations
         try {
             $reflection = new ReflectionClass($dataClass);
             $properties = [];
-
+            $parameterAttributes = [];
+            
+            // Extract Parameter attributes from the class
+            $classAttributes = $reflection->getAttributes();
+            foreach ($classAttributes as $attribute) {
+                // Use both fully qualified and non-qualified class names for compatibility
+                if ($attribute->getName() === '\\JkBennemann\\LaravelApiDocumentation\\Attributes\\Parameter' || 
+                    $attribute->getName() === 'JkBennemann\\LaravelApiDocumentation\\Attributes\\Parameter') {
+                    $args = $attribute->getArguments();
+                    $paramName = $args['name'] ?? null;
+                    if ($paramName) {
+                        $parameterAttributes[$paramName] = $args;
+                    }
+                }
+            }
+            
+            // Process properties
             foreach ($reflection->getProperties() as $property) {
                 $type = $property->getType();
-                $properties[$property->getName()] = [
+                $propName = $property->getName();
+                $snakeCaseName = $this->usesSnakeCaseMapping($reflection) ? 
+                    $this->getOutputPropertyName($reflection, $propName, true) : 
+                    $propName;
+                
+                // Start with basic property info
+                $properties[$snakeCaseName] = [
                     'type' => $this->mapPhpTypeToOpenApi($type?->getName() ?? 'mixed'),
                     'description' => $this->extractPropertyDescription($property),
                 ];
             }
-
+            
+            // Apply Parameter attributes to properties
+            foreach ($parameterAttributes as $paramName => $args) {
+                if (!isset($properties[$paramName])) {
+                    // Create property if it doesn't exist yet
+                    $properties[$paramName] = [
+                        'type' => $args['type'] ?? 'string',
+                        'description' => $args['description'] ?? '',
+                    ];
+                }
+                
+                // Add format if available
+                if (isset($args['format'])) {
+                    $properties[$paramName]['format'] = $args['format'];
+                }
+                
+                // Add example if available
+                if (isset($args['example'])) {
+                    $properties[$paramName]['example'] = $args['example'];
+                }
+                
+                // Override description if available
+                if (isset($args['description'])) {
+                    $properties[$paramName]['description'] = $args['description'];
+                }
+                
+                // Override type if available
+                if (isset($args['type'])) {
+                    $properties[$paramName]['type'] = $args['type'];
+                }
+            }
+            
+            // Generate an example from the properties
+            $example = $this->generateExampleFromProperties($properties);
+            
             return [
                 'type' => 'object',
                 'properties' => $properties,
+                'example' => $example,
+                'enhanced_analysis' => true,
             ];
-        } catch (Throwable) {
+        } catch (Throwable $e) {
+            // For debugging: report($e);
             return $this->getDefaultResponse();
         }
     }
@@ -560,12 +681,194 @@ class ResponseAnalyzer
     }
 
     /**
+     * Analyze a JsonResource to determine its structure
+     */
+    private function analyzeJsonResourceResponse(string $resourceClass): array
+    {
+        try {
+            $reflection = new ReflectionClass($resourceClass);
+            $toArrayMethod = $reflection->getMethod('toArray');
+            $returnType = $toArrayMethod->getReturnType();
+
+            // Extract properties from the resource class
+            $properties = $this->extractResourceProperties($resourceClass);
+
+            if (! empty($properties)) {
+                // Generate an example based on the properties
+                $example = $this->generateExampleFromProperties($properties);
+                
+                // Determine if this is an array response based on the method body
+                $methodBody = $this->getMethodBody($reflection, 'toArray');
+                $isArrayResponse = strpos($methodBody, 'array_map') !== false;
+                
+                if ($isArrayResponse) {
+                    return [
+                        'type' => 'array',
+                        'items' => [
+                            'type' => 'object',
+                            'properties' => is_array($properties['properties'] ?? null) ? $properties['properties'] : $properties,
+                        ],
+                        'example' => $example,
+                        'enhanced_analysis' => true,
+                    ];
+                }
+                
+                // Add the example to the response
+                $properties['example'] = $example;
+                $properties['enhanced_analysis'] = true;
+                
+                return $properties;
+            }
+
+            // Fallback if no properties found
+            return [
+                'type' => 'object',
+                'properties' => [
+                    'data' => [
+                        'type' => 'object',
+                        'description' => 'Resource data',
+                    ],
+                ],
+                'example' => ['data' => []],
+                'enhanced_analysis' => true,
+            ];
+        } catch (Throwable $e) {
+            return [
+                'type' => 'object',
+                'properties' => [
+                    'data' => [
+                        'type' => 'object',
+                        'description' => 'Resource data',
+                    ],
+                ],
+                'example' => ['data' => []],
+                'enhanced_analysis' => true,
+            ];
+        }
+    }
+    
+    /**
+     * Get the method body from a reflection class
+     */
+    private function getMethodBody(ReflectionClass $reflection, string $methodName): string
+    {
+        try {
+            $method = $reflection->getMethod($methodName);
+            $filename = $reflection->getFileName();
+            
+            if (!$filename || !file_exists($filename)) {
+                return '';
+            }
+            
+            $fileContent = file_get_contents($filename);
+            $lines = explode("\n", $fileContent);
+            
+            $startLine = $method->getStartLine() - 1;
+            $endLine = $method->getEndLine() - 1;
+            return implode("\n", array_slice($lines, $startLine, $endLine - $startLine + 1));
+        } catch (Throwable) {
+            return '';
+        }
+    }
+    
+    /**
+     * Generate an example from the properties structure
+     */
+    private function generateExampleFromProperties(array $properties): array
+    {
+        // Check if this is an array response
+        if (isset($properties['type']) && $properties['type'] === 'array' && isset($properties['items']['properties'])) {
+            return [$this->generateExampleObject($properties['items']['properties'])];
+        }
+        
+        // Check if properties are nested under 'properties' key
+        if (isset($properties['properties']) && is_array($properties['properties'])) {
+            return $this->generateExampleObject($properties['properties']);
+        }
+        
+        // Direct properties
+        return $this->generateExampleObject($properties);
+    }
+    
+    /**
+     * Generate an example object from properties
+     */
+    private function generateExampleObject(array $properties): array
+    {
+        // Rule: Project Context - OpenAPI example is generated automatically
+        $example = [];
+        
+        foreach ($properties as $key => $property) {
+            // If an example is explicitly provided in the property, use it
+            if (isset($property['example'])) {
+                $example[$key] = $property['example'];
+                continue;
+            }
+            
+            $type = $property['type'] ?? 'string';
+            
+            switch ($type) {
+                case 'integer':
+                    $example[$key] = 1;
+                    break;
+                case 'number':
+                    $example[$key] = 1.0;
+                    break;
+                case 'boolean':
+                    $example[$key] = true;
+                    break;
+                case 'array':
+                    if (isset($property['items']['properties'])) {
+                        $example[$key] = [$this->generateExampleObject($property['items']['properties'])];
+                    } elseif (isset($property['example']) && is_array($property['example'])) {
+                        // Use the provided example array if available
+                        $example[$key] = $property['example'];
+                    } else {
+                        $example[$key] = ['example'];
+                    }
+                    break;
+                case 'object':
+                    if (isset($property['properties'])) {
+                        $example[$key] = $this->generateExampleObject($property['properties']);
+                    } else {
+                        $example[$key] = new \stdClass();
+                    }
+                    break;
+                default:
+                    // Handle special property names
+                    if ($key === 'id' || $key === 'hashId' || str_ends_with($key, '_id')) {
+                        $example[$key] = 'abc123';
+                    } elseif ($key === 'type') {
+                        $example[$key] = 'product';
+                    } elseif ($key === 'title') {
+                        $example[$key] = 'Example Title';
+                    } elseif ($key === 'email') {
+                        $example[$key] = 'user@example.com';
+                    } else {
+                        $example[$key] = 'Example ' . ucfirst($key);
+                    }
+            }
+        }
+        
+        return $example;
+    }
+
+    /**
      * Extract properties from a Resource class
      */
     private function extractResourceProperties(string $resourceClass): array
     {
         try {
             $reflection = new ReflectionClass($resourceClass);
+            
+            // First try to analyze the toArray method body
+            if ($reflection->hasMethod('toArray')) {
+                $methodProperties = $this->analyzeToArrayMethodBody($reflection);
+                if (!empty($methodProperties)) {
+                    return $methodProperties;
+                }
+            }
+            
             $properties = [];
 
             // Try to get properties from PHPDoc
@@ -579,193 +882,217 @@ class ResponseAnalyzer
                         'description' => $matches[3][$index] ?? '',
                     ];
                 }
-
-                if (! empty($properties)) {
-                    return $properties;
-                }
-            }
-
-            // If no documentation found, analyze toArray method
-            return $this->analyzeToArrayMethod($resourceClass);
-        } catch (Throwable $e) {
-            return [];
-        }
-    }
-
-    /**
-     * Analyze toArray method using PHP-Parser
-     */
-    private function analyzeToArrayMethod(string $resourceClass): array
-    {
-        try {
-            $reflection = new ReflectionClass($resourceClass);
-            $method = $reflection->getMethod('toArray');
-            $fileName = $reflection->getFileName();
-
-            if (! $fileName) {
-                return [];
-            }
-
-            $parser = (new ParserFactory)->create(ParserFactory::PREFER_PHP7);
-            $code = file_get_contents($fileName);
-            $ast = $parser->parse($code);
-
-            $nodeFinder = new NodeFinder;
-            $properties = [];
-
-            // Find the toArray method node
-            $methodNode = $nodeFinder->findFirst($ast, function ($node) {
-                return $node instanceof ClassMethod
-                    && $node->name->toString() === 'toArray';
-            });
-
-            if (! $methodNode) {
-                return [];
-            }
-
-            // Find return statement in the method
-            $returnNode = $nodeFinder->findFirst($methodNode, function ($node) {
-                return $node instanceof Return_;
-            });
-
-            if (! $returnNode || ! $returnNode->expr instanceof Expr\Array_) {
-                return [];
-            }
-
-            // Analyze array items
-            foreach ($returnNode->expr->items as $item) {
-                if (! $item || ! $item->key instanceof String_) {
-                    continue;
-                }
-
-                $propertyName = $item->key->value;
-                $propertyType = $this->inferTypeFromValue($item->value);
-
-                $properties[$propertyName] = [
-                    'type' => $propertyType['type'],
-                    'description' => '',
-                ];
-
-                if (isset($propertyType['items'])) {
-                    $properties[$propertyName]['items'] = $propertyType['items'];
-                }
-
-                if (isset($propertyType['nullable']) && $propertyType['nullable']) {
-                    $properties[$propertyName]['nullable'] = true;
-                }
             }
 
             return $properties;
-        } catch (Throwable $e) {
+        } catch (Throwable) {
             return [];
         }
     }
 
     /**
-     * Infer OpenAPI type from PHP-Parser node
+     * Analyze the toArray method body to extract dynamic response structure
      */
-    private function inferTypeFromValue(Expr $value): array
+    private function analyzeToArrayMethodBody(ReflectionClass $reflection): array
     {
-        if ($value instanceof Expr\PropertyFetch) {
-            // Handle property access ($this->property)
-            return $this->inferTypeFromPropertyAccess($value);
+        try {
+            $method = $reflection->getMethod('toArray');
+            $filename = $reflection->getFileName();
+            
+            if (!$filename || !file_exists($filename)) {
+                return [];
+            }
+            
+            $fileContent = file_get_contents($filename);
+            $lines = explode("\n", $fileContent);
+            
+            $startLine = $method->getStartLine() - 1;
+            $endLine = $method->getEndLine() - 1;
+            $methodBody = implode("\n", array_slice($lines, $startLine, $endLine - $startLine + 1));
+            
+            // Extract array structures from method body
+            return $this->extractArrayStructureFromMethodBody($methodBody);
+            
+        } catch (Throwable) {
+            return [];
         }
-
-        if ($value instanceof Expr\MethodCall) {
-            // Handle method calls ($this->method())
-            return $this->inferTypeFromMethodCall($value);
-        }
-
-        if ($value instanceof Expr\Array_) {
-            // Handle array literals
-            return [
-                'type' => 'array',
-                'items' => ['type' => 'string'], // Default to string if can't determine item type
-            ];
-        }
-
-        if ($value instanceof Expr\Ternary) {
-            // Handle ternary operations (possibly nullable values)
-            return ['type' => 'string', 'nullable' => true];
-        }
-
-        // Default fallback
-        return ['type' => 'string'];
     }
 
     /**
-     * Infer type from property access
+     * Extract array structure from method body text
      */
-    private function inferTypeFromPropertyAccess(Expr\PropertyFetch $propertyFetch): array
+    private function extractArrayStructureFromMethodBody(string $methodBody): array
     {
-        if (! $propertyFetch->name instanceof Identifier) {
-            return ['type' => 'string'];
+        $properties = [];
+        
+        // Remove extra whitespace and line breaks for better pattern matching
+        $cleanedBody = preg_replace('/\s+/', ' ', $methodBody);
+        
+        // Enhanced pattern for array_map with inline array definition (handles multi-line and various formats)
+        // Matches both static fn and function styles
+        if (preg_match('/array_map\s*\(\s*(static\s+fn|function)\s*\(\$?[^)]*\)\s*=>\s*\[([^\]]+)\]/', $cleanedBody, $matches)) {
+            $arrayContent = $matches[2];
+            $properties = $this->parseInlineArrayStructure($arrayContent);
         }
+        // Try alternative pattern for array_map with different formatting
+        elseif (preg_match('/array_map\s*\(\s*([^,]+),\s*([^\)]+)\)/', $cleanedBody, $matches)) {
+            // Check if the first parameter is a closure with array return
+            $closure = $matches[1];
+            if (preg_match('/\[([^\]]+)\]/', $closure, $arrayMatches)) {
+                $arrayContent = $arrayMatches[1];
+                $properties = $this->parseInlineArrayStructure($arrayContent);
+            }
+        }
+        // Pattern for direct array return
+        // Matches: return ['key' => $value, 'key2' => $value2];
+        elseif (preg_match('/return\s*\[([^\]]+)\]/', $cleanedBody, $matches)) {
+            $arrayContent = $matches[1];
+            $properties = $this->parseInlineArrayStructure($arrayContent);
+        }
+        
+        // If array_map is detected, wrap in array type
+        if (strpos($cleanedBody, 'array_map') !== false) {
+            return [
+                'type' => 'array',
+                'items' => [
+                    'type' => 'object',
+                    'properties' => $properties,
+                ],
+            ];
+        }
+        
+        return [
+            'type' => 'object',
+            'properties' => $properties
+        ];
+    }
 
-        $propertyName = $propertyFetch->name->toString();
+    /**
+     * Parse inline array structure like ['id' => $value, 'type' => $value2]
+     */
+    private function parseInlineArrayStructure(string $arrayContent): array
+    {
+        $properties = [];
+        
+        // Split by comma but handle nested structures
+        $pairs = $this->splitArrayPairs($arrayContent);
+        
+        foreach ($pairs as $pair) {
+            if (preg_match('/[\'"]([^\'\"]+)[\'"]\s*=>\s*(.+)/', trim($pair), $matches)) {
+                $key = $matches[1];
+                $value = trim($matches[2]);
+                
+                // Determine type based on the value pattern
+                $type = $this->determineTypeFromValue($value);
+                
+                $properties[$key] = [
+                    'type' => $type,
+                    'description' => "The {$key} field",
+                ];
+            }
+        }
+        
+        return $properties;
+    }
 
-        try {
-            if ($propertyFetch->var instanceof Expr\Variable && $propertyFetch->var->name === 'this') {
-                $reflection = new ReflectionClass($this->currentResource);
-                if ($reflection->hasProperty($propertyName)) {
-                    $property = $reflection->getProperty($propertyName);
-                    $type = $property->getType();
-
-                    if ($type) {
-                        return [
-                            'type' => $this->mapPhpTypeToOpenApi($type->getName()),
-                            'nullable' => $type->allowsNull(),
-                        ];
-                    }
+    /**
+     * Split array pairs handling nested structures
+     */
+    private function splitArrayPairs(string $content): array
+    {
+        $pairs = [];
+        $current = '';
+        $depth = 0;
+        $inString = false;
+        $stringChar = null;
+        
+        for ($i = 0; $i < strlen($content); $i++) {
+            $char = $content[$i];
+            
+            if (!$inString && ($char === '"' || $char === "'")) {
+                $inString = true;
+                $stringChar = $char;
+            } elseif ($inString && $char === $stringChar && ($i === 0 || $content[$i-1] !== '\\')) {
+                $inString = false;
+                $stringChar = null;
+            }
+            
+            if (!$inString) {
+                if ($char === '[' || $char === '(') {
+                    $depth++;
+                } elseif ($char === ']' || $char === ')') {
+                    $depth--;
+                } elseif ($char === ',' && $depth === 0) {
+                    $pairs[] = trim($current);
+                    $current = '';
+                    continue;
                 }
             }
-        } catch (Throwable $e) {
-            // Fallback to string if type inference fails
+            
+            $current .= $char;
         }
-
-        return ['type' => 'string'];
+        
+        if (!empty(trim($current))) {
+            $pairs[] = trim($current);
+        }
+        
+        return $pairs;
     }
 
     /**
-     * Infer type from method call
+     * Determine OpenAPI type from PHP value pattern
      */
-    private function inferTypeFromMethodCall(Expr\MethodCall $methodCall): array
+    private function determineTypeFromValue(string $value): string
     {
-        if (! $methodCall->name instanceof Identifier) {
-            return ['type' => 'string'];
+        // Remove whitespace
+        $value = trim($value);
+        
+        // Check for method calls that might indicate type
+        if (preg_match('/->value$/', $value)) {
+            return 'string'; // Likely an enum value
         }
-
-        $methodName = $methodCall->name->toString();
-
-        // Check configured method types
-        if (isset($this->methodTypes[$methodName])) {
-            return $this->methodTypes[$methodName];
+        
+        // Enhanced HashId detection - handles both direct and nested property access
+        if (preg_match('/->hashId$/', $value) || 
+            preg_match('/->hashId->hashId$/', $value) || 
+            preg_match('/\$entity->hashId/', $value)) {
+            return 'string'; // Hash ID
         }
-
-        // Check relationship methods
-        if (isset($this->relationshipTypes[$methodName])) {
-            return $this->relationshipTypes[$methodName];
+        
+        // Enhanced enum type detection
+        if (preg_match('/->type$/', $value) || 
+            preg_match('/\$entity->type/', $value) || 
+            preg_match('/->type->value$/', $value)) {
+            return 'string'; // Enum type
         }
-
-        // Handle common Laravel relationship methods
-        if (in_array($methodName, ['hasOne', 'belongsTo', 'morphOne'])) {
-            return ['type' => 'object'];
+        
+        if (preg_match('/->id$/', $value)) {
+            return 'integer'; // Likely ID field
         }
-
-        if (in_array($methodName, ['hasMany', 'belongsToMany', 'morphMany', 'morphToMany'])) {
-            return [
-                'type' => 'array',
-                'items' => ['type' => 'object'],
-            ];
+        
+        if (preg_match('/->count\(\)$/', $value)) {
+            return 'integer'; // Count method
         }
-
-        // Handle date formatting methods
-        if (in_array($methodName, ['toDateString', 'toDateTimeString', 'format'])) {
-            return ['type' => 'string', 'format' => 'date-time'];
+        
+        if (preg_match('/\$[^->]+->(\w+)$/', $value, $matches)) {
+            $propertyName = $matches[1];
+            
+            // Common property name patterns
+            if (in_array($propertyName, ['id', 'count', 'total', 'amount'])) {
+                return 'integer';
+            }
+            
+            if (in_array($propertyName, ['active', 'enabled', 'visible', 'published'])) {
+                return 'boolean';
+            }
+            
+            if (in_array($propertyName, ['title', 'name', 'description', 'email'])) {
+                return 'string';
+            }
         }
-
-        // Default fallback
-        return ['type' => 'string'];
+        
+        // Default to string for unknown patterns
+        return 'string';
     }
 
     /**
@@ -877,6 +1204,54 @@ class ResponseAnalyzer
     }
 
     /**
+     * Analyze response from a reflection method for smart features
+     */
+    public function analyzeResponse(\ReflectionMethod $method): ?array
+    {
+        $controller = $method->getDeclaringClass()->getName();
+        $methodName = $method->getName();
+        
+        $analysis = $this->analyzeControllerMethod($controller, $methodName);
+        
+        return !empty($analysis) ? new Schema($analysis) : null;
+    }
+
+    /**
+     * Analyze method response for smart features (alias for analyzeResponse)
+     */
+    public function analyzeMethodResponse(string $controller, string $method): array
+    {
+        return $this->analyzeControllerMethod($controller, $method);
+    }
+
+    /**
+     * Analyze error responses from a reflection method
+     */
+    public function analyzeErrorResponses(\ReflectionMethod $method): array
+    {
+        // For now, return common error responses
+        // This could be enhanced to analyze @throws annotations or method body
+        return [
+            '400' => new Schema(['type' => 'object', 'properties' => [
+                'message' => ['type' => 'string'],
+                'errors' => ['type' => 'object']
+            ]]),
+            '401' => new Schema(['type' => 'object', 'properties' => [
+                'message' => ['type' => 'string']
+            ]]),
+            '403' => new Schema(['type' => 'object', 'properties' => [
+                'message' => ['type' => 'string']
+            ]]),
+            '404' => new Schema(['type' => 'object', 'properties' => [
+                'message' => ['type' => 'string']
+            ]]),
+            '500' => new Schema(['type' => 'object', 'properties' => [
+                'message' => ['type' => 'string']
+            ]])
+        ];
+    }
+
+    /**
      * Resolve class name using the controller's namespace and imports
      */
     private function resolveClassName(string $typeName, ReflectionClass $declaringClass): string
@@ -922,5 +1297,20 @@ class ResponseAnalyzer
 
         // Fallback to the original type name
         return $typeName;
+    }
+
+    /**
+     * Extract DataCollectionOf attribute from a property
+     */
+    private function extractDataCollectionOfType(\ReflectionProperty $property): ?string
+    {
+        $collectionOfAttributes = $property->getAttributes(\Spatie\LaravelData\Attributes\DataCollectionOf::class);
+        
+        if (!empty($collectionOfAttributes)) {
+            $instance = $collectionOfAttributes[0]->newInstance();
+            return $instance->class;
+        }
+        
+        return null;
     }
 }

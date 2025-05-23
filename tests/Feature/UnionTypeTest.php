@@ -17,7 +17,7 @@ it('processes return types without throwing union type errors', function () {
     $method = new ReflectionMethod(DtoController::class, 'nestedSimple');
     
     // This should not throw any errors - the fix ensures union types are handled
-    $result = $processMethod->invoke($routeComposition, $method);
+    $result = $processMethod->invoke($routeComposition, $method, DtoController::class, 'nestedSimple');
     
     expect($result)->toBeArray();
 });
@@ -46,7 +46,7 @@ it('validates union type fix is working', function () {
     $processMethod->setAccessible(true);
     
     // This should not throw "Call to undefined method ReflectionUnionType::getName()"
-    $result = $processMethod->invoke($routeComposition, $method);
+    $result = $processMethod->invoke($routeComposition, $method, get_class($mockClass), 'testMethod');
     
     expect($result)->toBeArray();
 });
@@ -72,7 +72,7 @@ it('confirms union type processing extracts types correctly', function () {
     $processMethod->setAccessible(true);
     
     // The fix should handle union types gracefully
-    $result = $processMethod->invoke($routeComposition, $method);
+    $result = $processMethod->invoke($routeComposition, $method, get_class($mockClass), 'unionMethod');
     
     expect($result)->toBeArray()
         ->and($result)->toHaveKey(200)

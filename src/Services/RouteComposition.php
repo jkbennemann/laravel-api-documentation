@@ -23,8 +23,10 @@ use JkBennemann\LaravelApiDocumentation\Attributes\Parameter;
 use JkBennemann\LaravelApiDocumentation\Attributes\PathParameter;
 use JkBennemann\LaravelApiDocumentation\Attributes\Summary;
 use JkBennemann\LaravelApiDocumentation\Attributes\Tag;
+use JkBennemann\LaravelApiDocumentation\Services\AttributeAnalyzer;
 use JkBennemann\LaravelApiDocumentation\Services\QueryParameterExtractor;
 use JkBennemann\LaravelApiDocumentation\Services\RequestAnalyzer;
+use JkBennemann\LaravelApiDocumentation\Services\ResponseAnalyzer;
 use ReflectionAttribute;
 use ReflectionClass;
 use ReflectionMethod;
@@ -45,7 +47,9 @@ class RouteComposition
     public function __construct(
         protected Router $router,
         private readonly Repository $configuration,
-        private readonly RequestAnalyzer $requestAnalyzer
+        private readonly RequestAnalyzer $requestAnalyzer,
+        private readonly ResponseAnalyzer $responseAnalyzer,
+        private readonly AttributeAnalyzer $attributeAnalyzer
     ) {
         $this->routes = $router->getRoutes();
         $this->includeVendorRoutes = $this->configuration->get('api-documentation.include_vendor_routes', false);
@@ -103,6 +107,8 @@ class RouteComposition
             $tags = $this->processTags($controllerClass, $actionMethod);
             $description = $this->processDescription($controllerClass, $actionMethod);
 
+            $additionalDocs = $this->processAdditionalDocumentation($controllerClass, $actionMethod);
+            
             $routes[] = [
                 'method' => $httpMethod,
                 'uri' => $uri,
@@ -114,8 +120,12 @@ class RouteComposition
                 'request_parameters' => $this->processPathParameters($uri, $controllerClass, $actionMethod),
                 'tags' => array_filter($tags),
                 'documentation' => null,
-                'query_parameters' => $this->processQueryParameters($controllerClass, $actionMethod),
-                'responses' => $reflectionMethod ? $this->processReturnType($reflectionMethod) : $this->parseResponseTypesFromSource($controllerClass, $actionMethod),
+                'additional_documentation' => $additionalDocs,
+                'query_parameters' => $this->mergeQueryParameters($controllerClass, $actionMethod, $reflectionMethod),
+                'request_body' => $reflectionMethod ? $this->attributeAnalyzer->extractRequestBody($reflectionMethod) : null,
+                'response_headers' => $reflectionMethod ? $this->attributeAnalyzer->extractResponseHeaders($reflectionMethod) : [],
+                'response_bodies' => $reflectionMethod ? $this->attributeAnalyzer->extractResponseBodies($reflectionMethod) : [],
+                'responses' => $reflectionMethod ? $this->processReturnType($reflectionMethod, $controllerClass, $actionMethod) : $this->parseResponseTypesFromSource($controllerClass, $actionMethod),
                 'action' => [
                     'controller' => $controllerClass,
                     'method' => $actionMethod,
@@ -146,7 +156,7 @@ class RouteComposition
         return $parameters;
     }
 
-    private function processRequestParameters($controller, string $action): array
+    private function processRequestParameters(string $controller, string $action): array
     {
         try {
             $method = new ReflectionMethod($controller, $action);
@@ -166,15 +176,7 @@ class RouteComposition
                     // Transform the analyzed parameters to match the expected format
                     $transformedParameters = [];
                     foreach ($analyzedParameters as $name => $parameter) {
-                        $transformedParameters[$name] = [
-                            'name' => $name,
-                            'description' => $parameter['description'] ?? null,
-                            'type' => $parameter['type'] ?? 'string',
-                            'format' => $parameter['format'] ?? null,
-                            'required' => $parameter['required'] ?? false,
-                            'deprecated' => $parameter['deprecated'] ?? false,
-                            'parameters' => $parameter['parameters'] ?? [],
-                        ];
+                        $transformedParameters[$name] = $this->transformParameter($name, $parameter);
                     }
 
                     return $transformedParameters;
@@ -266,7 +268,7 @@ class RouteComposition
         return 'string';
     }
 
-    private function parseValidationRulesFromSource($controller, string $action): array
+    private function parseValidationRulesFromSource(string $controller, string $action): array
     {
         $parameters = [];
 
@@ -436,7 +438,7 @@ class RouteComposition
         return $parameters;
     }
 
-    private function processReturnType(ReflectionMethod $method): array
+    private function processReturnType(ReflectionMethod $method, string $controller, string $action): array
     {
         $responses = [];
         $returnType = $method->getReturnType();
@@ -445,6 +447,7 @@ class RouteComposition
         $headers = [];
         $resource = null;
 
+        // Rule: Project Context - Response classes can be enhanced with PHP annotations
         // Check for DataResponse attribute
         $dataResponseAttr = $method->getAttributes(DataResponse::class)[0] ?? null;
         if ($dataResponseAttr) {
@@ -453,6 +456,40 @@ class RouteComposition
             $description = $args['description'] ?? '';
             $headers = $args['headers'] ?? [];
             $resource = $args['resource'] ?? null;
+            
+            // If we have a resource class, analyze it to get properties and example
+            if ($resource) {
+                // Rule: Error Handling - Implement proper error boundaries
+                // Only analyze if resource is a string (class name)
+                $analysis = [];
+                if (is_string($resource)) {
+                    $analysis = $this->responseAnalyzer->analyzeDataResponse($resource);
+                }
+                
+                // If analysis was successful, include the example
+                if (!empty($analysis) && isset($analysis['enhanced_analysis']) && $analysis['enhanced_analysis'] === true) {
+                    $responses[$statusCode] = [
+                        'description' => $description,
+                        'headers' => $headers,
+                        'type' => $analysis['type'] ?? 'object',
+                        'content_type' => 'application/json',
+                        'resource' => $resource,
+                    ];
+                    
+                    // Include properties if available
+                    if (isset($analysis['properties'])) {
+                        $responses[$statusCode]['properties'] = $analysis['properties'];
+                    }
+                    
+                    // Include example if available
+                    if (isset($analysis['example'])) {
+                        $responses[$statusCode]['example'] = $analysis['example'];
+                    }
+                    
+                    // Return early since we've already processed this response
+                    return $responses;
+                }
+            }
         }
 
         if ($returnType === null) {
@@ -501,7 +538,7 @@ class RouteComposition
                     // Generic ResourceCollection, treat as array
                     $responses[$statusCode] = [
                         'description' => $description,
-                        'resource' => null,
+                        'resource' => null, // Don't set resource for array types to prevent schema override
                         'headers' => $headers,
                         'type' => 'array',
                         'content_type' => 'application/json',
@@ -539,13 +576,33 @@ class RouteComposition
                     // Process the actual resource/data type
                     if (is_a($typeName, JsonResource::class, true) || 
                         class_exists($typeName)) {
-                        $responses[$statusCode] = [
-                            'description' => $description,
-                            'resource' => $resource ?? $typeName,
-                            'headers' => $headers,
-                            'type' => 'object',
-                            'content_type' => 'application/json',
-                        ];
+                        $analysis = $this->responseAnalyzer->analyzeControllerMethod($controller, $action);
+                        
+                        if (!empty($analysis)) {
+                            // ResponseAnalyzer found dynamic structure - use it
+                            $responses[$statusCode] = [
+                                'description' => $description,
+                                'headers' => $headers,
+                                'type' => $analysis['type'] ?? 'object',
+                                'content_type' => 'application/json',
+                                'properties' => $analysis['properties'] ?? [],
+                                'enhanced_analysis' => true, // Flag to indicate this came from enhanced analysis
+                            ];
+                            
+                            // Include example if available
+                            if (isset($analysis['example'])) {
+                                $responses[$statusCode]['example'] = $analysis['example'];
+                            }
+                        } else {
+                            // Fallback to basic JsonResource handling
+                            $responses[$statusCode] = [
+                                'description' => $description,
+                                'resource' => $resource ?? $typeName,
+                                'headers' => $headers,
+                                'type' => 'object',
+                                'content_type' => 'application/json',
+                            ];
+                        }
                         break; // Use the first valid resource type found
                     }
                 }
@@ -602,13 +659,33 @@ class RouteComposition
                     ];
                 }
             } elseif (is_a($typeName, JsonResource::class, true)) {
-                $responses[$statusCode] = [
-                    'description' => $description,
-                    'resource' => $resource ?? $typeName,
-                    'headers' => $headers,
-                    'type' => 'object',
-                    'content_type' => 'application/json',
-                ];
+                $analysis = $this->responseAnalyzer->analyzeControllerMethod($controller, $action);
+                
+                if (!empty($analysis)) {
+                    // ResponseAnalyzer found dynamic structure - use it
+                    $responses[$statusCode] = [
+                        'description' => $description,
+                        'headers' => $headers,
+                        'type' => $analysis['type'] ?? 'object',
+                        'content_type' => 'application/json',
+                        'properties' => $analysis['properties'] ?? [],
+                        'enhanced_analysis' => true, // Flag to indicate this came from enhanced analysis
+                    ];
+                    
+                    // Include example if available
+                    if (isset($analysis['example'])) {
+                        $responses[$statusCode]['example'] = $analysis['example'];
+                    }
+                } else {
+                    // Fallback to basic JsonResource handling
+                    $responses[$statusCode] = [
+                        'description' => $description,
+                        'resource' => $resource ?? $typeName,
+                        'headers' => $headers,
+                        'type' => 'object',
+                        'content_type' => 'application/json',
+                    ];
+                }
             } elseif (is_a($typeName, JsonResponse::class, true)) {
                 // Analyze JsonResponse content to detect DTOs
                 $detectedResource = $this->analyzeJsonResponseContent($method);
@@ -707,6 +784,37 @@ class RouteComposition
         return null;
     }
 
+    /**
+     * Transform parameter data to the expected format, handling nested parameters recursively
+     */
+    private function transformParameter(string $name, array $parameter): array
+    {
+        // Extract the type as a string if it's an array with a 'type' key
+        $type = is_array($parameter['type'] ?? null) ? ($parameter['type']['type'] ?? 'string') : ($parameter['type'] ?? 'string');
+        
+        $result = [
+            'name' => $name,
+            'description' => $parameter['description'] ?? null,
+            'type' => $type,
+            'format' => $parameter['format'] ?? null,
+            'required' => $parameter['required'] ?? false,
+            'deprecated' => $parameter['deprecated'] ?? false,
+        ];
+        
+        // Handle nested parameters recursively
+        if (!empty($parameter['parameters']) && is_array($parameter['parameters'])) {
+            $nestedParameters = [];
+            foreach ($parameter['parameters'] as $nestedName => $nestedParameter) {
+                $nestedParameters[$nestedName] = $this->transformParameter($nestedName, $nestedParameter);
+            }
+            $result['parameters'] = $nestedParameters;
+        } else {
+            $result['parameters'] = [];
+        }
+        
+        return $result;
+    }
+    
     private function analyzeJsonResponseContent(ReflectionMethod $method): ?string
     {
         try {
@@ -753,7 +861,7 @@ class RouteComposition
         return null;
     }
 
-    private function parseResponseTypesFromSource($controller, string $action): array
+    private function parseResponseTypesFromSource(string $controller, string $action): array
     {
         $responses = [];
 
@@ -914,7 +1022,7 @@ class RouteComposition
         };
     }
 
-    private function processPathParameters(string $uri, $controller, string $action): array
+    private function processPathParameters(string $uri, string $controller, string $action): array
     {
         $parameters = [];
         preg_match_all('/{([^}]+)}/', $uri, $matches);
@@ -976,7 +1084,7 @@ class RouteComposition
         return $parameters;
     }
 
-    private function belongsToDoc(string $docName, $controller, string $action): bool
+    private function belongsToDoc(string $docName, string $controller, string $action): bool
     {
         $docFiles = [];
         try {
@@ -1008,7 +1116,7 @@ class RouteComposition
         return false;
     }
 
-    private function processTags($controller, string $action): array
+    private function processTags(string $controller, string $action): array
     {
         $tags = [];
 
@@ -1059,7 +1167,7 @@ class RouteComposition
         return array_map('trim', $tags);
     }
 
-    private function processSummary($controller, string $action): ?string
+    private function processSummary(string $controller, string $action): ?string
     {
         try {
             // Check class-level attributes first (especially for invokable controllers)
@@ -1093,7 +1201,7 @@ class RouteComposition
         return null;
     }
 
-    private function processDescription($controller, string $action): ?string
+    private function processDescription(string $controller, string $action): ?string
     {
         try {
             // Check class-level attributes first (especially for invokable controllers)
@@ -1122,6 +1230,46 @@ class RouteComposition
             }
         } catch (Throwable) {
             // Ignore reflection errors
+        }
+
+        return null;
+    }
+
+    /**
+     * Process AdditionalDocumentation attribute from controller method or class
+     */
+    private function processAdditionalDocumentation(string $controller, string $action): ?array
+    {
+        try {
+            // Check class-level attributes first (especially for invokable controllers)
+            $class = new ReflectionClass($controller);
+            $classAttributes = $class->getAttributes();
+
+            foreach ($classAttributes as $attribute) {
+                if ($attribute->getName() === \JkBennemann\LaravelApiDocumentation\Attributes\AdditionalDocumentation::class) {
+                    $instance = $attribute->newInstance();
+                    return [
+                        'url' => $instance->url,
+                        'description' => $instance->description,
+                    ];
+                }
+            }
+
+            // Check method-level attributes
+            $method = new ReflectionMethod($controller, $action);
+            $attributes = $method->getAttributes();
+
+            foreach ($attributes as $attribute) {
+                if ($attribute->getName() === \JkBennemann\LaravelApiDocumentation\Attributes\AdditionalDocumentation::class) {
+                    $instance = $attribute->newInstance();
+                    return [
+                        'url' => $instance->url,
+                        'description' => $instance->description,
+                    ];
+                }
+            }
+        } catch (Throwable) {
+            // Ignore exceptions
         }
 
         return null;
@@ -1138,7 +1286,7 @@ class RouteComposition
         return implode('', array_slice($lines, $startLine, $endLine));
     }
 
-    private function processQueryParameters($controller, string $action): array
+    private function processQueryParameters(string $controller, string $action): array
     {
         try {
             // Use QueryParameterExtractor to extract @queryParam from docblocks
@@ -1148,5 +1296,17 @@ class RouteComposition
             // Fallback to empty array if extraction fails
             return [];
         }
+    }
+
+    private function mergeQueryParameters(string $controller, string $action, ?ReflectionMethod $reflectionMethod): array
+    {
+        $parameters = $this->processQueryParameters($controller, $action);
+
+        if ($reflectionMethod) {
+            $attributeParameters = $this->attributeAnalyzer->extractQueryParameters($reflectionMethod);
+            $parameters = array_merge($parameters, $attributeParameters);
+        }
+
+        return $parameters;
     }
 }
