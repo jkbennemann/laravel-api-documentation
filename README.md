@@ -1,71 +1,57 @@
-# Laravel API documentation
+# Laravel API Documentation
 
 [![Latest Version on Packagist](https://img.shields.io/packagist/v/jkbennemann/laravel-api-documentation.svg?style=flat-square)](https://packagist.org/packages/jkbennemann/laravel-api-documentation)
 [![Total Downloads](https://img.shields.io/packagist/dt/jkbennemann/laravel-api-documentation.svg?style=flat-square)](https://packagist.org/packages/jkbennemann/laravel-api-documentation)
 
-> **This library is currently in an alpha phase**  
-> - still under development
-> - versions are not stable
-> - breaking changes can occur
+## Overview
 
+Laravel API Documentation is a powerful package that automatically generates OpenAPI 3.0 documentation from your Laravel application code. It eliminates the need to manually write and maintain API documentation by intelligently analyzing your routes, controllers, requests, and responses.
 
-This is an opinionated package to generate API documentation for Laravel applications.
-They key focus is to remove the need to manually write documentation and keep it up to date by generating it from the code.
+### Key Features
+
+- **Zero-Config Operation**: Works out of the box with standard Laravel conventions
+- **Automatic Route Analysis**: Scans all routes and extracts path parameters, HTTP methods, and middleware
+- **Smart Request Analysis**: Extracts validation rules from FormRequest classes to document request parameters
+- **Dynamic Response Detection**: Analyzes controller return types and method bodies to document responses
+- **Spatie Data Integration**: First-class support for Spatie Laravel Data DTOs
+- **Resource Collection Support**: Handles JsonResource and ResourceCollection responses
+- **Attribute Enhancement**: Optional PHP 8 attributes for additional documentation control
 
 ## Installation
 
-You can install the package via composer:
+### 1. Install via Composer
 
 ```bash
 composer require jkbennemann/laravel-api-documentation
 ```
 
-You can publish the config file with:
+### 2. Publish Configuration (Optional)
 
 ```bash
-php artisan vendor:publish --tag="laravel-api-documentation-config"
+php artisan vendor:publish --tag="api-documentation-config"
 ```
-By default it will set the settings to the following:
 
-- Ignore all routes that are registered by a vendor package
-- Ignore all routes with HTTP methods `HEAD`, `OPTIONS`
-- UIs for swagger or redoc are disabled
-- If enabled the UIs are available at
-  - `/documentation` (defaults to swagger)
-  - `/documentation/redoc` (if enabled)
-  - `/documentation/swagger` (if enabled)
+### 3. Link Storage Directory
 
-### Linking the storage's public directory
-
-The package will store the generated documentation at the defined disk.  
-By default it will use the `public` disk to store the documentation.
-For the default Laravel disk of `public` you'd need to link the storage folder to make it accessible by running:
+The package stores documentation in your storage directory. Make it accessible with:
 
 ```bash
 php artisan storage:link
 ```
 
-This will ensure that the generated documentation is accessible.  
-When generating the documentation the package (by default) will store the documentation at `storage/app/public/api-documentation.json`.
+## Configuration
 
-In order for this to work you need to have the `public` disk configured in your `config/filesystems.php`.  
-This should be already configured by default by your application.
-```php
-# config/filesystems.php
+### Default Settings
 
-//...
-'public' => [
-    'driver' => 'local',
-    'root' => storage_path('app/public'),
-    'url' => env('APP_URL') . '/storage',
-    'visibility' => 'public',
-    'throw' => false,
-],
-//...
-```
+Out of the box, the package:
 
-**As the documentation is stored in the `storage` folder of your application which by default will not be added to the VCS  
-it is needed to explicitly exclude the `api-documentation.json` from your `storage/app/public/.gitignore` file.**
+- Ignores vendor routes and `HEAD`/`OPTIONS` methods
+- Disables Swagger/ReDoc UIs by default (can be enabled in config)
+- Stores documentation at `storage/app/public/api-documentation.json`
+
+### Documentation Storage
+
+To include the generated documentation in version control, update your `.gitignore`:
 
 ```bash
 # storage/app/public/.gitignore
@@ -74,250 +60,173 @@ it is needed to explicitly exclude the `api-documentation.json` from your `stora
 !api-documentation.json
 ```
 
-If you want to make the documentation public by default, without the need to link the storage folder, you can:
-1. Add a dedicated disk configuration for the documentation to `config/filesystems.php` *(Recommended)*
-2. Adjust the default disk configuration to not use the `storage_path()` *(Not recommended)*
+### Custom Storage Location
+
+For a more accessible location, add a custom disk in `config/filesystems.php`:
+
 ```php
-'public_exposed' => [
+'documentation' => [
     'driver'     => 'local',
-    'root'       => public_path(),
-    'url'        => env('APP_URL'),
+    'root'       => public_path('docs'),
+    'url'        => env('APP_URL') . '/docs',
     'visibility' => 'public',
-    'throw'      => false,
 ],
 ```
-and then using the disk `public_exposed` in the `config/laravel-api-documentation.php` file.
 
-### Useful tips
-If you want to automatically re-generate the documentation all the time, consider to add a git hook to your repository.  
-This way you allow the documentation to be kept up-to-date, every time you push changes to your repository.
+Then update your config:
 
-## Generating the documentation
+```php
+// config/laravel-api-documentation.php
+'storage' => [
+    'disk' => 'documentation',
+    'filename' => 'api-documentation.json',
+],
+```
+
+### CI/CD Integration
+
+Add documentation generation to your deployment workflow:
+
 ```bash
-Generating the documentation is as simple as running the following command:
+# In your deployment script
+php artisan documentation:generate
+```
+
+Or add to your `composer.json` scripts:
+
+```json
+"scripts": {
+    "post-deploy": [
+        "@php artisan documentation:generate"
+    ]
+}
+```
+
+## Usage
+
+### Generating Documentation
+
 ```bash
 php artisan documentation:generate
 ```
 
-In case you want to be able to let your application generate the documentation through composer scripts  
-you can add the following to your `composer.json`:
-```json
-{
-    "scripts": {
-        "documentation:generate": [
-            "@php artisan documentation:generate"
-        ]
-    }
-}
+This command scans your application routes and generates an OpenAPI 3.0 specification file at your configured location.
+
+### Viewing Documentation
+
+By default, the documentation is accessible at:
+
+- `/documentation` - Default UI (Swagger if enabled)
+- `/documentation/swagger` - Swagger UI (if enabled)
+- `/documentation/redoc` - ReDoc UI (if enabled)
+
+To enable the UIs, update your configuration:
+
+```php
+// config/laravel-api-documentation.php
+'ui' => [
+    'enabled' => true,
+    'swagger' => true,
+    'redoc' => true,
+],
 ```
 
+### Specifying Files to Generate
 
-## How it works
-The package will scan all routes of your application and generate an OpenAPI file containing the documentation.
+Generate documentation for specific files only:
 
-Under the hood the package utilizes the PHP Parser to parse the routes and their controllers.  
-It then walks through Request and Response classes to figure out the structure of the request and response objects.
+```bash
+php artisan documentation:generate --file=api-v1
+```
 
-### 🚀 **Automatic Detection Features**
+This generates `api-v1.json` based on your configuration settings.
 
-The package includes powerful automatic detection capabilities that require **no manual annotations** in most cases:
+## How It Works
 
-#### **1. Intelligent Response Type Detection**
-- **Return Type Analysis**: Automatically detects controller method return types (`JsonResponse`, `ResourceCollection`, `JsonResource`, etc.)
-- **Method Body Analysis**: When no return type is declared, analyzes method content to detect response patterns
-- **Union Type Support**: Handles union types from docblocks (e.g., `@return UserData|AdminData`)
-- **Spatie Data Integration**: Seamlessly generates schemas for Spatie Data objects
-- **Paginated Response Detection**: Automatically detects `LengthAwarePaginator` usage and generates proper paginated response structure with `data`, `meta`, and `links` properties
+The package analyzes your Laravel application using several intelligent components:
 
-#### **2. Comprehensive Controller Support**
-- **Traditional Controllers**: Full support for standard Laravel controllers with method-based routes
-- **Invokable Controllers**: Complete support for single-action controllers with `__invoke()` method
-- **Class-Level Attributes**: Automatic detection of attributes placed on controller classes (essential for invokable controllers)
-- **Mixed Applications**: Seamless handling of applications using both traditional and invokable controllers
+1. **Route Analysis**: Scans all registered routes to identify controllers, HTTP methods, and path parameters
+2. **Controller Analysis**: Examines controller methods to determine response types and structures
+3. **Request Analysis**: Processes FormRequest classes to extract validation rules and convert them to OpenAPI parameters
+4. **Response Analysis**: Detects return types and analyzes method bodies to determine response structures
 
-#### **3. Smart Request Parameter Extraction**
-- **FormRequest Analysis**: Automatically extracts validation rules from FormRequest classes
-- **Query Parameter Detection**: Analyzes `@queryParam` annotations and generates query parameter schemas
-- **Path Parameter Processing**: Detects route parameters (`{id}`, `{user}`) and generates appropriate documentation
-- **Nested Parameter Support**: Handles complex nested parameter structures (e.g., `user.profile.name`)
+## Key Features
 
-#### **4. Advanced Validation Detection**
-- **Rule Processing**: Converts Laravel validation rules to OpenAPI types and formats
-- **Required Field Detection**: Automatically determines required vs optional parameters
-- **Type Inference**: Smart type detection from validation rules (`email` → `string` with `email` format)
+### Zero-Configuration Detection
 
-#### **5. Resource Collection Intelligence**
-- **Array vs Object Detection**: Distinguishes between generic arrays and specific resource objects
-- **Collection Type Analysis**: Automatically determines if ResourceCollection contains specific DTOs or generic data
-- **Pagination Support**: Generates proper schemas for paginated collections
+The package automatically detects and documents your API with minimal configuration:
 
-### 🎯 **Automatic Generation Rules**
+#### Response Type Detection
+- Analyzes controller return types (`JsonResponse`, `ResourceCollection`, etc.)
+- Examines method bodies when return types aren't declared
+- Supports union types (`@return UserData|AdminData`)
+- Generates proper paginated response structures with `data`, `meta`, and `links`
 
-The package follows these intelligent rules for automatic documentation generation:
+#### Controller Support
+- Works with traditional and invokable controllers
+- Processes class-level and method-level attributes
+- Handles mixed controller architectures seamlessly
 
-1. **Response Type Priority**:
-   - First: Explicit return type declarations
-   - Second: Method body pattern analysis (e.g., `new LengthAwarePaginator()`)
-   - Third: Docblock analysis (e.g., `@return UserData`)
-   - Fourth: Default fallback to generic response
+#### Request Parameter Extraction
+- Extracts validation rules from FormRequest classes
+- Detects route parameters (`{id}`, `{user}`) automatically
+- Supports nested parameter structures (`user.profile.name`)
+- Handles parameters merged from route values in `prepareForValidation`
 
-2. **Parameter Detection Order**:
-   - Path parameters from route definitions (`{id}`)
-   - Request parameters from FormRequest validation rules
-   - Query parameters from `@queryParam` annotations
-   - Enhanced with `#[Parameter]` attributes when provided
+#### Validation & Type Detection
+- Converts Laravel validation rules to OpenAPI types and formats
+- Intelligently determines required vs. optional parameters
+- Maps validation rules to appropriate formats (`email` → `string` with `email` format)
 
-3. **Schema Generation Logic**:
-   - Spatie Data objects: Generate comprehensive property schemas
-   - Laravel Resources: Analyze `toArray()` method structure
-   - Union types: Create `oneOf` schemas with multiple options
-   - Collections: Generate array schemas with proper item definitions
+#### Resource & Collection Support
+- Distinguishes between arrays and object responses
+- Analyzes ResourceCollection for contained DTO types
+- Supports `DataCollectionOf` attributes for nested collections
 
-4. **Class Resolution**:
-   - Automatic resolution of short class names to fully qualified names
-   - Parsing of `use` statements for proper namespace resolution
-   - Smart handling of relative class references
+## Recent Enhancements
 
-With PHP 8 attributes it is possible to add additional information to the routes which will enhance the generated documentation.  
-These attributes are defined by the package and can be used for Controller methods (traditional controllers), Controller classes (invokable controllers), Request classes and Response classes.
+### Route Parameter Handling
+- **Route Value Detection**: Properly handles parameters merged from route values in `prepareForValidation`
+- **Parameter Exclusion**: Supports the `IgnoreDataParameter` attribute to exclude fields from body parameters
 
-In addition to that we will also include the authentication middleware of a route if it is defined in the route and add it to the OpenAPI file for each route.
+### Spatie Data Integration
+- **Clean Schema Generation**: Excludes internal Spatie Data fields (`_additional` and `_data_context`) from documentation
+- **DataCollectionOf Support**: Properly documents nested collection structures with correct item types
+- **Union Type Support**: Handles PHP 8+ union types in Spatie Data objects
 
-The package will then generate an OpenAPI file containing the documentation.
+### Dynamic Response Analysis
+- **JsonResource Analysis**: Improved detection of dynamic properties in JsonResource responses
+- **Method Body Parsing**: Enhanced analysis of controller method bodies for response structure detection
+- **Paginated Response Support**: Accurate documentation of paginated responses with proper structure
 
 ---
 
-*The functionality is still limited and will not cover all scenarios you need to be covered.  
-Feel free to open an issue or PR if you have a feature request or found a bug.*  
-<br>
-See the [Roadmap](#roadmap) section for more information on planned feature updates.  
-For more information on the OpenAPI specification see [OpenAPI Specification](https://swagger.io/specification/).
+For more information on the OpenAPI specification, see [OpenAPI Specification](https://swagger.io/specification/).
 
-## Available attributes
+## Enhancing Documentation with Attributes
 
-### Route attributes
+While the package works automatically, you can enhance your documentation using PHP 8 attributes.
 
-#### 1. Tag
-This attribute can be used to add the route to a specific tag.  
-*Multiple tags can be added to a route, which will however add them multiple times to the OpenAPI file!*
+### Controller Method Attributes
 
 ```php
-# SampleLoginController.php
 use JkBennemann\LaravelApiDocumentation\Attributes\Tag;
-
-//..
-#[Tag('Authentication')]
-public function login()
-{
-    //...
-}
-```
-This will add a new field to the route object in the OpenAPI file:
-```json
-{
-    //...
-    "\/login": {
-        "post": {
-            "tags": [
-                "Authentication"
-            ],
-            //...
-        }
-    }
-}
-```
-
-#### 2. Summary
-This attribute can be used to add a summary to the route.
-
-```php
-# SampleLoginController.php
 use JkBennemann\LaravelApiDocumentation\Attributes\Summary;
-
-//..
-#[Summary('Login a user')]
-public function login()
-{
-    //...
-}
-```
-This will add a new field to the route object in the OpenAPI file:
-```json
-{
-    //...
-    "\/login": {
-        "post": {
-            "summary": "Login a user",
-            //...
-        }
-    }
-}
-```
-
-
-#### 3. Description
-This attribute can be used to add a more detailed description to the route.  
-This attribute also supports HTML.
-
-```php
-# SampleLoginController.php
 use JkBennemann\LaravelApiDocumentation\Attributes\Description;
-
-//..
-#[Description('Logs an user in. <br> This route requires a valid email and password.')]
-public function login()
-{
-    //...
-}
-```
-This will add a new field to the route object in the OpenAPI file:
-```json
-{
-    //...
-    "\/login": {
-        "post": {
-            "description": "Logs an user in. <br> This route requires a valid email and password.",
-            //...
-        }
-    }
-}
-```
-
-
-#### 4. AdditionalDocumentation
-This attribute can be used to add additional documentation to the route which are pointing to any external resources.
-```php
-# SampleController.php
 use JkBennemann\LaravelApiDocumentation\Attributes\AdditionalDocumentation;
+use JkBennemann\LaravelApiDocumentation\Attributes\DataResponse;
 
-//..
-#[AdditionalDocumentation(url: 'https://example.com/docs', description: 'External documentation')]
-public function index()
+#[Tag('Authentication')]
+#[Summary('Login a user')]
+#[Description('Logs a user in with email and password credentials.')]
+#[AdditionalDocumentation(url: 'https://example.com/auth', description: 'Auth documentation')]
+#[DataResponse(200, description: 'Logged in user information', resource: UserResource::class)]
+#[DataResponse(401, description: 'Failed Authentication', resource: ['error' => 'string'])]
+public function login(LoginRequest $request)
 {
-    //...
+    // Method implementation
 }
 ```
-This will add a new field to the route object in the OpenAPI file:
-```json
-{
-    //...
-    "\/login": {
-        "post": {
-            "externalDocs": {
-                "url": "https://example.com/docs",
-                "description": "External documentation"
-            }
-            //...
-        }
-    }
-}
-```
-
-
-#### 5. DataResponse
-This attribute can be specified multiple data responses for a route.  
-In general this is used to provide more detailed information about the response for a given status code.  
-*Multiple DataResponse attributes can be added to a route to specify responses for multiple status codes*
 
 Available parameters:
 - (required) `status` (int) - The status code of the response
