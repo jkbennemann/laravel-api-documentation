@@ -225,6 +225,11 @@ class ResponseAnalyzer
             $propertyName = $parameter->getName();
             $type = $parameter->getType();
             
+            // Skip Spatie Data's internal fields
+            if ($propertyName === '_additional' || $propertyName === '_data_context') {
+                continue;
+            }
+            
             if (!$type) {
                 continue;
             }
@@ -799,6 +804,10 @@ class ResponseAnalyzer
         $example = [];
         
         foreach ($properties as $key => $property) {
+            // Skip Spatie Data's internal fields
+            if ($key === '_additional' || $key === '_data_context') {
+                continue;
+            }
             // If an example is explicitly provided in the property, use it
             if (isset($property['example'])) {
                 $example[$key] = $property['example'];

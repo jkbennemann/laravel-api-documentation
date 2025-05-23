@@ -1234,6 +1234,10 @@ class OpenApi
         if (isset($spatieSchema['properties'])) {
             $openApiSchema['properties'] = [];
             foreach ($spatieSchema['properties'] as $propertyName => $property) {
+                // Skip Spatie Data's internal fields
+                if ($propertyName === '_additional' || $propertyName === '_data_context') {
+                    continue;
+                }
                 $openApiProperty = ['type' => $property['type']];
                 
                 // Add format if present
