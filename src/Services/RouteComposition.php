@@ -70,7 +70,16 @@ class RouteComposition
                 continue;
             }
             
-            [$controllerClass, $actionMethod] = explode('@', $action['controller']);
+            // Handle different controller action formats:
+            // 1. Classic: "App\Controllers\UserController@show"
+            // 2. Invokable: "App\Controllers\ShowUserController" (no @, uses __invoke)
+            if (strpos($action['controller'], '@') !== false) {
+                [$controllerClass, $actionMethod] = explode('@', $action['controller']);
+            } else {
+                // Invokable controller - no method specified, uses __invoke
+                $controllerClass = $action['controller'];
+                $actionMethod = '__invoke';
+            }
 
             $reflectionMethod = null;
             $isTestStub = strpos($controllerClass, 'Tests\\Stubs\\') !== false;
@@ -290,7 +299,7 @@ class RouteComposition
 
                         $parameters[$name] = [
                             'name' => $name,
-                            'description' => null,
+                            'description' => '',
                             'type' => $this->determineParameterType($rules),
                             'format' => $this->determineParameterFormat($rules),
                             'required' => in_array('required', $rules),
@@ -962,7 +971,29 @@ class RouteComposition
     private function processTags($controller, string $action): array
     {
         $tags = [];
+        
         try {
+            // Check class-level attributes (especially for invokable controllers)
+            $class = new ReflectionClass($controller);
+            $classAttributes = $class->getAttributes();
+            
+            foreach ($classAttributes as $attribute) {
+                if ($attribute->getName() === Tag::class) {
+                    $args = $attribute->getArguments();
+                    if (empty($args)) {
+                        continue;
+                    }
+
+                    $tagValue = $args[0];
+                    if (is_string($tagValue)) {
+                        $tags = array_merge($tags, explode(',', $tagValue));
+                    } elseif (is_array($tagValue)) {
+                        $tags = array_merge($tags, $tagValue);
+                    }
+                }
+            }
+            
+            // Check method-level attributes
             $method = new ReflectionMethod($controller, $action);
             $attributes = $method->getAttributes();
 
@@ -991,6 +1022,20 @@ class RouteComposition
     private function processSummary($controller, string $action): ?string
     {
         try {
+            // Check class-level attributes first (especially for invokable controllers)
+            $class = new ReflectionClass($controller);
+            $classAttributes = $class->getAttributes();
+            
+            foreach ($classAttributes as $attribute) {
+                if ($attribute->getName() === Summary::class) {
+                    $args = $attribute->getArguments();
+                    if (!empty($args)) {
+                        return $args[0] ?? null;
+                    }
+                }
+            }
+            
+            // Check method-level attributes
             $method = new ReflectionMethod($controller, $action);
             $attributes = $method->getAttributes();
 
@@ -1011,6 +1056,20 @@ class RouteComposition
     private function processDescription($controller, string $action): ?string
     {
         try {
+            // Check class-level attributes first (especially for invokable controllers)
+            $class = new ReflectionClass($controller);
+            $classAttributes = $class->getAttributes();
+            
+            foreach ($classAttributes as $attribute) {
+                if ($attribute->getName() === Description::class) {
+                    $args = $attribute->getArguments();
+                    if (!empty($args)) {
+                        return $args[0] ?? null;
+                    }
+                }
+            }
+            
+            // Check method-level attributes
             $method = new ReflectionMethod($controller, $action);
             $attributes = $method->getAttributes();
 
