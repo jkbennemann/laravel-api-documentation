@@ -43,7 +43,7 @@ class RouteComposition
     private ?string $defaultDocFile;
 
     public function __construct(
-        protected Router $router, 
+        protected Router $router,
         private readonly Repository $configuration,
         private readonly RequestAnalyzer $requestAnalyzer
     ) {
@@ -62,14 +62,14 @@ class RouteComposition
         foreach ($this->routes as $route) {
             $httpMethod = $route->methods()[0];
             $uri = $this->getSimplifiedRoute($route->uri());
-            
+
             // Get controller class and method from route action
             $action = $route->getAction();
-            
+
             if (!isset($action['controller']) || !is_string($action['controller'])) {
                 continue;
             }
-            
+
             // Handle different controller action formats:
             // 1. Classic: "App\Controllers\UserController@show"
             // 2. Invokable: "App\Controllers\ShowUserController" (no @, uses __invoke)
@@ -83,7 +83,7 @@ class RouteComposition
 
             $reflectionMethod = null;
             $isTestStub = strpos($controllerClass, 'Tests\\Stubs\\') !== false;
-            
+
             // Try to get reflection, but don't fail for test stubs
             try {
                 $reflectionMethod = new ReflectionMethod($controllerClass, $actionMethod);
@@ -162,7 +162,7 @@ class RouteComposition
                 if (is_a($typeName, FormRequest::class, true)) {
                     // Use RequestAnalyzer to analyze the FormRequest class
                     $analyzedParameters = $this->requestAnalyzer->analyzeRequest($typeName);
-                    
+
                     // Transform the analyzed parameters to match the expected format
                     $transformedParameters = [];
                     foreach ($analyzedParameters as $name => $parameter) {
@@ -176,7 +176,7 @@ class RouteComposition
                             'parameters' => $parameter['parameters'] ?? [],
                         ];
                     }
-                    
+
                     return $transformedParameters;
                 }
             }
@@ -198,7 +198,7 @@ class RouteComposition
 
             $fileContent = file_get_contents($filename);
             $lines = explode("\n", $fileContent);
-            
+
             // Get method body content
             $startLine = $method->getStartLine() - 1; // 0-indexed
             $endLine = $method->getEndLine() - 1;
@@ -220,19 +220,19 @@ class RouteComposition
     private function parseValidationRules(string $rulesString): array
     {
         $parameters = [];
-        
+
         // Match patterns like 'name' => 'required|string|max:255',
         if (preg_match_all('/([\'"]\w+[\'"]\s*=>\s*[\'"](.*?)[\'"]\s*,?)/s', $rulesString, $matches, PREG_SET_ORDER)) {
             foreach ($matches as $match) {
                 $fullMatch = $match[0];
                 $rulesContent = $match[2];
-                
+
                 // Extract field name from quotes
                 if (preg_match('/[\'"](\\w+)[\'"]/', $fullMatch, $nameMatch)) {
                     $fieldName = $nameMatch[1];
                     $type = $this->inferTypeFromValidationRules($rulesContent);
                     $required = str_contains($rulesContent, 'required');
-                    
+
                     $parameters[$fieldName] = [
                         'name' => $fieldName,
                         'description' => null,
@@ -245,7 +245,7 @@ class RouteComposition
                 }
             }
         }
-        
+
         return $parameters;
     }
 
@@ -254,15 +254,15 @@ class RouteComposition
         if (str_contains($rules, 'integer') || str_contains($rules, 'numeric')) {
             return 'integer';
         }
-        
+
         if (str_contains($rules, 'boolean')) {
             return 'boolean';
         }
-        
+
         if (str_contains($rules, 'array')) {
             return 'array';
         }
-        
+
         return 'string';
     }
 
@@ -274,14 +274,14 @@ class RouteComposition
             // Convert controller class to file path
             $classFile = str_replace('\\', '/', $controller) . '.php';
             $stubFile = __DIR__ . '/../../' . str_replace('JkBennemann/LaravelApiDocumentation/', '', $classFile);
-            
+
             if (!file_exists($stubFile)) {
                 return $parameters;
             }
 
             $fileContent = file_get_contents($stubFile);
             $lines = explode("\n", $fileContent);
-            
+
             // Find the method using regex
             $pattern = '/public\s+function\s+' . preg_quote($action) . '\s*\([^}]*?\{(.*?)(?=public\s+function|\}[\s]*$)/s';
             if (preg_match($pattern, $fileContent, $methodMatches)) {
@@ -458,7 +458,7 @@ class RouteComposition
         if ($returnType === null) {
             // When no return type is declared, analyze method body to detect the actual return type
             $methodBody = $this->getMethodBody($method);
-            
+
             // Check for LengthAwarePaginator instantiation
             if (preg_match('/new\s+LengthAwarePaginator\s*\(/', $methodBody)) {
                 $responses[$statusCode] = [
@@ -487,7 +487,7 @@ class RouteComposition
             elseif (preg_match('/new\s+ResourceCollection\s*\(/', $methodBody)) {
                 // Analyze if it's a generic ResourceCollection (should be array) or specific resource (should be object)
                 $detectedResource = $this->analyzeResourceCollectionContent($method);
-                
+
                 if ($resource || ($detectedResource && $detectedResource !== 'ResourceCollection')) {
                     // Specific resource detected, treat as object
                     $responses[$statusCode] = [
@@ -522,9 +522,49 @@ class RouteComposition
                 ];
             }
         } else {
-            $typeName = $returnType->getName();
-            
-            if (is_a($typeName, Collection::class, true)) {
+            // Handle union types (PHP 8+)
+            if ($returnType instanceof \ReflectionUnionType) {
+                // For union types, analyze each type and combine results
+                $types = $returnType->getTypes();
+                
+                foreach ($types as $type) {
+                    $typeName = $type->getName();
+                    
+                    // Skip Response and generic types, focus on resource/data classes
+                    if ($typeName === 'Illuminate\Http\Response' || 
+                        $typeName === 'Symfony\Component\HttpFoundation\Response') {
+                        continue;
+                    }
+                    
+                    // Process the actual resource/data type
+                    if (is_a($typeName, JsonResource::class, true) || 
+                        class_exists($typeName)) {
+                        $responses[$statusCode] = [
+                            'description' => $description,
+                            'resource' => $resource ?? $typeName,
+                            'headers' => $headers,
+                            'type' => 'object',
+                            'content_type' => 'application/json',
+                        ];
+                        break; // Use the first valid resource type found
+                    }
+                }
+                
+                // If no specific resource found, create a generic response
+                if (empty($responses)) {
+                    $responses[$statusCode] = [
+                        'description' => $description,
+                        'resource' => $resource,
+                        'headers' => $headers,
+                        'type' => 'object',
+                        'content_type' => 'application/json',
+                    ];
+                }
+            } else {
+                $typeName = $returnType->getName();
+            }
+
+            if (isset($typeName) && is_a($typeName, Collection::class, true)) {
                 $responses[$statusCode] = [
                     'description' => $description,
                     'resource' => $resource ?? $typeName,
@@ -538,7 +578,7 @@ class RouteComposition
             } elseif (is_a($typeName, ResourceCollection::class, true) || is_a($typeName, AnonymousResourceCollection::class, true)) {
                 // Analyze method content to detect the underlying resource class
                 $detectedResource = $this->analyzeResourceCollectionContent($method);
-                
+
                 if ($resource || ($detectedResource && $detectedResource !== $typeName)) {
                     // We found a specific resource class or have explicit resource, treat as object with resource analysis
                     $responses[$statusCode] = [
@@ -635,7 +675,7 @@ class RouteComposition
         try {
             $methodBody = file_get_contents($method->getFileName());
             $lines = explode("\n", $methodBody);
-            
+
             // Get method body content
             $startLine = $method->getStartLine() - 1; // 0-indexed
             $endLine = $method->getEndLine() - $startLine;
@@ -672,7 +712,7 @@ class RouteComposition
         try {
             $methodBody = file_get_contents($method->getFileName());
             $lines = explode("\n", $methodBody);
-            
+
             // Get method body content
             $startLine = $method->getStartLine() - 1; // 0-indexed
             $endLine = $method->getEndLine() - $startLine;
@@ -716,7 +756,7 @@ class RouteComposition
     private function parseResponseTypesFromSource($controller, string $action): array
     {
         $responses = [];
-        
+
         // Basic response detection for test stubs
         if (strpos($controller, 'Tests\\Stubs\\') !== false) {
             // Default 200 response
@@ -756,7 +796,7 @@ class RouteComposition
         try {
             $methodBody = file_get_contents($method->getFileName());
             $lines = explode("\n", $methodBody);
-            
+
             // Get method body content
             $startLine = $method->getStartLine() - 1; // 0-indexed
             $endLine = $method->getEndLine() - $startLine;
@@ -825,7 +865,7 @@ class RouteComposition
         $parameters = [];
         $methodBody = file_get_contents($method->getFileName());
         $lines = explode("\n", $methodBody);
-        
+
         // Get method body content
         $startLine = $method->getStartLine() - 1; // 0-indexed
         $endLine = $method->getEndLine() - $startLine;
@@ -878,16 +918,16 @@ class RouteComposition
     {
         $parameters = [];
         preg_match_all('/{([^}]+)}/', $uri, $matches);
-        
+
         $pathParamAttrs = [];
-        
+
         try {
             $method = new ReflectionMethod($controller, $action);
             $pathParamAttrs = $method->getAttributes(PathParameter::class);
         } catch (\ReflectionException $e) {
             // Continue without path parameter attributes
         }
-        
+
         // First, collect all PathParameter attributes
         $pathParams = [];
         foreach ($pathParamAttrs as $attr) {
@@ -971,12 +1011,12 @@ class RouteComposition
     private function processTags($controller, string $action): array
     {
         $tags = [];
-        
+
         try {
             // Check class-level attributes (especially for invokable controllers)
             $class = new ReflectionClass($controller);
             $classAttributes = $class->getAttributes();
-            
+
             foreach ($classAttributes as $attribute) {
                 if ($attribute->getName() === Tag::class) {
                     $args = $attribute->getArguments();
@@ -992,7 +1032,7 @@ class RouteComposition
                     }
                 }
             }
-            
+
             // Check method-level attributes
             $method = new ReflectionMethod($controller, $action);
             $attributes = $method->getAttributes();
@@ -1025,7 +1065,7 @@ class RouteComposition
             // Check class-level attributes first (especially for invokable controllers)
             $class = new ReflectionClass($controller);
             $classAttributes = $class->getAttributes();
-            
+
             foreach ($classAttributes as $attribute) {
                 if ($attribute->getName() === Summary::class) {
                     $args = $attribute->getArguments();
@@ -1034,7 +1074,7 @@ class RouteComposition
                     }
                 }
             }
-            
+
             // Check method-level attributes
             $method = new ReflectionMethod($controller, $action);
             $attributes = $method->getAttributes();
@@ -1059,7 +1099,7 @@ class RouteComposition
             // Check class-level attributes first (especially for invokable controllers)
             $class = new ReflectionClass($controller);
             $classAttributes = $class->getAttributes();
-            
+
             foreach ($classAttributes as $attribute) {
                 if ($attribute->getName() === Description::class) {
                     $args = $attribute->getArguments();
@@ -1068,7 +1108,7 @@ class RouteComposition
                     }
                 }
             }
-            
+
             // Check method-level attributes
             $method = new ReflectionMethod($controller, $action);
             $attributes = $method->getAttributes();
@@ -1091,7 +1131,7 @@ class RouteComposition
     {
         $methodBody = file_get_contents($method->getFileName());
         $lines = explode("\n", $methodBody);
-        
+
         // Get method body content
         $startLine = $method->getStartLine() - 1; // 0-indexed
         $endLine = $method->getEndLine() - $startLine;
