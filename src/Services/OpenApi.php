@@ -31,11 +31,10 @@ use ReflectionAttribute;
 use ReflectionClass;
 use ReflectionMethod;
 use ReflectionProperty;
-use Spatie\LaravelData\Attributes\MapName;
-use Spatie\LaravelData\Attributes\MapOutputName;
 use Spatie\LaravelData\Data;
 use Spatie\LaravelData\Mappers\SnakeCaseMapper;
 use Throwable;
+use JkBennemann\LaravelApiDocumentation\Services\AttributeAnalyzer;
 
 class OpenApi
 {
@@ -45,15 +44,20 @@ class OpenApi
 
     private Repository $repository;
 
+    private ?AttributeAnalyzer $attributeAnalyzer;
+
     private array $excludedRoutes;
 
     private array $excludedMethods;
 
     private array $includedSecuritySchemes = [];
 
-    public function __construct(Repository $repository)
-    {
+    public function __construct(
+        Repository $repository,
+        ?AttributeAnalyzer $attributeAnalyzer = null
+    ) {
         $this->repository = $repository;
+        $this->attributeAnalyzer = $attributeAnalyzer ?? app(AttributeAnalyzer::class);
         $this->excludedRoutes = $repository->get('api-documentation.excluded_routes', []);
         $this->excludedMethods = $repository->get('api-documentation.excluded_methods', []);
         $this->includedSecuritySchemes = [];
@@ -79,7 +83,15 @@ class OpenApi
 
     public function get(): \openapiphp\openapi\spec\OpenApi
     {
+        // Ensure we have the latest config values before returning
+        $this->updateInfoFromConfig();
         return $this->openApi;
+    }
+
+    private function updateInfoFromConfig(): void
+    {
+        $this->openApi->info->title = $this->repository->get('api-documentation.title', 'API Documentation');
+        $this->openApi->info->version = $this->repository->get('api-documentation.version', '1.0.0');
     }
 
     private function setSecuritySchemes(): void
@@ -195,9 +207,38 @@ class OpenApi
             ],
         ]);
 
-        // Add path parameters
-        if (! empty($route['request_parameters'])) {
-            $parameters = [];
+        // Get method reflection if available
+        $methodReflection = null;
+        if (isset($route['controller']) && isset($route['action'])) {
+            try {
+                $controllerReflection = new ReflectionClass($route['controller']);
+                $methodReflection = $controllerReflection->getMethod($route['action']);
+            } catch (Throwable $e) {
+                // Continue without reflection
+            }
+        }
+
+        // 1. Handle Parameters (Path, Query)
+        $this->processOperationParameters($operation, $route, $methodReflection);
+
+        // 2. Handle Request Body
+        $this->processOperationRequestBody($operation, $route, $methodReflection);
+
+        // 3. Handle Responses
+        $this->processOperationResponses($operation, $route, $methodReflection);
+
+        return $operation;
+    }
+
+    /**
+     * Process operation parameters (path and query parameters)
+     */
+    private function processOperationParameters(Operation $operation, array $route, ?ReflectionMethod $methodReflection): void
+    {
+        $parameters = [];
+
+        // Add path parameters from route data
+        if (!empty($route['request_parameters'])) {
             foreach ($route['request_parameters'] as $name => $param) {
                 $parameters[] = new Parameter([
                     'name' => $name,
@@ -210,13 +251,73 @@ class OpenApi
                     ]),
                 ]);
             }
-            $operation->parameters = $parameters;
         }
 
-        // Add request body parameters only if smart features are enabled
-        if (! empty($route['parameters']) && $this->repository->get('api-documentation.smart_features', true)) {
+        // Add query parameters from pre-processed route data (includes both attribute and smart detection)
+        if (!empty($route['query_parameters'])) {
+            foreach ($route['query_parameters'] as $name => $param) {
+                $schema = new Schema([
+                    'type' => $param['type'] ?? 'string',
+                    'format' => $param['format'] ?? null,
+                ]);
+                
+                // Add enum values if present
+                if (!empty($param['enum'])) {
+                    $schema->enum = $param['enum'];
+                }
+                
+                $parameters[] = new Parameter([
+                    'name' => $name,
+                    'in' => 'query',
+                    'description' => $param['description'] ?? '',
+                    'required' => $param['required'] ?? false,
+                    'schema' => $schema,
+                    'example' => $param['example'] ?? null,
+                ]);
+            }
+        }
+
+        if (!empty($parameters)) {
+            $operation->parameters = $parameters;
+        }
+    }
+
+    /**
+     * Process operation request body
+     */
+    private function processOperationRequestBody(Operation $operation, array $route, ?ReflectionMethod $methodReflection): void
+    {
+        $requestBody = null;
+
+        // Check for explicit request body from pre-processed route data (priority)
+        if (!empty($route['request_body'])) {
+            $explicitRequestBody = $route['request_body'];
+            $schema = null;
+            
+            if ($explicitRequestBody['data_class']) {
+                // Use Spatie Data class for schema
+                $schemaData = $this->responseAnalyzer->analyzeSpatieDataObject($explicitRequestBody['data_class']);
+                $schema = new Schema($this->convertSpatieDataSchemaToOpenApi($schemaData));
+            } else {
+                $schema = new Schema(['type' => 'object']);
+            }
+
+            $requestBody = new RequestBody([
+                'description' => $explicitRequestBody['description'],
+                'required' => $explicitRequestBody['required'],
+                'content' => [
+                    $explicitRequestBody['content_type'] => new MediaType([
+                        'schema' => $schema,
+                        'example' => $explicitRequestBody['example'],
+                    ]),
+                ],
+            ]);
+        }
+
+        // Fall back to smart detection if no explicit definition
+        if (!$requestBody && !empty($route['parameters']) && $this->repository->get('api-documentation.smart_features', true)) {
             $schema = $this->buildRequestBodySchema($route['parameters']);
-            $operation->requestBody = new RequestBody([
+            $requestBody = new RequestBody([
                 'required' => true,
                 'content' => [
                     'application/json' => new MediaType([
@@ -226,113 +327,162 @@ class OpenApi
             ]);
         }
 
-        // Add responses
-        if (! empty($route['responses'])) {
-            $responses = [];
-            foreach ($route['responses'] as $code => $response) {
+        if ($requestBody) {
+            $operation->requestBody = $requestBody;
+        }
+    }
+
+    /**
+     * Process operation responses
+     */
+    private function processOperationResponses(Operation $operation, array $route, ?ReflectionMethod $methodReflection): void
+    {
+        $responses = [];
+
+        // Check for explicit response body from pre-processed route data (priority)
+        if (!empty($route['response_bodies'])) {
+            foreach ($route['response_bodies'] as $statusCode => $responseData) {
                 $schema = null;
-                $customResponse = null;
-                $contentType = $response['content_type'] ?? 'application/json';
-                $type = $response['type'] ?? 'object';
-
-                // Create schema based on response type
-                if ($type === 'array') {
-                    $schema = new Schema([
-                        'type' => 'array',
-                        'items' => new Schema(['type' => 'object']),
-                    ]);
-                } elseif ($type === 'object') {
-                    $schemaProperties = [];
-
-                    // Handle paginated response structure
-                    if (isset($response['properties'])) {
-                        foreach ($response['properties'] as $name => $property) {
-                            if ($name === 'data' && $property['type'] === 'array') {
-                                $schemaProperties[$name] = new Schema([
-                                    'type' => 'array',
-                                    'items' => new Schema(['type' => 'object']),
-                                ]);
-                            } elseif ($name === 'meta') {
-                                $schemaProperties[$name] = new Schema([
-                                    'type' => 'object',
-                                    'properties' => [
-                                        'current_page' => new Schema(['type' => 'integer']),
-                                        'from' => new Schema(['type' => 'integer']),
-                                        'last_page' => new Schema(['type' => 'integer']),
-                                        'path' => new Schema(['type' => 'string']),
-                                        'per_page' => new Schema(['type' => 'integer']),
-                                        'to' => new Schema(['type' => 'integer']),
-                                        'total' => new Schema(['type' => 'integer']),
-                                    ],
-                                ]);
-                            } elseif ($name === 'links') {
-                                $schemaProperties[$name] = new Schema([
-                                    'type' => 'object',
-                                    'properties' => [
-                                        'first' => new Schema(['type' => 'string']),
-                                        'last' => new Schema(['type' => 'string']),
-                                        'prev' => new Schema(['type' => 'string', 'nullable' => true]),
-                                        'next' => new Schema(['type' => 'string', 'nullable' => true]),
-                                    ],
-                                ]);
-                            } else {
-                                $schemaProperties[$name] = new Schema([
-                                    'type' => $property['type'] ?? 'string',
-                                ]);
-                            }
-                        }
-                    } else {
-                        if (isset($response['resource']) && is_string($response['resource'])) {
-                            //check if resource is valid class
-                            try {
-                                $customResponse = $this->generateOpenAPIResponseSchema($response);
-                            } catch (Throwable $e) {
-                            }
-                        }
-                    }
-
-                    $schema = new Schema([
-                        'type' => 'object',
-                        'properties' => $schemaProperties,
-                    ]);
-                } else {
-                    $schema = new Schema(['type' => $type]);
-                }
-
-                if (isset($customResponse)) {
-                    $responseObj = $customResponse;
-                } else {
-                    // Create response object
-                    $responseObj = new Response([
-                        'description' => $response['description'] ?? '',
-                        'content' => [
-                            $contentType => new MediaType([
-                                'schema' => $schema,
-                            ]),
-                        ],
-                    ]);
-                }
-
-                // Add headers if present
-                if (!empty($response['headers'])) {
-                    $headers = [];
-                    foreach ($response['headers'] as $name => $header) {
-                        $headers[$name] = new Header([
-                            'description' => $header['description'] ?? '',
-                            'schema' => new Schema([
-                                'type' => $header['type'] ?? 'string',
-                            ]),
+                
+                if ($responseData['data_class']) {
+                    $schemaData = $this->responseAnalyzer->analyzeSpatieDataObject($responseData['data_class']);
+                    
+                    if ($responseData['is_collection']) {
+                        $schema = new Schema([
+                            'type' => 'array',
+                            'items' => new Schema($this->convertSpatieDataSchemaToOpenApi($schemaData)),
                         ]);
+                    } else {
+                        $schema = new Schema($this->convertSpatieDataSchemaToOpenApi($schemaData));
                     }
-                    $responseObj->headers = $headers;
+                } else {
+                    $schema = new Schema(['type' => 'object']);
                 }
 
-                $responses[$code] = $responseObj;
+                // Process response headers from pre-processed route data
+                $responseHeaders = [];
+                if (!empty($route['response_headers'])) {
+                    foreach ($route['response_headers'] as $headerName => $headerData) {
+                        if (is_string($headerData)) {
+                            $responseHeaders[$headerName] = new Header([
+                                'description' => $headerData,
+                                'schema' => [
+                                    'type' => 'string',
+                                ],
+                            ]);
+                        } else {
+                            $responseHeaders[$headerName] = new Header([
+                                'description' => $headerData['description'],
+                                'required' => $headerData['required'],
+                                'schema' => new Schema([
+                                    'type' => $headerData['type'],
+                                    'format' => $headerData['format'],
+                                ]),
+                                'example' => $headerData['example'],
+                            ]);
+                        }
+                    }
+                }
+
+                $responses[$statusCode] = new Response([
+                    'description' => $responseData['description'],
+                    'headers' => $responseHeaders,
+                    'content' => [
+                        $responseData['content_type'] => new MediaType([
+                            'schema' => $schema,
+                            'example' => $responseData['example'],
+                        ]),
+                    ],
+                ]);
             }
-            $operation->responses = $responses;
         }
 
-        return $operation;
+        // Process responses from RouteComposition (includes validation errors, etc.)
+        if (!empty($route['responses'])) {
+            foreach ($route['responses'] as $statusCode => $responseData) {
+                // Skip if already processed from response_bodies (higher priority)
+                if (isset($responses[$statusCode])) {
+                    continue;
+                }
+
+                $schema = null;
+                
+                // Handle responses with properties (like validation errors)
+                if (!empty($responseData['properties'])) {
+                    $properties = [];
+                    foreach ($responseData['properties'] as $propName => $propData) {
+                        $properties[$propName] = new Schema([
+                            'type' => $propData['type'] ?? 'string',
+                            'description' => $propData['description'] ?? '',
+                        ]);
+                    }
+                    $schema = new Schema([
+                        'type' => $responseData['type'] ?? 'object',
+                        'properties' => $properties,
+                    ]);
+                } else {
+                    $schema = new Schema([
+                        'type' => $responseData['type'] ?? 'object',
+                    ]);
+                }
+
+                $responseHeaders = [];
+                if (!empty($responseData['headers'])) {
+                    foreach ($responseData['headers'] as $headerName => $headerData) {
+                        if (is_string($headerData)) {
+                            $responseHeaders[$headerName] = new Header([
+                                'description' => $headerData,
+                                'schema' => [
+                                    'type' => 'string',
+                                ],
+                            ]);
+                        } else {
+                            $responseHeaders[$headerName] = new Header([
+                                'description' => $headerData['description'],
+                                'required' => $headerData['required'],
+                                'schema' => new Schema([
+                                    'type' => $headerData['type'],
+                                    'format' => $headerData['format'],
+                                ]),
+                                'example' => $headerData['example'],
+                            ]);
+                        }
+                    }
+                }
+
+                // Prepare MediaType configuration with schema
+                $mediaTypeConfig = [
+                    'schema' => $schema,
+                ];
+                
+                // Add example if available
+                if (isset($responseData['example'])) {
+                    $mediaTypeConfig['example'] = $responseData['example'];
+                }
+                
+                $responses[$statusCode] = new Response([
+                    'description' => $responseData['description'] ?? '',
+                    'headers' => $responseHeaders,
+                    'content' => [
+                        $responseData['content_type'] ?? 'application/json' => new MediaType($mediaTypeConfig),
+                    ],
+                ]);
+            }
+        }
+
+        // Ensure at least a 200 response exists
+        if (empty($responses)) {
+            $responses['200'] = new Response([
+                'description' => '',
+                'content' => [
+                    'application/json' => new MediaType([
+                        'schema' => new Schema(['type' => 'object']),
+                    ]),
+                ],
+            ]);
+        }
+
+        $operation->responses = $responses;
     }
 
     private function buildRequestBodySchema(array $parameters): Schema
@@ -545,12 +695,24 @@ class OpenApi
         if (! empty($response['headers'])) {
             $headers = [];
             foreach ($response['headers'] as $key => $header) {
-                $headers[$key] = new Header([
-                    'description' => $header,
-                    'schema' => [
-                        'type' => 'string',
-                    ],
-                ]);
+                if (is_string($header)) {
+                    $headers[$key] = new Header([
+                        'description' => $header,
+                        'schema' => [
+                            'type' => 'string',
+                        ],
+                    ]);
+                } else {
+                    $headers[$key] = new Header([
+                        'description' => $header['description'],
+                        'required' => $header['required'],
+                        'schema' => new Schema([
+                            'type' => $header['type'],
+                            'format' => $header['format'],
+                        ]),
+                        'example' => $header['example'],
+                    ]);
+                }
             }
             $responseData['headers'] = $headers;
         }
@@ -1036,14 +1198,77 @@ class OpenApi
         $responseHeaders = [];
 
         foreach ($headers as $key => $header) {
-            $responseHeaders[$key] = new Header([
-                'description' => $header,
-                'schema' => [
-                    'type' => 'string',
-                ],
-            ]);
+            if (is_string($header)) {
+                $responseHeaders[$key] = new Header([
+                    'description' => $header,
+                    'schema' => [
+                        'type' => 'string',
+                    ],
+                ]);
+            } else {
+                $responseHeaders[$key] = new Header([
+                    'description' => $header['description'],
+                    'required' => $header['required'],
+                    'schema' => new Schema([
+                        'type' => $header['type'],
+                        'format' => $header['format'],
+                    ]),
+                    'example' => $header['example'],
+                ]);
+            }
         }
 
         return $responseHeaders;
+    }
+
+    /**
+     * Convert Spatie Data schema format to OpenAPI Schema format
+     */
+    private function convertSpatieDataSchemaToOpenApi(array $spatieSchema): array
+    {
+        $openApiSchema = [
+            'type' => $spatieSchema['type'] ?? 'object'
+        ];
+
+        // Convert properties
+        if (isset($spatieSchema['properties'])) {
+            $openApiSchema['properties'] = [];
+            foreach ($spatieSchema['properties'] as $propertyName => $property) {
+                // Skip Spatie Data's internal fields
+                if ($propertyName === '_additional' || $propertyName === '_data_context') {
+                    continue;
+                }
+                $openApiProperty = ['type' => $property['type']];
+                
+                // Add format if present
+                if (isset($property['format']) && $property['format']) {
+                    $openApiProperty['format'] = $property['format'];
+                }
+                
+                // Add description if present
+                if (isset($property['description']) && $property['description']) {
+                    $openApiProperty['description'] = $property['description'];
+                }
+                
+                // Handle nullable properties
+                if (isset($property['nullable']) && $property['nullable']) {
+                    $openApiProperty['nullable'] = true;
+                }
+                
+                // Handle array items
+                if (isset($property['items'])) {
+                    $openApiProperty['items'] = $property['items'];
+                }
+                
+                $openApiSchema['properties'][$propertyName] = $openApiProperty;
+            }
+        }
+
+        // Add required fields
+        if (isset($spatieSchema['required'])) {
+            $openApiSchema['required'] = $spatieSchema['required'];
+        }
+
+        return $openApiSchema;
     }
 }

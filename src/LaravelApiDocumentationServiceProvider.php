@@ -8,6 +8,10 @@ use Illuminate\Support\Facades\Route;
 use JkBennemann\LaravelApiDocumentation\Commands\LaravelApiDocumentationCommand;
 use JkBennemann\LaravelApiDocumentation\Http\Controllers\RedocController;
 use JkBennemann\LaravelApiDocumentation\Http\Controllers\SwaggerController;
+use JkBennemann\LaravelApiDocumentation\Services\AttributeAnalyzer;
+use JkBennemann\LaravelApiDocumentation\Services\OpenApi;
+use JkBennemann\LaravelApiDocumentation\Services\RequestAnalyzer;
+use JkBennemann\LaravelApiDocumentation\Services\ResponseAnalyzer;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
 
@@ -24,6 +28,19 @@ class LaravelApiDocumentationServiceProvider extends PackageServiceProvider
 
     public function packageRegistered(): void
     {
+        // Register analyzer services
+        $this->app->singleton(AttributeAnalyzer::class);
+        $this->app->singleton(RequestAnalyzer::class);
+        $this->app->singleton(ResponseAnalyzer::class);
+        
+        // Register OpenApi service with proper dependency injection
+        $this->app->singleton(OpenApi::class, function ($app) {
+            return new OpenApi(
+                $app['config'],
+                $app->make(AttributeAnalyzer::class)
+            );
+        });
+
         if (config('api-documentation.ui.swagger.enabled', true)) {
             Route::get(
                 config('api-documentation.ui.swagger.route'),
@@ -70,5 +87,10 @@ class LaravelApiDocumentationServiceProvider extends PackageServiceProvider
             }
 
         }
+    }
+
+    public function packageBooted(): void
+    {
+        $this->mergeConfigFrom(__DIR__.'/../config/api-documentation.php', 'api-documentation');
     }
 }

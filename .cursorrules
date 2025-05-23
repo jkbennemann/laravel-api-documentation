@@ -80,3 +80,4 @@ Rules:
 - Test in multiple environments
 - Follow semantic versioning for releases
 - Maintain changelog
+- Always run tests with XDEBUG_MODE=off and without --verbose

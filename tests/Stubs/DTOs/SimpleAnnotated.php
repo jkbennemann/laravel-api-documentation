@@ -10,12 +10,16 @@ use Spatie\LaravelData\Data;
 use Spatie\LaravelData\Mappers\SnakeCaseMapper;
 
 #[MapName(SnakeCaseMapper::class)]
-#[Parameter(name: 'first_name', type: 'string', format: 'email', description: 'The first name')]
-#[Parameter(name: 'age', type: 'integer')]
+#[Parameter(name: 'name', type: 'string', description: 'The name')]
+#[Parameter(name: 'description', type: 'string', description: 'The description')]
+#[Parameter(name: 'age', type: 'integer', description: 'The age')]
+#[Parameter(name: 'active', type: 'boolean', description: 'Whether active')]
 class SimpleAnnotated extends Data
 {
     public function __construct(
-        public string $firstName,
+        public string $name,
+        public string $description,
         public int $age,
+        public bool $active,
     ) {}
 }

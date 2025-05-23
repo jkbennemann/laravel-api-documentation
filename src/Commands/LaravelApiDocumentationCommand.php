@@ -10,7 +10,7 @@ use JkBennemann\LaravelApiDocumentation\Services\DocumentationBuilder;
 
 class LaravelApiDocumentationCommand extends Command
 {
-    public $signature = 'documentation:generate';
+    public $signature = 'documentation:generate {--file= : Optional file key from config to generate only one specific documentation file}';
 
     public $description = 'Documentation generator for Laravel API';
 
@@ -18,27 +18,36 @@ class LaravelApiDocumentationCommand extends Command
     {
         $this->comment('Generating documentation...');
 
-        $docFiles = config('api-documentation.ui.storage.files', []);
-
-        foreach ($docFiles as $docName => $file) {
-            // Delete all non-processable files
-            if(!isset($file['process']) || !$file['process']) {
-                unset($docFiles[$docName]);
-            }
+        try {
+            $docFiles = $this->getDocumentationFiles($this->option('file'));
+        } catch (\InvalidArgumentException $e) {
+            $this->error($e->getMessage());
+            return self::FAILURE;
         }
 
         foreach ($docFiles as $docName => $file) {
-            if(!isset($file['filename'])) {
-                $this->error("Configuration error at doc {$docName} - all storages must have a filename");
+            if (!isset($file['process']) || !$file['process']) {
+                unset($docFiles[$docName]);
+                continue;
+            }
+
+            if (!isset($file['filename'])) {
+                // Skip files without filename to trigger fallback behavior
+                unset($docFiles[$docName]);
+                continue;
             }
 
             try {
+                $this->info("Generating documentation for '{$docName}'...");
                 foreach ($builder->build($file['filename'], $file['name'] ?? null, $docName) as $message) {
-                    $this->info($message);
+                    $this->info("  - {$message}");
                 }
                 $this->newLine();
             } catch (DocumentationException $e) {
                 $this->error($e->getMessage());
+                if ($this->option('file')) {
+                    return self::FAILURE;
+                }
                 continue;
             }
         }
@@ -49,17 +58,24 @@ class LaravelApiDocumentationCommand extends Command
             $filename = config('api-documentation.ui.storage.filename', 'api-documentation.json');
 
             try {
-                foreach ($builder->build($filename) as $message) {
-                    $this->info($message);
+                $this->info("Generating default documentation...");
+                $this->info("Using filename: {$filename}");
+                $messages = iterator_to_array($builder->build($filename));
+                foreach ($messages as $message) {
+                    $this->info("  - {$message}");
                 }
                 $this->newLine();
             } catch (DocumentationException $e) {
-                $this->error($e->getMessage());
-
+                $this->error("Error in fallback generation: " . $e->getMessage());
+                return self::FAILURE;
+            } catch (\Throwable $e) {
+                $this->error("Unexpected error in fallback generation: " . $e->getMessage());
+                $this->error("Stack trace: " . $e->getTraceAsString());
                 return self::FAILURE;
             }
         }
 
+        // Display documentation URLs
         if (config('api-documentation.ui.swagger.enabled', false) === true ||
             config('api-documentation.ui.redoc.enabled', false) === true) {
             $appURL = config('app.url').(config('api-documentation.app.port') ? ':'.config('api-documentation.app.port') : '');
@@ -80,5 +96,21 @@ class LaravelApiDocumentationCommand extends Command
         }
 
         return self::SUCCESS;
+    }
+
+    private function getDocumentationFiles($specificFile)
+    {
+        $docFiles = config('api-documentation.ui.storage.files', []);
+
+        if ($specificFile) {
+            if (!isset($docFiles[$specificFile])) {
+                $this->error("Documentation file '{$specificFile}' is not defined in config.");
+                throw new \InvalidArgumentException("Documentation file '{$specificFile}' is not defined in config.");
+            }
+
+            $docFiles = [$specificFile => $docFiles[$specificFile]];
+        }
+
+        return $docFiles;
     }
 }

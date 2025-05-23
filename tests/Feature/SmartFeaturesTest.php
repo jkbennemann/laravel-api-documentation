@@ -7,6 +7,7 @@ namespace JkBennemann\LaravelApiDocumentation\Tests\Feature;
 use Illuminate\Support\Facades\Route;
 use JkBennemann\LaravelApiDocumentation\Services\OpenApi;
 use JkBennemann\LaravelApiDocumentation\Services\RouteComposition;
+use JkBennemann\LaravelApiDocumentation\Services\AttributeAnalyzer;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\SmartController;
 use JkBennemann\LaravelApiDocumentation\Tests\TestCase;
 use openapiphp\openapi\spec\RequestBody;
@@ -29,7 +30,11 @@ class SmartFeaturesTest extends TestCase
         $service = app(RouteComposition::class);
         $routeData = $service->process();
 
-        $apiService = app(OpenApi::class);
+        // Create fresh OpenApi instance to avoid singleton state pollution
+        $apiService = new OpenApi(
+            app('config'),
+            app(AttributeAnalyzer::class)
+        );
         $apiService->processRoutes($routeData);
         $openApi = $apiService->get();
 
@@ -51,7 +56,11 @@ class SmartFeaturesTest extends TestCase
         $service = app(RouteComposition::class);
         $routeData = $service->process();
 
-        $apiService = app(OpenApi::class);
+        // Create fresh OpenApi instance to avoid singleton state pollution
+        $apiService = new OpenApi(
+            app('config'),
+            app(AttributeAnalyzer::class)
+        );
         $apiService->processRoutes($routeData);
         $openApi = $apiService->get();
 
@@ -71,7 +80,11 @@ class SmartFeaturesTest extends TestCase
         $service = app(RouteComposition::class);
         $routeData = $service->process();
 
-        $apiService = app(OpenApi::class);
+        // Create fresh OpenApi instance to avoid singleton state pollution
+        $apiService = new OpenApi(
+            app('config'),
+            app(AttributeAnalyzer::class)
+        );
         $apiService->processRoutes($routeData);
         $openApi = $apiService->get();
 
@@ -91,7 +104,11 @@ class SmartFeaturesTest extends TestCase
         $service = app(RouteComposition::class);
         $routeData = $service->process();
 
-        $apiService = app(OpenApi::class);
+        // Create fresh OpenApi instance to avoid singleton state pollution
+        $apiService = new OpenApi(
+            app('config'),
+            app(AttributeAnalyzer::class)
+        );
         $apiService->processRoutes($routeData);
         $openApi = $apiService->get();
 
@@ -111,7 +128,11 @@ class SmartFeaturesTest extends TestCase
         $service = app(RouteComposition::class);
         $routeData = $service->process();
 
-        $apiService = app(OpenApi::class);
+        // Create fresh OpenApi instance to avoid singleton state pollution
+        $apiService = new OpenApi(
+            app('config'),
+            app(AttributeAnalyzer::class)
+        );
         $apiService->processRoutes($routeData);
         $openApi = $apiService->get();
 
@@ -134,7 +155,11 @@ class SmartFeaturesTest extends TestCase
         $service = app(RouteComposition::class);
         $routeData = $service->process();
 
-        $apiService = app(OpenApi::class);
+        // Create fresh OpenApi instance to avoid singleton state pollution
+        $apiService = new OpenApi(
+            app('config'),
+            app(AttributeAnalyzer::class)
+        );
         $apiService->processRoutes($routeData);
         $openApi = $apiService->get();
 
