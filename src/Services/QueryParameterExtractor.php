@@ -160,11 +160,20 @@ class QueryParameterExtractor
             $type = 'string';
             $isRequired = true;
 
+            // First check for curly brace format: {type}
             if (preg_match('/\{(.+?)\}/', $description, $typeMatch)) {
                 $typeInfo = $typeMatch[1];
                 $type = $this->extractTypeFromInfo($typeInfo);
                 $isRequired = !str_contains($typeInfo, 'optional');
                 $description = trim(str_replace($typeMatch[0], '', $description));
+            } 
+            // Then check for standard format: type description (handle multiline)
+            elseif (preg_match('/^(\w+)\s+(.*)$/s', $description, $typeMatch)) {
+                $type = $typeMatch[1]; // Extract type (e.g., 'int', 'string')
+                $description = trim($typeMatch[2]); // Extract description part
+                // Clean up any extra whitespace and asterisks from docblock formatting
+                $description = preg_replace('/\s*\*\s*/', ' ', $description);
+                $description = trim($description);
             }
 
             $queryParams[$name] = [

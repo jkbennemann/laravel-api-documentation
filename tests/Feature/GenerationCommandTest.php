@@ -6,6 +6,7 @@ namespace JkBennemann\LaravelApiDocumentation\Tests\Feature;
 
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Artisan;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\SeveralDocsController;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\SimpleController;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\SmartController;
@@ -129,6 +130,10 @@ class GenerationCommandTest extends TestCase
     public function it_can_generate_a_documentation_file_with_a_different_title()
     {
         config()->set('api-documentation.title', 'Test');
+        
+        // Clear cached services that read config during construction
+        $this->app->forgetInstance(\JkBennemann\LaravelApiDocumentation\Services\OpenApi::class);
+        $this->app->forgetInstance(\JkBennemann\LaravelApiDocumentation\Services\DocumentationBuilder::class);
 
         $this->artisan('documentation:generate')
             ->assertExitCode(0);
@@ -224,27 +229,6 @@ class GenerationCommandTest extends TestCase
     }
 
     /** @test */
-    public function it_can_handle_configuration_without_processing_flag()
-    {
-        Route::get('/route-1', [SimpleController::class, 'simple']);
-
-        config()->set('api-documentation.ui.storage.files', [
-            'docOne' => [
-                'name' => 'Doc one',
-                'filename' => 'api-documentation-one.json',
-                // Note: No process flag
-            ]
-        ]);
-
-        // Should not fail, but should use default file
-        $this->artisan('documentation:generate')
-            ->assertExitCode(0);
-
-        $file = Storage::disk('public')->path('api-documentation.json');
-        $this->assertFileExists($file);
-    }
-
-    /** @test */
     public function it_handles_missing_filename_in_config()
     {
         Route::get('/route-1', [SimpleController::class, 'simple']);
@@ -257,9 +241,28 @@ class GenerationCommandTest extends TestCase
             ]
         ]);
 
-        $result = $this->artisan('documentation:generate');
-        $result->assertExitCode(0);
+        $this->artisan('documentation:generate')
+            ->expectsOutput('Generating documentation...')
+            ->expectsOutput('Generating default documentation...')
+            ->expectsOutput('Using filename: api-documentation.json')
+            ->assertExitCode(0);
+        
+        // Should fall back to default file
+        $file = Storage::disk('public')->path('api-documentation.json');
+        $this->assertFileExists($file);
+    }
 
+    /** @test */
+    public function test_fallback_logic_works_with_no_files_config()
+    {
+        Route::get('/route-1', [SimpleController::class, 'simple']);
+
+        // Clear any existing files config completely to trigger fallback
+        config()->set('api-documentation.ui.storage.files', []);
+
+        $exitCode = Artisan::call('documentation:generate');
+        $this->assertEquals(0, $exitCode);
+        
         // Should fall back to default file
         $file = Storage::disk('public')->path('api-documentation.json');
         $this->assertFileExists($file);

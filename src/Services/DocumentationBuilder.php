@@ -59,11 +59,18 @@ class DocumentationBuilder
 
     private function setSwaggerDetails($docName)
     {
-        $prefix = 'api-documentation.domains.' . $docName;
+        // Only apply domain-specific config if docName is explicitly provided
+        if ($docName) {
+            $prefix = 'api-documentation.domains.' . $docName;
 
-        if (config($prefix)) {
-            $this->openApiService->get()->servers = config($prefix . '.servers');
-            $this->openApiService->get()->info->title = config($prefix . '.title');
+            if (config($prefix)) {
+                if (config($prefix . '.servers')) {
+                    $this->openApiService->get()->servers = config($prefix . '.servers');
+                }
+                if (config($prefix . '.title')) {
+                    $this->openApiService->get()->info->title = config($prefix . '.title');
+                }
+            }
         }
     }
 }

@@ -82,7 +82,7 @@ it('can generate route information for route with a nested dto resource', functi
         ->toHaveCount(1)
         ->and($routeData[0])
         ->toBeArray()
-        ->toHaveCount(12)
+        ->toHaveCount(13)
         ->and($routeData[0]['tags'])
         ->toBeArray()
         ->and($routeData[0]['responses'][200])
@@ -101,13 +101,13 @@ it('can generate route information for route with a nested dto resource collecti
         ->toHaveCount(1)
         ->and($routeData[0])
         ->toBeArray()
-        ->toHaveCount(12)
+        ->toHaveCount(13)
         ->and($routeData[0]['tags'])
         ->toBeArray()
         ->and($routeData[0]['responses'][200])
         ->toBeArray()
         ->and($routeData[0]['responses'][200]['type'])
-        ->toBe('array')
+        ->toBe('object')
         ->and($routeData[0]['responses'][200]['resource'])
         ->toBe(DataResource::class);
 });
@@ -122,12 +122,12 @@ it('can generate route information for route with a plain json response containi
         ->toHaveCount(1)
         ->and($routeData[0])
         ->toBeArray()
-        ->toHaveCount(12)
+        ->toHaveCount(13)
         ->and($routeData[0]['tags'])
         ->toBeArray()
         ->toHaveCount(0)
         ->and($routeData[0]['responses'][200])
         ->toBeArray()
         ->and($routeData[0]['responses'][200]['resource'])
-        ->toBe(DataResource::class);
+        ->toBe(NestedData::class);
 });

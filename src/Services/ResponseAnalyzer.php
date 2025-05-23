@@ -17,6 +17,7 @@ use PhpParser\ParserFactory;
 use ReflectionClass;
 use ReflectionMethod;
 use ReflectionProperty;
+use ReflectionType;
 use Spatie\LaravelData\Data;
 use Throwable;
 
@@ -108,6 +109,38 @@ class ResponseAnalyzer
         // Extract @return tag
         if (preg_match('/@return\s+([^\s]+)/', $docComment, $matches)) {
             $type = $matches[1];
+            
+            // Handle union types (e.g., UserData|AdvancedUserData)
+            if (strpos($type, '|') !== false) {
+                $types = explode('|', $type);
+                $schemas = [];
+                
+                foreach ($types as $singleType) {
+                    $singleType = trim($singleType);
+                    $resolvedType = $this->resolveClassName($singleType, $reflection->getDeclaringClass());
+                    
+                    // Check if it's a Spatie Data object
+                    if (class_exists($resolvedType) && is_subclass_of($resolvedType, Data::class)) {
+                        $schemas[] = $this->analyzeSpatieDataObject($resolvedType);
+                    } else {
+                        $schemas[] = [
+                            'type' => $this->mapPhpTypeToOpenApi($singleType),
+                            'format' => $this->getFormatForType($singleType),
+                        ];
+                    }
+                }
+                
+                return ['oneOf' => $schemas];
+            }
+            
+            // Single type - resolve the class name
+            $resolvedType = $this->resolveClassName($type, $reflection->getDeclaringClass());
+            
+            // Check if it's a Spatie Data object
+            if (class_exists($resolvedType) && is_subclass_of($resolvedType, Data::class)) {
+                return $this->analyzeSpatieDataObject($resolvedType);
+            }
+            
             return [
                 'type' => $this->mapPhpTypeToOpenApi($type),
                 'format' => $this->getFormatForType($type),
@@ -126,8 +159,26 @@ class ResponseAnalyzer
             return [];
         }
 
+        return $this->buildSpatieDataSchema($dataClass);
+    }
+
+    /**
+     * Build comprehensive schema for Spatie Data objects
+     */
+    private function buildSpatieDataSchema(string $dataClass, array $processedClasses = []): array
+    {
+        // Prevent infinite recursion
+        if (in_array($dataClass, $processedClasses)) {
+            return ['type' => 'object', 'description' => 'Circular reference to ' . $dataClass];
+        }
+
+        $processedClasses[] = $dataClass;
         $reflection = new ReflectionClass($dataClass);
-        $properties = $reflection->getProperties();
+        $constructor = $reflection->getConstructor();
+
+        if (!$constructor) {
+            return ['type' => 'object', 'properties' => []];
+        }
 
         $schema = [
             'type' => 'object',
@@ -135,31 +186,194 @@ class ResponseAnalyzer
             'required' => [],
         ];
 
-        foreach ($properties as $property) {
-            $propertyName = $property->getName();
-            $propertyType = $property->getType();
+        // Check for global mapping attributes
+        $hasSnakeCaseMapping = $this->usesSnakeCaseMapping($reflection);
 
-            if (!$propertyType) {
+        foreach ($constructor->getParameters() as $parameter) {
+            $propertyName = $parameter->getName();
+            $type = $parameter->getType();
+            
+            if (!$type) {
                 continue;
             }
 
-            $typeName = $propertyType->getName();
-            $schema['properties'][$propertyName] = [
-                'type' => $this->mapPhpTypeToOpenApi($typeName),
-                'format' => $this->getFormatForType($typeName),
-            ];
-
-            if (!$propertyType->allowsNull()) {
-                $schema['required'][] = $propertyName;
+            // Apply name mapping if present
+            $outputName = $this->getOutputPropertyName($reflection, $propertyName, $hasSnakeCaseMapping);
+            
+            // Determine if property is required (not nullable and no default value)
+            $isRequired = !$type->allowsNull() && !$parameter->isDefaultValueAvailable();
+            
+            if ($isRequired) {
+                $schema['required'][] = $outputName;
             }
 
-            // Handle nested Data objects
-            if (class_exists($typeName) && is_subclass_of($typeName, Data::class)) {
-                $schema['properties'][$propertyName] = $this->analyzeSpatieDataObject($typeName);
-            }
+            // Handle different parameter types
+            $propertySchema = $this->buildPropertySchema($type, $processedClasses);
+            
+            // Add property description from docblock if available
+            $propertySchema['description'] = $this->getParameterDescription($constructor, $propertyName);
+            
+            $schema['properties'][$outputName] = $propertySchema;
         }
 
         return $schema;
+    }
+
+    /**
+     * Build schema for individual property types
+     */
+    private function buildPropertySchema(\ReflectionType $type, array $processedClasses = []): array
+    {
+        $typeName = $type->getName();
+
+        // Handle union types (PHP 8+)
+        if ($type instanceof \ReflectionUnionType) {
+            return $this->handleUnionType($type, $processedClasses);
+        }
+
+        // Handle nullable types
+        $schema = [];
+        if ($type->allowsNull()) {
+            $schema['nullable'] = true;
+        }
+
+        // Handle collections with DataCollectionOf attribute
+        if ($this->isCollection($typeName)) {
+            return array_merge($schema, $this->handleCollectionType($typeName, $processedClasses));
+        }
+
+        // Handle nested Spatie Data objects
+        if (class_exists($typeName) && is_subclass_of($typeName, Data::class)) {
+            $nestedSchema = $this->buildSpatieDataSchema($typeName, $processedClasses);
+            return array_merge($schema, $nestedSchema);
+        }
+
+        // Handle primitive types
+        return array_merge($schema, [
+            'type' => $this->mapPhpTypeToOpenApi($typeName),
+            'format' => $this->getFormatForType($typeName),
+        ]);
+    }
+
+    /**
+     * Handle union types in PHP 8+
+     */
+    private function handleUnionType(\ReflectionUnionType $unionType, array $processedClasses = []): array
+    {
+        $types = [];
+        $hasNull = false;
+
+        foreach ($unionType->getTypes() as $type) {
+            if ($type->getName() === 'null') {
+                $hasNull = true;
+                continue;
+            }
+
+            $types[] = $this->buildPropertySchema($type, $processedClasses);
+        }
+
+        if (count($types) === 1) {
+            $schema = $types[0];
+            if ($hasNull) {
+                $schema['nullable'] = true;
+            }
+            return $schema;
+        }
+
+        // Multiple types - use oneOf
+        $schema = ['oneOf' => $types];
+        if ($hasNull) {
+            $schema['nullable'] = true;
+        }
+
+        return $schema;
+    }
+
+    /**
+     * Handle collection types (arrays, Collections, etc.)
+     */
+    private function handleCollectionType(string $typeName, array $processedClasses = []): array
+    {
+        $schema = [
+            'type' => 'array',
+            'items' => ['type' => 'object'], // Default item type
+        ];
+
+        // Try to determine item type from DataCollectionOf attribute or other hints
+        // This would need to be enhanced based on the specific context where it's called
+        
+        return $schema;
+    }
+
+    /**
+     * Check if a class uses snake_case mapping
+     */
+    private function usesSnakeCaseMapping(ReflectionClass $reflection): bool
+    {
+        $mapNameAttributes = $reflection->getAttributes(\Spatie\LaravelData\Attributes\MapName::class);
+        $mapOutputAttributes = $reflection->getAttributes(\Spatie\LaravelData\Attributes\MapOutputName::class);
+        
+        foreach (array_merge($mapNameAttributes, $mapOutputAttributes) as $attribute) {
+            // MapName uses constructor parameter, not property
+            $args = $attribute->getArguments();
+            if (!empty($args) && $args[0] === \Spatie\LaravelData\Mappers\SnakeCaseMapper::class) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Get output property name considering mapping attributes
+     */
+    private function getOutputPropertyName(ReflectionClass $reflection, string $propertyName, bool $hasSnakeCaseMapping): string
+    {
+        // Check for property-specific mapping first
+        if ($reflection->hasProperty($propertyName)) {
+            $property = $reflection->getProperty($propertyName);
+            $mapNameAttributes = $property->getAttributes(\Spatie\LaravelData\Attributes\MapName::class);
+            
+            if (!empty($mapNameAttributes)) {
+                $instance = $mapNameAttributes[0]->newInstance();
+                return $instance->name ?? $propertyName;
+            }
+        }
+
+        // Apply global mapping
+        if ($hasSnakeCaseMapping) {
+            return \Illuminate\Support\Str::snake($propertyName);
+        }
+
+        return $propertyName;
+    }
+
+    /**
+     * Get parameter description from constructor docblock
+     */
+    private function getParameterDescription(ReflectionMethod $constructor, string $parameterName): string
+    {
+        $docComment = $constructor->getDocComment();
+        if (!$docComment) {
+            return '';
+        }
+
+        // Extract @param descriptions
+        preg_match_all('/@param\s+[^\s]+\s+\$' . preg_quote($parameterName) . '\s+(.*)$/m', $docComment, $matches);
+        
+        return trim($matches[1][0] ?? '');
+    }
+
+    /**
+     * Check if type represents a collection
+     */
+    private function isCollection(string $typeName): bool
+    {
+        return in_array($typeName, [
+            'array',
+            \Illuminate\Support\Collection::class,
+            \Illuminate\Database\Eloquent\Collection::class,
+        ]) || is_subclass_of($typeName, \Illuminate\Support\Collection::class);
     }
 
     /**
@@ -167,6 +381,11 @@ class ResponseAnalyzer
      */
     protected function mapPhpTypeToOpenApi(string $type): string
     {
+        // Handle Laravel collection types
+        if ($this->isCollectionType($type)) {
+            return 'array';
+        }
+
         return match ($type) {
             'int', 'integer' => 'integer',
             'float', 'double' => 'number',
@@ -621,5 +840,87 @@ class ResponseAnalyzer
                 ],
             ],
         ];
+    }
+
+    /**
+     * Check if type represents a Laravel collection type
+     */
+    private function isCollectionType(string $typeName): bool
+    {
+        // Handle short class names (e.g., 'ResourceCollection')
+        $shortName = class_basename($typeName);
+        
+        $collectionTypes = [
+            'ResourceCollection',
+            'JsonResourceCollection',
+            'Collection',
+            'LengthAwarePaginator',
+            'Paginator',
+        ];
+
+        if (in_array($shortName, $collectionTypes)) {
+            return true;
+        }
+
+        // Handle full class names
+        $fullClassNames = [
+            ResourceCollection::class,
+            \Illuminate\Http\Resources\Json\JsonResourceCollection::class,
+            \Illuminate\Support\Collection::class,
+            \Illuminate\Database\Eloquent\Collection::class,
+            \Illuminate\Pagination\LengthAwarePaginator::class,
+            \Illuminate\Pagination\Paginator::class,
+        ];
+
+        return in_array($typeName, $fullClassNames) || 
+               (class_exists($typeName) && is_subclass_of($typeName, ResourceCollection::class));
+    }
+
+    /**
+     * Resolve class name using the controller's namespace and imports
+     */
+    private function resolveClassName(string $typeName, ReflectionClass $declaringClass): string
+    {
+        // Check if the type is already a fully qualified class name
+        if (strpos($typeName, '\\') !== false) {
+            return $typeName;
+        }
+
+        // Try with the controller's namespace first
+        $namespace = $declaringClass->getNamespaceName();
+        $resolvedType = $namespace . '\\DTOs\\' . $typeName; // Try DTOs subdirectory
+        if (class_exists($resolvedType)) {
+            return $resolvedType;
+        }
+
+        $resolvedType = $namespace . '\\' . $typeName;
+        if (class_exists($resolvedType)) {
+            return $resolvedType;
+        }
+
+        // Parse the source file to find use statements
+        $filename = $declaringClass->getFileName();
+        if ($filename && file_exists($filename)) {
+            $content = file_get_contents($filename);
+            if ($content !== false) {
+                // Extract use statements
+                if (preg_match_all('/use\s+([^;]+);/', $content, $matches)) {
+                    foreach ($matches[1] as $useStatement) {
+                        $useStatement = trim($useStatement);
+                        
+                        // Check if this use statement matches our type name
+                        if (strpos($useStatement, '\\' . $typeName) !== false || 
+                            substr($useStatement, -strlen($typeName)) === $typeName) {
+                            if (class_exists($useStatement)) {
+                                return $useStatement;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback to the original type name
+        return $typeName;
     }
 }

@@ -31,11 +31,10 @@ use ReflectionAttribute;
 use ReflectionClass;
 use ReflectionMethod;
 use ReflectionProperty;
-use Spatie\LaravelData\Attributes\MapName;
-use Spatie\LaravelData\Attributes\MapOutputName;
 use Spatie\LaravelData\Data;
 use Spatie\LaravelData\Mappers\SnakeCaseMapper;
 use Throwable;
+use JkBennemann\LaravelApiDocumentation\Services\AttributeAnalyzer;
 
 class OpenApi
 {
@@ -45,15 +44,20 @@ class OpenApi
 
     private Repository $repository;
 
+    private ?AttributeAnalyzer $attributeAnalyzer;
+
     private array $excludedRoutes;
 
     private array $excludedMethods;
 
     private array $includedSecuritySchemes = [];
 
-    public function __construct(Repository $repository)
-    {
+    public function __construct(
+        Repository $repository,
+        ?AttributeAnalyzer $attributeAnalyzer = null
+    ) {
         $this->repository = $repository;
+        $this->attributeAnalyzer = $attributeAnalyzer ?? app(AttributeAnalyzer::class);
         $this->excludedRoutes = $repository->get('api-documentation.excluded_routes', []);
         $this->excludedMethods = $repository->get('api-documentation.excluded_methods', []);
         $this->includedSecuritySchemes = [];
@@ -79,7 +83,15 @@ class OpenApi
 
     public function get(): \openapiphp\openapi\spec\OpenApi
     {
+        // Ensure we have the latest config values before returning
+        $this->updateInfoFromConfig();
         return $this->openApi;
+    }
+
+    private function updateInfoFromConfig(): void
+    {
+        $this->openApi->info->title = $this->repository->get('api-documentation.title', 'API Documentation');
+        $this->openApi->info->version = $this->repository->get('api-documentation.version', '1.0.0');
     }
 
     private function setSecuritySchemes(): void
@@ -195,9 +207,38 @@ class OpenApi
             ],
         ]);
 
-        // Add path parameters
-        if (! empty($route['request_parameters'])) {
-            $parameters = [];
+        // Get method reflection if available
+        $methodReflection = null;
+        if (isset($route['controller']) && isset($route['action'])) {
+            try {
+                $controllerReflection = new ReflectionClass($route['controller']);
+                $methodReflection = $controllerReflection->getMethod($route['action']);
+            } catch (Throwable $e) {
+                // Continue without reflection
+            }
+        }
+
+        // 1. Handle Parameters (Path, Query)
+        $this->processOperationParameters($operation, $route, $methodReflection);
+
+        // 2. Handle Request Body
+        $this->processOperationRequestBody($operation, $route, $methodReflection);
+
+        // 3. Handle Responses
+        $this->processOperationResponses($operation, $route, $methodReflection);
+
+        return $operation;
+    }
+
+    /**
+     * Process operation parameters (path and query parameters)
+     */
+    private function processOperationParameters(Operation $operation, array $route, ?ReflectionMethod $methodReflection): void
+    {
+        $parameters = [];
+
+        // Add path parameters from route data
+        if (!empty($route['request_parameters'])) {
             foreach ($route['request_parameters'] as $name => $param) {
                 $parameters[] = new Parameter([
                     'name' => $name,
@@ -210,13 +251,97 @@ class OpenApi
                     ]),
                 ]);
             }
-            $operation->parameters = $parameters;
         }
 
-        // Add request body parameters only if smart features are enabled
-        if (! empty($route['parameters']) && $this->repository->get('api-documentation.smart_features', true)) {
+        // Process explicit query parameters from attributes (priority)
+        if ($methodReflection) {
+            $explicitQueryParams = $this->attributeAnalyzer->extractQueryParameters($methodReflection);
+            foreach ($explicitQueryParams as $name => $param) {
+                $parameters[] = new Parameter([
+                    'name' => $name,
+                    'in' => 'query',
+                    'description' => $param['description'],
+                    'required' => $param['required'],
+                    'schema' => new Schema([
+                        'type' => $param['type'],
+                        'format' => $param['format'],
+                        'enum' => $param['enum'],
+                    ]),
+                    'example' => $param['example'],
+                ]);
+            }
+        }
+
+        // Add smart-detected query parameters if not explicitly defined
+        if (!empty($route['query_parameters']) && $this->repository->get('api-documentation.smart_features', true)) {
+            foreach ($route['query_parameters'] as $name => $param) {
+                // Skip if already defined explicitly
+                $alreadyDefined = false;
+                foreach ($parameters as $existingParam) {
+                    if ($existingParam->name === $name && $existingParam->in === 'query') {
+                        $alreadyDefined = true;
+                        break;
+                    }
+                }
+
+                if (!$alreadyDefined) {
+                    $parameters[] = new Parameter([
+                        'name' => $name,
+                        'in' => 'query',
+                        'description' => $param['description'] ?? '',
+                        'required' => $param['required'] ?? false,
+                        'schema' => new Schema([
+                            'type' => $param['type'] ?? 'string',
+                            'format' => $param['format'] ?? null,
+                        ]),
+                    ]);
+                }
+            }
+        }
+
+        if (!empty($parameters)) {
+            $operation->parameters = $parameters;
+        }
+    }
+
+    /**
+     * Process operation request body
+     */
+    private function processOperationRequestBody(Operation $operation, array $route, ?ReflectionMethod $methodReflection): void
+    {
+        $requestBody = null;
+
+        // Check for explicit request body attribute first (priority)
+        if ($methodReflection) {
+            $explicitRequestBody = $this->attributeAnalyzer->extractRequestBody($methodReflection);
+            if ($explicitRequestBody) {
+                $schema = null;
+                
+                if ($explicitRequestBody['data_class']) {
+                    // Use Spatie Data class for schema
+                    $schemaData = $this->responseAnalyzer->analyzeSpatieDataObject($explicitRequestBody['data_class']);
+                    $schema = new Schema($schemaData);
+                } else {
+                    $schema = new Schema(['type' => 'object']);
+                }
+
+                $requestBody = new RequestBody([
+                    'description' => $explicitRequestBody['description'],
+                    'required' => $explicitRequestBody['required'],
+                    'content' => [
+                        $explicitRequestBody['content_type'] => new MediaType([
+                            'schema' => $schema,
+                            'example' => $explicitRequestBody['example'],
+                        ]),
+                    ],
+                ]);
+            }
+        }
+
+        // Fall back to smart detection if no explicit definition
+        if (!$requestBody && !empty($route['parameters']) && $this->repository->get('api-documentation.smart_features', true)) {
             $schema = $this->buildRequestBodySchema($route['parameters']);
-            $operation->requestBody = new RequestBody([
+            $requestBody = new RequestBody([
                 'required' => true,
                 'content' => [
                     'application/json' => new MediaType([
@@ -226,9 +351,70 @@ class OpenApi
             ]);
         }
 
-        // Add responses
-        if (! empty($route['responses'])) {
-            $responses = [];
+        if ($requestBody) {
+            $operation->requestBody = $requestBody;
+        }
+    }
+
+    /**
+     * Process operation responses
+     */
+    private function processOperationResponses(Operation $operation, array $route, ?ReflectionMethod $methodReflection): void
+    {
+        $responses = [];
+
+        // Check for explicit response body attributes first (priority)
+        if ($methodReflection) {
+            $explicitResponses = $this->attributeAnalyzer->extractResponseBodies($methodReflection);
+            foreach ($explicitResponses as $statusCode => $responseData) {
+                $schema = null;
+                
+                if ($responseData['data_class']) {
+                    $schemaData = $this->responseAnalyzer->analyzeSpatieDataObject($responseData['data_class']);
+                    
+                    if ($responseData['is_collection']) {
+                        $schema = new Schema([
+                            'type' => 'array',
+                            'items' => new Schema($schemaData),
+                        ]);
+                    } else {
+                        $schema = new Schema($schemaData);
+                    }
+                } else {
+                    $schema = new Schema(['type' => 'object']);
+                }
+
+                $responseHeaders = [];
+                if ($methodReflection) {
+                    $explicitHeaders = $this->attributeAnalyzer->extractResponseHeaders($methodReflection);
+                    foreach ($explicitHeaders as $headerName => $headerData) {
+                        $responseHeaders[$headerName] = new Header([
+                            'description' => $headerData['description'],
+                            'required' => $headerData['required'],
+                            'schema' => new Schema([
+                                'type' => $headerData['type'],
+                                'format' => $headerData['format'],
+                            ]),
+                            'example' => $headerData['example'],
+                        ]);
+                    }
+                }
+
+                $responses[$statusCode] = new Response([
+                    'description' => $responseData['description'],
+                    'headers' => $responseHeaders,
+                    'content' => [
+                        $responseData['content_type'] => new MediaType([
+                            'schema' => $schema,
+                            'example' => $responseData['example'],
+                        ]),
+                    ],
+                ]);
+            }
+        }
+
+        // Fall back to smart detection if no explicit responses defined
+        if (empty($responses) && !empty($route['responses'])) {
             foreach ($route['responses'] as $code => $response) {
                 $schema = null;
                 $customResponse = null;
@@ -282,7 +468,7 @@ class OpenApi
                             }
                         }
                     } else {
-                        if (isset($response['resource']) && is_string($response['resource'])) {
+                        if (isset($response['resource']) && is_string($response['resource']) && $type !== 'array') {
                             //check if resource is valid class
                             try {
                                 $customResponse = $this->generateOpenAPIResponseSchema($response);
@@ -313,26 +499,23 @@ class OpenApi
                     ]);
                 }
 
-                // Add headers if present
-                if (!empty($response['headers'])) {
-                    $headers = [];
-                    foreach ($response['headers'] as $name => $header) {
-                        $headers[$name] = new Header([
-                            'description' => $header['description'] ?? '',
-                            'schema' => new Schema([
-                                'type' => $header['type'] ?? 'string',
-                            ]),
-                        ]);
-                    }
-                    $responseObj->headers = $headers;
-                }
-
                 $responses[$code] = $responseObj;
             }
-            $operation->responses = $responses;
         }
 
-        return $operation;
+        // Ensure at least a 200 response exists
+        if (empty($responses)) {
+            $responses['200'] = new Response([
+                'description' => '',
+                'content' => [
+                    'application/json' => new MediaType([
+                        'schema' => new Schema(['type' => 'object']),
+                    ]),
+                ],
+            ]);
+        }
+
+        $operation->responses = $responses;
     }
 
     private function buildRequestBodySchema(array $parameters): Schema
