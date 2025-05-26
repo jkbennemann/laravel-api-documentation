@@ -7,6 +7,7 @@ namespace JkBennemann\LaravelApiDocumentation;
 use Illuminate\Support\Facades\Route;
 use JkBennemann\LaravelApiDocumentation\Commands\LaravelApiDocumentationCommand;
 use JkBennemann\LaravelApiDocumentation\Http\Controllers\RedocController;
+use JkBennemann\LaravelApiDocumentation\Http\Controllers\ScalarController;
 use JkBennemann\LaravelApiDocumentation\Http\Controllers\SwaggerController;
 use JkBennemann\LaravelApiDocumentation\Services\AttributeAnalyzer;
 use JkBennemann\LaravelApiDocumentation\Services\OpenApi;
@@ -32,7 +33,7 @@ class LaravelApiDocumentationServiceProvider extends PackageServiceProvider
         $this->app->singleton(AttributeAnalyzer::class);
         $this->app->singleton(RequestAnalyzer::class);
         $this->app->singleton(ResponseAnalyzer::class);
-        
+
         // Register OpenApi service with proper dependency injection
         $this->app->singleton(OpenApi::class, function ($app) {
             return new OpenApi(
@@ -65,7 +66,22 @@ class LaravelApiDocumentationServiceProvider extends PackageServiceProvider
                 ->name('api-documentation.redoc');
         }
 
-        if (config('api-documentation.ui.swagger.enabled', false) || config('api-documentation.ui.redoc.enabled', false)) {
+        if (config('api-documentation.ui.scalar.enabled', true)) {
+            Route::get(
+                config('api-documentation.ui.scalar.route'),
+                [
+                    ScalarController::class,
+                    'index',
+                ]
+            )
+                ->middleware(config('api-documentation.ui.scalar.middleware', []))
+                ->name('api-documentation.scalar');
+        }
+
+        if (config('api-documentation.ui.swagger.enabled', false) ||
+            config('api-documentation.ui.redoc.enabled', false) ||
+            config('api-documentation.ui.scalar.enabled', false)
+        ) {
             if (config('api-documentation.ui.default', false) === 'redoc') {
                 Route::get(
                     '/documentation',
@@ -75,6 +91,15 @@ class LaravelApiDocumentationServiceProvider extends PackageServiceProvider
                     ]
                 )
                     ->middleware(config('api-documentation.ui.redoc.middleware', []));
+            } elseif (config('api-documentation.ui.default', false) === 'scalar') {
+                Route::get(
+                    '/documentation',
+                    [
+                        ScalarController::class,
+                        'index',
+                    ]
+                )
+                    ->middleware(config('api-documentation.ui.scalar.middleware', []));
             } else {
                 Route::get(
                     '/documentation',

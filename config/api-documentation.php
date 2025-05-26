@@ -50,6 +50,14 @@ return [
                 'web',
             ],
         ],
+        'scalar' => [
+            'enabled' => false,
+            'route' => '/documentation/scalar',
+            'version' => '2.2.0',
+            'middleware' => [
+                'web',
+            ],
+        ],
         'storage' => [
             'disk' => 'public',
             'filename' => 'api-documentation.json',

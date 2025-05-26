@@ -77,7 +77,8 @@ class LaravelApiDocumentationCommand extends Command
 
         // Display documentation URLs
         if (config('api-documentation.ui.swagger.enabled', false) === true ||
-            config('api-documentation.ui.redoc.enabled', false) === true) {
+            config('api-documentation.ui.redoc.enabled', false) === true ||
+            config('api-documentation.ui.scalar.enabled', false) === true) {
             $appURL = config('app.url').(config('api-documentation.app.port') ? ':'.config('api-documentation.app.port') : '');
             $default = config('api-documentation.ui.default', false);
 
@@ -89,6 +90,9 @@ class LaravelApiDocumentationCommand extends Command
             }
             if (config('api-documentation.ui.redoc.enabled', false) === true) {
                 $this->line('Redoc: '.$appURL.config('api-documentation.ui.redoc.route'));
+            }
+            if (config('api-documentation.ui.scalar.enabled', false) === true) {
+                $this->line('Scalar: '.$appURL.config('api-documentation.ui.scalar.route'));
             }
         } else {
             $this->comment('You need to enable at least one UI inside "config/api-documentation.php" to view the documentation!');

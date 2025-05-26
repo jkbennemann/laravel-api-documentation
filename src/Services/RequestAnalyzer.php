@@ -254,80 +254,367 @@ class RequestAnalyzer
 
     /**
      * Parse Laravel validation rules into OpenAPI schema
+     * 
+     * Rule: Write concise, technical PHP code with accurate examples
+     * Rule: Keep the code clean and readable
      */
     private function parseValidationRules(array $rules): array
     {
         $type = 'string'; // Default type
         $format = null;
         $required = false;
-        $description = null;
+        $description = [];
         $deprecated = false;
+        $minimum = null;
+        $maximum = null;
+        $minLength = null;
+        $maxLength = null;
+        $pattern = null;
+        $enum = null;
+        $example = null;
+        $items = null;
+        $nullable = false;
 
         foreach ($rules as $rule) {
             $rule = trim($rule);
             
-            if ($rule === 'required') {
-                $required = true;
+            // Skip empty rules
+            if (empty($rule)) {
                 continue;
             }
             
-            if ($rule === 'deprecated') {
-                $deprecated = true;
-                continue;
+            // Check for rule with parameters (rule:param1,param2)
+            $ruleName = $rule;
+            $ruleParams = [];
+            if (str_contains($rule, ':')) {
+                [$ruleName, $paramStr] = explode(':', $rule, 2);
+                $ruleParams = explode(',', $paramStr);
             }
-
-            // Check for type rules
-            if (in_array($rule, ['integer', 'numeric', 'int'])) {
-                $type = 'integer';
-            } elseif (in_array($rule, ['boolean', 'bool'])) {
-                $type = 'boolean';
-            } elseif (in_array($rule, ['array'])) {
-                $type = 'array';
-            } elseif (in_array($rule, ['file', 'image'])) {
-                $type = 'file';
-            } elseif ($rule === 'date') {
-                $type = 'string';
-                $format = 'date';
-            } elseif ($rule === 'email') {
-                $type = 'string';
-                $format = 'email';
-            } elseif ($rule === 'uuid') {
-                $type = 'string';
-                $format = 'uuid';
-            } elseif ($rule === 'url') {
-                $type = 'string';
-                $format = 'uri';
-            } elseif ($rule === 'ip') {
-                $type = 'string';
-                $format = 'ipv4';
-            } elseif ($rule === 'json') {
-                $type = 'object';
-            }
-
-            // Check for custom mappings from configuration
-            foreach ($this->ruleTypeMapping as $rulePattern => $mappedType) {
-                if (preg_match('/^' . $rulePattern . '/', $rule)) {
-                    $type = $mappedType;
+            
+            // Process rules
+            switch ($ruleName) {
+                // Basic presence rules
+                case 'required':
+                    $required = true;
+                    $description[] = 'Required.';
                     break;
-                }
+                    
+                case 'nullable':
+                    $nullable = true;
+                    $description[] = 'Can be null.';
+                    break;
+                    
+                case 'sometimes':
+                    $required = false;
+                    $description[] = 'Optional.';
+                    break;
+                    
+                case 'deprecated':
+                    $deprecated = true;
+                    $description[] = 'Deprecated.';
+                    break;
+                    
+                // Type rules
+                case 'integer':
+                case 'numeric':
+                case 'int':
+                    $type = 'integer';
+                    $description[] = 'Must be an integer.';
+                    break;
+                    
+                case 'decimal':
+                    $type = 'number';
+                    $format = 'float';
+                    $description[] = 'Must be a decimal number.';
+                    if (!empty($ruleParams[0])) {
+                        $description[] = "Total digits: {$ruleParams[0]}.";
+                    }
+                    if (!empty($ruleParams[1])) {
+                        $description[] = "Decimal places: {$ruleParams[1]}.";
+                    }
+                    break;
+                    
+                case 'numeric':
+                    $type = 'number';
+                    $description[] = 'Must be a number.';
+                    break;
+                    
+                case 'boolean':
+                case 'bool':
+                    $type = 'boolean';
+                    $description[] = 'Must be a boolean.';
+                    break;
+                    
+                case 'array':
+                    $type = 'array';
+                    $description[] = 'Must be an array.';
+                    // Initialize items if not set
+                    if ($items === null) {
+                        $items = ['type' => 'string'];
+                    }
+                    break;
+                    
+                case 'file':
+                    $type = 'string';
+                    $format = 'binary';
+                    $description[] = 'Must be a file.';
+                    break;
+                    
+                case 'image':
+                    $type = 'string';
+                    $format = 'binary';
+                    $description[] = 'Must be an image file.';
+                    break;
+                    
+                case 'date':
+                    $type = 'string';
+                    $format = 'date';
+                    $description[] = 'Must be a valid date.';
+                    break;
+                    
+                case 'date_format':
+                    $type = 'string';
+                    $format = 'date-time';
+                    if (!empty($ruleParams[0])) {
+                        $description[] = "Must match the format: {$ruleParams[0]}.";
+                        // Try to guess if it's a date or datetime
+                        if (str_contains($ruleParams[0], 'H:i') || str_contains($ruleParams[0], 'h:i')) {
+                            $format = 'date-time';
+                        } else {
+                            $format = 'date';
+                        }
+                        // Create example based on format
+                        try {
+                            $example = (new \DateTime())->format($ruleParams[0]);
+                        } catch (\Throwable $e) {
+                            // If format is invalid, don't set example
+                        }
+                    }
+                    break;
+                    
+                case 'email':
+                    $type = 'string';
+                    $format = 'email';
+                    $description[] = 'Must be a valid email address.';
+                    $example = 'user@example.com';
+                    break;
+                    
+                case 'uuid':
+                    $type = 'string';
+                    $format = 'uuid';
+                    $description[] = 'Must be a valid UUID.';
+                    $example = '123e4567-e89b-12d3-a456-426614174000';
+                    break;
+                    
+                case 'url':
+                    $type = 'string';
+                    $format = 'uri';
+                    $description[] = 'Must be a valid URL.';
+                    $example = 'https://example.com';
+                    break;
+                    
+                case 'ip':
+                    $type = 'string';
+                    $format = 'ipv4';
+                    $description[] = 'Must be a valid IP address.';
+                    $example = '192.168.1.1';
+                    break;
+                    
+                case 'json':
+                    $type = 'object';
+                    $description[] = 'Must be a valid JSON string.';
+                    break;
+                    
+                // String rules
+                case 'string':
+                    $type = 'string';
+                    $description[] = 'Must be a string.';
+                    break;
+                    
+                case 'alpha':
+                    $type = 'string';
+                    $pattern = '^[a-zA-Z]+$';
+                    $description[] = 'Must contain only alphabetic characters.';
+                    break;
+                    
+                case 'alpha_num':
+                case 'alpha_numeric':
+                    $type = 'string';
+                    $pattern = '^[a-zA-Z0-9]+$';
+                    $description[] = 'Must contain only alphanumeric characters.';
+                    break;
+                    
+                case 'alpha_dash':
+                    $type = 'string';
+                    $pattern = '^[a-zA-Z0-9_-]+$';
+                    $description[] = 'Must contain only letters, numbers, dashes, and underscores.';
+                    break;
+                    
+                // Size rules
+                case 'min':
+                    if ($type === 'string') {
+                        $minLength = (int)$ruleParams[0];
+                        $description[] = "Minimum length: {$ruleParams[0]}.";
+                    } elseif ($type === 'integer' || $type === 'number') {
+                        $minimum = (int)$ruleParams[0];
+                        $description[] = "Minimum value: {$ruleParams[0]}.";
+                    } elseif ($type === 'array') {
+                        $description[] = "Minimum items: {$ruleParams[0]}.";
+                    }
+                    break;
+                    
+                case 'max':
+                    if ($type === 'string') {
+                        $maxLength = (int)$ruleParams[0];
+                        $description[] = "Maximum length: {$ruleParams[0]}.";
+                    } elseif ($type === 'integer' || $type === 'number') {
+                        $maximum = (int)$ruleParams[0];
+                        $description[] = "Maximum value: {$ruleParams[0]}.";
+                    } elseif ($type === 'array') {
+                        $description[] = "Maximum items: {$ruleParams[0]}.";
+                    }
+                    break;
+                    
+                case 'size':
+                    if ($type === 'string') {
+                        $minLength = $maxLength = (int)$ruleParams[0];
+                        $description[] = "Exact length: {$ruleParams[0]}.";
+                    } elseif ($type === 'integer' || $type === 'number') {
+                        $minimum = $maximum = (int)$ruleParams[0];
+                        $description[] = "Exact value: {$ruleParams[0]}.";
+                    } elseif ($type === 'array') {
+                        $description[] = "Exact item count: {$ruleParams[0]}.";
+                    }
+                    break;
+                    
+                case 'between':
+                    if (!empty($ruleParams[0]) && !empty($ruleParams[1])) {
+                        if ($type === 'string') {
+                            $minLength = (int)$ruleParams[0];
+                            $maxLength = (int)$ruleParams[1];
+                            $description[] = "Length between {$ruleParams[0]} and {$ruleParams[1]}.";
+                        } elseif ($type === 'integer' || $type === 'number') {
+                            $minimum = (int)$ruleParams[0];
+                            $maximum = (int)$ruleParams[1];
+                            $description[] = "Value between {$ruleParams[0]} and {$ruleParams[1]}.";
+                        } elseif ($type === 'array') {
+                            $description[] = "Item count between {$ruleParams[0]} and {$ruleParams[1]}.";
+                        }
+                    }
+                    break;
+                    
+                // Content rules
+                case 'in':
+                    if (!empty($ruleParams)) {
+                        $enum = $ruleParams;
+                        $description[] = 'Must be one of: ' . implode(', ', $ruleParams) . '.';
+                        // Set example to first allowed value
+                        $example = $ruleParams[0];
+                    }
+                    break;
+                    
+                case 'not_in':
+                    if (!empty($ruleParams)) {
+                        $description[] = 'Must not be any of: ' . implode(', ', $ruleParams) . '.';
+                    }
+                    break;
+                    
+                case 'regex':
+                    if (!empty($ruleParams[0])) {
+                        $pattern = trim($ruleParams[0], '/');
+                        $description[] = 'Must match pattern: ' . $pattern . '.';
+                    }
+                    break;
+                    
+                case 'not_regex':
+                    if (!empty($ruleParams[0])) {
+                        $description[] = 'Must not match pattern: ' . trim($ruleParams[0], '/') . '.';
+                    }
+                    break;
+                    
+                case 'password':
+                    $type = 'string';
+                    $format = 'password';
+                    $description[] = 'Must be a password.';
+                    if (!empty($ruleParams)) {
+                        $description[] = 'Password rules: ' . implode(', ', $ruleParams) . '.';
+                    }
+                    break;
+                    
+                // Check for custom mappings from configuration
+                default:
+                    foreach ($this->ruleTypeMapping as $rulePattern => $mappedType) {
+                        if (preg_match('/^' . $rulePattern . '/', $ruleName)) {
+                            $type = $mappedType;
+                            break;
+                        }
+                    }
+                    break;
             }
         }
 
+        // Combine description array into a string
+        $descriptionText = implode(' ', array_unique($description));
+
+        // Build the result with all collected information
         $result = [
             'type' => $type,
             'required' => $required,
         ];
 
+        // Add nullable type if applicable
+        if ($nullable) {
+            $result['nullable'] = true;
+        }
+
+        // Add format if defined
         if ($format) {
             $result['format'] = $format;
         }
 
-        if ($description) {
-            $result['description'] = $description;
+        // Add description if not empty
+        if (!empty($descriptionText)) {
+            $result['description'] = $descriptionText;
         }
 
+        // Add deprecated flag if true
         if ($deprecated) {
             $result['deprecated'] = true;
+        }
+
+        // Add constraints if defined
+        if ($minimum !== null) {
+            $result['minimum'] = $minimum;
+        }
+
+        if ($maximum !== null) {
+            $result['maximum'] = $maximum;
+        }
+
+        if ($minLength !== null) {
+            $result['minLength'] = $minLength;
+        }
+
+        if ($maxLength !== null) {
+            $result['maxLength'] = $maxLength;
+        }
+
+        if ($pattern !== null) {
+            $result['pattern'] = $pattern;
+        }
+
+        if ($enum !== null) {
+            $result['enum'] = $enum;
+        }
+
+        // Add example if available
+        if ($example !== null) {
+            $result['example'] = $example;
+        }
+
+        // Add items definition for arrays
+        if ($type === 'array' && $items !== null) {
+            $result['items'] = $items;
         }
 
         return $result;
@@ -476,6 +763,12 @@ class RequestAnalyzer
 
             foreach ($constructor->getParameters() as $parameter) {
                 $parameterName = $parameter->getName();
+                
+                // Skip internal Spatie Data properties that shouldn't be included in the API documentation
+                if ($parameterName === '_additional' || $parameterName === '_data_context') {
+                    continue;
+                }
+                
                 $outputName = $this->getOutputPropertyName($reflection, $parameterName, $hasSnakeCaseMapping);
                 $fullName = $prefix ? "{$prefix}.{$outputName}" : $outputName;
 
