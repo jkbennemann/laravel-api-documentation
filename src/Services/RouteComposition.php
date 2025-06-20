@@ -1265,7 +1265,18 @@ class RouteComposition
                 return $docName === $this->defaultDocFile;
             }
 
-            return in_array($docName, $docFiles);
+            // Check if docName is in the docFiles
+            if (in_array($docName, $docFiles)) {
+                return true;
+            }
+            
+            // Special handling: if this route is tagged with 'public-api' and we're generating 
+            // docs for a public API variant, include it automatically
+            if (in_array('public-api', $docFiles) && $this->isPublicApiVariant($docName)) {
+                return true;
+            }
+
+            return false;
         } catch (Throwable) {
             // Ignore reflection errors
         }
@@ -1464,5 +1475,18 @@ class RouteComposition
         }
 
         return $parameters;
+    }
+    
+    private function isPublicApiVariant(string $docName): bool
+    {
+        // Define the known public API variant patterns
+        $publicApiVariants = [
+            'public-api',
+            'staging-public-api',
+            'https-public-api', 
+            'https-staging-public-api'
+        ];
+        
+        return in_array($docName, $publicApiVariants);
     }
 }
