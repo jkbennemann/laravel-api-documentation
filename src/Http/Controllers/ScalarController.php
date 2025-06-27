@@ -13,10 +13,25 @@ class ScalarController
     public function index()
     {
         $filename = config('api-documentation.ui.storage.filename', null);
-        $oldFile = $filename ? asset($filename) : null;
+        $oldFile[] = [
+            'name' => $filename,
+            'url' => $filename ? asset($filename) : null,
+            'proxyUrl' => 'https://proxy.scalar.com'
+        ];
+
+        $files = [];
+        foreach (config('api-documentation.ui.storage.files', []) as $key => $file) {
+            if ($this->check($key)) {
+                $files[] = [
+                    'title' => $file['filename'],
+                    'url' => asset($file['filename']),
+                    'proxyUrl' => 'https://proxy.scalar.com'
+                ];
+            }
+        }
 
         return view('api-documentation::scalar.index', [
-            'documentationFile' => $oldFile,
+            'files' => !empty($files) ? $files : $oldFile,
         ]);
     }
 }
