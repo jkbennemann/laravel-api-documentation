@@ -16,12 +16,7 @@
 
 <!-- Initialize the Scalar API Reference -->
 <script>
-    Scalar.createApiReference('#app', {
-        // The URL of the OpenAPI/Swagger document
-        url: "{!! $documentationFile !!}",
-        // Avoid CORS issues
-        proxyUrl: 'https://proxy.scalar.com',
-    })
+    Scalar.createApiReference('#app', @json($files))
 </script>
 </body>
 </html>
