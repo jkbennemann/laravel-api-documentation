@@ -36,7 +36,8 @@ class ResponseAnalyzer
 
     public function __construct(private readonly Repository $configuration)
     {
-        $this->enabled = $configuration->get('api-documentation.smart_responses.enabled', true);
+        // Smart features are always enabled for 100% accurate documentation
+        $this->enabled = true;
         $this->relationshipTypes = $configuration->get('api-documentation.smart_responses.relationship_types', []);
         $this->methodTypes = $configuration->get('api-documentation.smart_responses.method_types', []);
         $this->paginationConfig = $configuration->get('api-documentation.smart_responses.pagination', []);

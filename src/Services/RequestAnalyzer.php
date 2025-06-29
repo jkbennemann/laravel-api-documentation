@@ -32,7 +32,8 @@ class RequestAnalyzer
 
     public function __construct(private readonly Repository $configuration)
     {
-        $this->enabled = $configuration->get('api-documentation.smart_requests.enabled', true);
+        // Smart features are always enabled for 100% accurate documentation
+        $this->enabled = true;
         $this->ruleTypeMapping = $configuration->get('api-documentation.smart_requests.rule_types', []);
         $this->enhancedAnalyzer = new EnhancedValidationRuleAnalyzer;
         $this->nestedArrayAnalyzer = new NestedArrayValidationAnalyzer($this->enhancedAnalyzer);

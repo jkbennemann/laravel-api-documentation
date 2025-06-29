@@ -282,7 +282,7 @@ class OpenApi
         }
 
         // For GET requests, treat validation parameters as query parameters instead of request body
-        if (strtoupper($route['method']) === 'GET' && ! empty($route['parameters']) && $this->repository->get('api-documentation.smart_features', true)) {
+        if (strtoupper($route['method']) === 'GET' && ! empty($route['parameters'])) {
             foreach ($route['parameters'] as $name => $param) {
                 $schema = new Schema([
                     'type' => $param['type'] ?? 'string',
@@ -344,7 +344,7 @@ class OpenApi
 
         // Fall back to smart detection if no explicit definition
         // Only create request body for non-GET methods (GET requests should use query parameters)
-        if (! $requestBody && ! empty($route['parameters']) && $this->repository->get('api-documentation.smart_features', true) && strtoupper($route['method']) !== 'GET') {
+        if (! $requestBody && ! empty($route['parameters']) && strtoupper($route['method']) !== 'GET') {
             // Enhanced schema building with AST analysis if available
             $schema = $this->buildRequestBodySchema($route['parameters']);
 
