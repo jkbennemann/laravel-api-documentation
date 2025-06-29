@@ -9,6 +9,13 @@ use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Http\Resources\Json\ResourceCollection;
 use Illuminate\Pagination\AbstractPaginator;
 use openapiphp\openapi\spec\Schema;
+use PhpParser\Node\Expr\Array_;
+use PhpParser\Node\Expr\ArrayItem;
+use PhpParser\Node\Expr\PropertyFetch;
+use PhpParser\Node\Expr\Variable;
+use PhpParser\Node\Scalar\String_;
+use PhpParser\NodeFinder;
+use PhpParser\ParserFactory;
 use ReflectionClass;
 use ReflectionMethod;
 use ReflectionProperty;
@@ -46,11 +53,30 @@ class ResponseAnalyzer
             return [];
         }
 
+        // CRITICAL: Always check for resource patterns first with comprehensive analysis
+        $comprehensiveResult = $this->performComprehensiveResourceAnalysis($controller, $method);
+        if (!empty($comprehensiveResult)) {
+            return $comprehensiveResult;
+        }
+
         $reflection = new ReflectionMethod($controller, $method);
         $returnType = $reflection->getReturnType();
 
         if (! $returnType) {
-            return $this->extractFromDocBlock($reflection);
+            // Try multiple fallback methods for better detection
+            $docBlockResult = $this->extractFromDocBlock($reflection);
+            if (!empty($docBlockResult)) {
+                return $docBlockResult;
+            }
+            
+            // Analyze method body for resource patterns when no return type
+            $methodBodyResult = $this->analyzeMethodBodyForResourcePatterns($controller, $method);
+            if (!empty($methodBodyResult)) {
+                return $methodBodyResult;
+            }
+            
+            // Final fallback to method name patterns
+            return $this->generateMethodNameBasedDefaults($method);
         }
 
         // Handle union types (PHP 8+) FIRST before calling getName()
@@ -65,14 +91,17 @@ class ResponseAnalyzer
             return $this->analyzeSpatieDataObject($typeName);
         }
 
-        // Check if it's a ResourceCollection - these should be arrays
+        // Check if it's a ResourceCollection - these should be arrays with detailed item schemas
         if (class_exists($typeName) && is_a($typeName, \Illuminate\Http\Resources\Json\ResourceCollection::class, true)) {
-            return [
-                'type' => 'array',
-                'items' => [
-                    'type' => 'object',
-                ],
-            ];
+            return $this->analyzeJsonResourceResponse($typeName);
+        }
+
+        // Check for AnonymousResourceCollection pattern (common in Laravel)
+        if ($typeName === \Illuminate\Http\Resources\Json\AnonymousResourceCollection::class ||
+            $typeName === 'Illuminate\Http\Resources\Json\AnonymousResourceCollection' ||
+            str_contains($typeName, 'AnonymousResourceCollection')) {
+            // This is likely Resource::collection() - need to analyze method body for resource type
+            return $this->analyzeAnonymousResourceCollection($controller, $method);
         }
 
         // Check if it's a JsonResource and analyze its toArray method (but not ResourceCollection)
@@ -80,6 +109,13 @@ class ResponseAnalyzer
             return $this->analyzeJsonResourceResponse($typeName);
         }
 
+        // Final fallback: even when we have a return type, check method body for resource patterns
+        // This is critical for catching cases where return type is generic but method body has specific patterns
+        $methodBodyResult = $this->analyzeMethodBodyForResourcePatterns($controller, $method);
+        if (!empty($methodBodyResult) && isset($methodBodyResult['type'])) {
+            return $methodBodyResult;
+        }
+        
         return [
             'type' => $this->mapPhpTypeToOpenApi($typeName),
             'format' => $this->getFormatForType($typeName),
@@ -725,6 +761,11 @@ class ResponseAnalyzer
                     $properties = $this->analyzeToArrayMethodBody($reflection);
                 }
 
+                // Enhanced property extraction for edge cases
+                if (empty($properties)) {
+                    $properties = $this->analyzeResourceWithFallbackMethods($resourceClass, $resourceType);
+                }
+
                 // If we have properties, use them; otherwise use defaults
                 if (! empty($properties)) {
                     $example = $this->generateExampleFromProperties($properties);
@@ -757,13 +798,8 @@ class ResponseAnalyzer
                     if ($isPaginatedResource) {
                         return $this->generateDefaultPaginatedResponse();
                     } else {
-                        $schema = $this->generateDefaultCollectionResponse();
-                        $schema['example'] = [[
-                            'id' => '1',
-                            'type' => 'resource',
-                            'title' => 'Example Resource',
-                        ]];
-
+                        // Enhanced collection response with intelligent defaults
+                        $schema = $this->generateEnhancedCollectionResponse($resourceClass, $resourceType);
                         return $schema;
                     }
                 }
@@ -775,8 +811,13 @@ class ResponseAnalyzer
                 $toArrayMethod = $reflection->getMethod('toArray');
                 $methodBody = $this->getMethodBody($reflection, 'toArray');
 
-                // Extract properties from the resource class
+                // Extract properties from the resource class with enhanced fallback methods
                 $properties = $this->extractResourceProperties($resourceClass);
+                
+                // Enhanced edge case handling for better accuracy
+                if (empty($properties)) {
+                    $properties = $this->analyzeResourceWithFallbackMethods($resourceClass, $resourceClass);
+                }
 
                 if (! empty($properties)) {
                     // Generate an example based on the properties
@@ -1394,6 +1435,13 @@ class ResponseAnalyzer
                 return [];
             }
 
+            // First try enhanced AST-based analysis
+            $astProperties = $this->analyzeToArrayMethodWithAST($filename, $reflection->getShortName());
+            if (! empty($astProperties)) {
+                return $astProperties;
+            }
+
+            // Fall back to text-based analysis
             $fileContent = file_get_contents($filename);
             $lines = explode("\n", $fileContent);
 
@@ -1805,5 +1853,1109 @@ class ResponseAnalyzer
         }
 
         return null;
+    }
+
+    /**
+     * Enhanced AST-based analysis of toArray method for more accurate property extraction
+     */
+    private function analyzeToArrayMethodWithAST(string $filename, string $className): array
+    {
+        try {
+            $parser = (new ParserFactory)->createForNewestSupportedVersion();
+            $ast = $parser->parse(file_get_contents($filename));
+            
+            $nodeFinder = new NodeFinder;
+            $properties = [];
+            
+            // Find the specific class
+            $classNode = $nodeFinder->findFirst($ast, function ($node) use ($className) {
+                return $node instanceof \PhpParser\Node\Stmt\Class_ 
+                    && $node->name && $node->name->toString() === $className;
+            });
+            
+            if (!$classNode) {
+                return [];
+            }
+            
+            // Find the toArray method
+            $toArrayMethod = $nodeFinder->findFirst($classNode, function ($node) {
+                return $node instanceof \PhpParser\Node\Stmt\ClassMethod 
+                    && $node->name->toString() === 'toArray';
+            });
+            
+            if (!$toArrayMethod) {
+                return [];
+            }
+            
+            // Find return statements in the method
+            $returnNodes = $nodeFinder->find($toArrayMethod, function ($node) {
+                return $node instanceof \PhpParser\Node\Stmt\Return_;
+            });
+            
+            foreach ($returnNodes as $returnNode) {
+                if ($returnNode->expr instanceof Array_) {
+                    $extractedProperties = $this->extractPropertiesFromArrayNode($returnNode->expr);
+                    $properties = array_merge($properties, $extractedProperties);
+                }
+            }
+            
+            return $properties;
+        } catch (Throwable $e) {
+            // Fall back gracefully if AST parsing fails
+            return [];
+        }
+    }
+
+    /**
+     * Extract properties from an AST Array node
+     */
+    private function extractPropertiesFromArrayNode(Array_ $arrayNode): array
+    {
+        $properties = [];
+        
+        foreach ($arrayNode->items as $item) {
+            if (!$item instanceof ArrayItem || !$item->key) {
+                continue;
+            }
+            
+            $key = null;
+            $type = 'string'; // Default type
+            $description = '';
+            
+            // Extract the key name
+            if ($item->key instanceof String_) {
+                $key = $item->key->value;
+            } elseif ($item->key instanceof \PhpParser\Node\Scalar\LNumber) {
+                $key = (string)$item->key->value;
+            }
+            
+            if (!$key) {
+                continue;
+            }
+            
+            // Analyze the value to determine type and description
+            $valueAnalysis = $this->analyzeArrayValueNode($item->value);
+            if ($valueAnalysis) {
+                $type = $valueAnalysis['type'];
+                $description = $valueAnalysis['description'];
+                
+                $properties[$key] = [
+                    'type' => $type,
+                    'description' => $description ?: "The {$key} field",
+                ];
+                
+                // Add format if detected
+                if (!empty($valueAnalysis['format'])) {
+                    $properties[$key]['format'] = $valueAnalysis['format'];
+                }
+                
+                // Add nested properties for objects/arrays
+                if (!empty($valueAnalysis['properties'])) {
+                    $properties[$key]['properties'] = $valueAnalysis['properties'];
+                }
+            } else {
+                // Default property structure
+                $properties[$key] = [
+                    'type' => $type,
+                    'description' => "The {$key} field",
+                ];
+            }
+        }
+        
+        return $properties;
+    }
+
+    /**
+     * Analyze an array value node to determine type and description
+     */
+    private function analyzeArrayValueNode($valueNode): ?array
+    {
+        if ($valueNode instanceof PropertyFetch) {
+            // $this->property or $resource->property
+            if ($valueNode->var instanceof Variable && $valueNode->var->name === 'this') {
+                return [
+                    'type' => 'string', // Default, could be enhanced with property type analysis
+                    'description' => '',
+                    'format' => null,
+                ];
+            } elseif ($valueNode->var instanceof Variable && $valueNode->name instanceof \PhpParser\Node\Identifier) {
+                $propertyName = $valueNode->name->toString();
+                
+                // Infer type based on common property names
+                $inferredType = $this->inferTypeFromPropertyName($propertyName);
+                
+                return [
+                    'type' => $inferredType['type'],
+                    'description' => '',
+                    'format' => $inferredType['format'],
+                ];
+            }
+        } elseif ($valueNode instanceof \PhpParser\Node\Expr\MethodCall) {
+            // Method calls like $this->formatDate(), $resource->toArray(), etc.
+            if ($valueNode->name instanceof \PhpParser\Node\Identifier) {
+                $methodName = $valueNode->name->toString();
+                return $this->inferTypeFromMethodName($methodName);
+            }
+        } elseif ($valueNode instanceof Array_) {
+            // Nested array
+            $nestedProperties = $this->extractPropertiesFromArrayNode($valueNode);
+            return [
+                'type' => 'object',
+                'description' => '',
+                'format' => null,
+                'properties' => $nestedProperties,
+            ];
+        } elseif ($valueNode instanceof String_) {
+            // Static string value
+            return [
+                'type' => 'string',
+                'description' => '',
+                'format' => null,
+            ];
+        } elseif ($valueNode instanceof \PhpParser\Node\Scalar\LNumber) {
+            // Static number value
+            return [
+                'type' => 'integer',
+                'description' => '',
+                'format' => null,
+            ];
+        }
+        
+        return null;
+    }
+
+    /**
+     * Infer type from property name
+     */
+    private function inferTypeFromPropertyName(string $propertyName): array
+    {
+        $result = ['type' => 'string', 'format' => null];
+        
+        // Common patterns for type inference
+        if (str_ends_with($propertyName, '_id') || $propertyName === 'id') {
+            $result['type'] = 'integer';
+        } elseif (str_ends_with($propertyName, '_at') || str_ends_with($propertyName, '_date')) {
+            $result['type'] = 'string';
+            $result['format'] = 'date-time';
+        } elseif (str_ends_with($propertyName, '_count') || str_ends_with($propertyName, '_total')) {
+            $result['type'] = 'integer';
+        } elseif (str_contains($propertyName, 'email')) {
+            $result['type'] = 'string';
+            $result['format'] = 'email';
+        } elseif (str_contains($propertyName, 'url') || str_contains($propertyName, 'link')) {
+            $result['type'] = 'string';
+            $result['format'] = 'uri';
+        } elseif (str_contains($propertyName, 'price') || str_contains($propertyName, 'amount')) {
+            $result['type'] = 'number';
+        } elseif (in_array($propertyName, ['active', 'enabled', 'visible', 'public', 'private'])) {
+            $result['type'] = 'boolean';
+        }
+        
+        return $result;
+    }
+
+    /**
+     * Infer type from method name
+     */
+    private function inferTypeFromMethodName(string $methodName): array
+    {
+        $result = ['type' => 'string', 'format' => null];
+        
+        // Common method patterns
+        if (str_contains($methodName, 'format') && str_contains($methodName, 'date')) {
+            $result['format'] = 'date-time';
+        } elseif (str_contains($methodName, 'count') || str_contains($methodName, 'total')) {
+            $result['type'] = 'integer';
+        } elseif (str_contains($methodName, 'toArray') || str_contains($methodName, 'transform')) {
+            $result['type'] = 'object';
+        } elseif (str_contains($methodName, 'url') || str_contains($methodName, 'link')) {
+            $result['format'] = 'uri';
+        }
+        
+        return $result;
+    }
+
+    /**
+     * Enhanced property analysis using Eloquent model information
+     */
+    private function analyzeEloquentModelProperties($resourceVariable): array
+    {
+        $properties = [];
+        
+        try {
+            // Try to determine the model class from the resource
+            $modelClass = $this->inferModelClassFromResource($resourceVariable);
+            
+            if ($modelClass && class_exists($modelClass)) {
+                $modelReflection = new ReflectionClass($modelClass);
+                
+                // Get properties from model casts
+                if ($modelReflection->hasProperty('casts')) {
+                    $castsProperty = $modelReflection->getProperty('casts');
+                    $castsProperty->setAccessible(true);
+                    $instance = $modelReflection->newInstanceWithoutConstructor();
+                    $casts = $castsProperty->getValue($instance);
+                    
+                    foreach ($casts as $field => $castType) {
+                        $properties[$field] = $this->mapEloquentCastToOpenApiType($castType);
+                    }
+                }
+                
+                // Get properties from fillable/guarded
+                if ($modelReflection->hasProperty('fillable')) {
+                    $fillableProperty = $modelReflection->getProperty('fillable');
+                    $fillableProperty->setAccessible(true);
+                    $instance = $modelReflection->newInstanceWithoutConstructor();
+                    $fillable = $fillableProperty->getValue($instance);
+                    
+                    foreach ($fillable as $field) {
+                        if (!isset($properties[$field])) {
+                            $properties[$field] = [
+                                'type' => 'string',
+                                'description' => "The {$field} field",
+                            ];
+                        }
+                    }
+                }
+                
+                // Add common timestamp fields
+                if (!isset($properties['created_at'])) {
+                    $properties['created_at'] = [
+                        'type' => 'string',
+                        'format' => 'date-time',
+                        'description' => 'The creation timestamp',
+                    ];
+                }
+                if (!isset($properties['updated_at'])) {
+                    $properties['updated_at'] = [
+                        'type' => 'string',
+                        'format' => 'date-time',
+                        'description' => 'The last update timestamp',
+                    ];
+                }
+            }
+        } catch (Throwable $e) {
+            // Continue gracefully if model analysis fails
+        }
+        
+        return $properties;
+    }
+
+    /**
+     * Infer model class from resource variable
+     */
+    private function inferModelClassFromResource($resourceVariable): ?string
+    {
+        // This could be enhanced to parse constructor parameters or type hints
+        // For now, use common naming conventions
+        
+        if (is_string($resourceVariable)) {
+            // Convert ResourceClass to ModelClass (e.g., UserResource -> User)
+            $resourceClass = $resourceVariable;
+            if (str_ends_with($resourceClass, 'Resource')) {
+                $modelClass = str_replace('Resource', '', $resourceClass);
+                $modelClass = str_replace('\\Resources\\', '\\Models\\', $modelClass);
+                
+                if (class_exists($modelClass)) {
+                    return $modelClass;
+                }
+            }
+        }
+        
+        return null;
+    }
+
+    /**
+     * Map Eloquent cast types to OpenAPI types
+     */
+    private function mapEloquentCastToOpenApiType(string $castType): array
+    {
+        $result = ['type' => 'string', 'description' => ''];
+        
+        switch ($castType) {
+            case 'int':
+            case 'integer':
+                $result['type'] = 'integer';
+                break;
+            case 'real':
+            case 'float':
+            case 'double':
+                $result['type'] = 'number';
+                break;
+            case 'string':
+                $result['type'] = 'string';
+                break;
+            case 'bool':
+            case 'boolean':
+                $result['type'] = 'boolean';
+                break;
+            case 'object':
+            case 'array':
+            case 'json':
+                $result['type'] = 'object';
+                break;
+            case 'collection':
+                $result['type'] = 'array';
+                break;
+            case 'date':
+            case 'datetime':
+            case 'timestamp':
+                $result['type'] = 'string';
+                $result['format'] = 'date-time';
+                break;
+            case 'decimal':
+                $result['type'] = 'number';
+                break;
+            default:
+                // Handle custom cast types
+                if (str_contains($castType, 'decimal:')) {
+                    $result['type'] = 'number';
+                } elseif (class_exists($castType)) {
+                    // Custom cast class
+                    $result['type'] = 'object';
+                }
+                break;
+        }
+        
+        return $result;
+    }
+
+    /**
+     * Enhanced resource analysis with multiple fallback methods for edge cases
+     */
+    private function analyzeResourceWithFallbackMethods(string $resourceClass, ?string $resourceType): array
+    {
+        $properties = [];
+        
+        try {
+            // Method 1: Analyze parent resource classes for inherited properties
+            if ($resourceType) {
+                $properties = $this->analyzeParentResourceClasses($resourceType);
+            }
+            
+            // Method 2: Analyze static resource methods and properties
+            if (empty($properties)) {
+                $properties = $this->analyzeStaticResourceMethods($resourceClass);
+            }
+            
+            // Method 3: Analyze constructor parameters for data hints
+            if (empty($properties)) {
+                $properties = $this->analyzeResourceConstructorHints($resourceClass);
+            }
+            
+            // Method 4: Analyze related model properties using naming conventions
+            if (empty($properties)) {
+                $properties = $this->analyzeRelatedModelProperties($resourceClass);
+            }
+            
+            // Method 5: Use intelligent defaults based on common Laravel patterns
+            if (empty($properties)) {
+                $properties = $this->generateIntelligentDefaults($resourceClass);
+            }
+            
+        } catch (Throwable $e) {
+            // Graceful fallback - provide minimal but useful schema
+            $properties = $this->generateMinimalSchema($resourceClass);
+        }
+        
+        return $properties;
+    }
+
+    /**
+     * Analyze parent resource classes for inherited properties
+     */
+    private function analyzeParentResourceClasses(string $resourceType): array
+    {
+        try {
+            $reflection = new ReflectionClass($resourceType);
+            $parentClass = $reflection->getParentClass();
+            
+            while ($parentClass && $parentClass->getName() !== JsonResource::class) {
+                if ($parentClass->hasMethod('toArray')) {
+                    $properties = $this->analyzeToArrayMethodBody($parentClass);
+                    if (!empty($properties)) {
+                        return $properties;
+                    }
+                }
+                $parentClass = $parentClass->getParentClass();
+            }
+        } catch (Throwable $e) {
+            // Continue to next method
+        }
+        
+        return [];
+    }
+
+    /**
+     * Analyze static resource methods and properties for schema hints
+     */
+    private function analyzeStaticResourceMethods(string $resourceClass): array
+    {
+        try {
+            $reflection = new ReflectionClass($resourceClass);
+            $properties = [];
+            
+            // Look for static properties that might define schema structure
+            foreach ($reflection->getProperties(ReflectionProperty::IS_STATIC) as $property) {
+                if ($property->getName() === 'schema' || $property->getName() === 'fields') {
+                    $property->setAccessible(true);
+                    $schemaData = $property->getValue();
+                    if (is_array($schemaData)) {
+                        foreach ($schemaData as $field => $config) {
+                            $properties[$field] = [
+                                'type' => is_array($config) ? ($config['type'] ?? 'string') : 'string',
+                                'description' => is_array($config) ? ($config['description'] ?? "The {$field} field") : "The {$field} field",
+                            ];
+                        }
+                    }
+                }
+            }
+            
+            // Look for static methods that might provide schema information
+            foreach ($reflection->getMethods(ReflectionMethod::IS_STATIC) as $method) {
+                if (in_array($method->getName(), ['schema', 'fields', 'properties'])) {
+                    try {
+                        $result = $method->invoke(null);
+                        if (is_array($result)) {
+                            foreach ($result as $field => $config) {
+                                $properties[$field] = [
+                                    'type' => is_array($config) ? ($config['type'] ?? 'string') : 'string',
+                                    'description' => is_array($config) ? ($config['description'] ?? "The {$field} field") : "The {$field} field",
+                                ];
+                            }
+                        }
+                    } catch (Throwable $e) {
+                        // Continue
+                    }
+                }
+            }
+            
+            return $properties;
+        } catch (Throwable $e) {
+            return [];
+        }
+    }
+
+    /**
+     * Analyze resource constructor parameters for data structure hints
+     */
+    private function analyzeResourceConstructorHints(string $resourceClass): array
+    {
+        try {
+            $reflection = new ReflectionClass($resourceClass);
+            $constructor = $reflection->getConstructor();
+            $properties = [];
+            
+            if ($constructor) {
+                foreach ($constructor->getParameters() as $parameter) {
+                    $type = $parameter->getType();
+                    if ($type && !$type->isBuiltin()) {
+                        $typeName = $type->getName();
+                        
+                        // If it's an Eloquent model, extract its properties
+                        if (class_exists($typeName) && is_subclass_of($typeName, \Illuminate\Database\Eloquent\Model::class)) {
+                            $modelProperties = $this->analyzeEloquentModelProperties($typeName);
+                            $properties = array_merge($properties, $modelProperties);
+                        }
+                        
+                        // If it's a Spatie Data object, extract its properties
+                        if (class_exists($typeName) && is_subclass_of($typeName, Data::class)) {
+                            $dataProperties = $this->buildSpatieDataSchema($typeName);
+                            if (isset($dataProperties['properties'])) {
+                                $properties = array_merge($properties, $dataProperties['properties']);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            return $properties;
+        } catch (Throwable $e) {
+            return [];
+        }
+    }
+
+    /**
+     * Analyze related model properties using naming conventions
+     */
+    private function analyzeRelatedModelProperties(string $resourceClass): array
+    {
+        try {
+            // Convert ResourceClass to ModelClass using common patterns
+            $patterns = [
+                '/Resource$/' => '',           // UserResource -> User
+                '/Resources\\\\/' => 'Models\\\\',  // App\Resources\User -> App\Models\User
+                '/Http\\\\Resources\\\\/' => 'Models\\\\', // App\Http\Resources\User -> App\Models\User
+            ];
+            
+            $modelClass = $resourceClass;
+            foreach ($patterns as $pattern => $replacement) {
+                $modelClass = preg_replace($pattern, $replacement, $modelClass);
+            }
+            
+            if (class_exists($modelClass) && is_subclass_of($modelClass, \Illuminate\Database\Eloquent\Model::class)) {
+                return $this->analyzeEloquentModelProperties($modelClass);
+            }
+            
+            return [];
+        } catch (Throwable $e) {
+            return [];
+        }
+    }
+
+    /**
+     * Generate intelligent defaults based on common Laravel patterns
+     */
+    private function generateIntelligentDefaults(string $resourceClass): array
+    {
+        // Extract class name for intelligent field guessing
+        $className = class_basename($resourceClass);
+        $entityName = str_replace('Resource', '', $className);
+        $entityName = strtolower($entityName);
+        
+        // Common properties that most Laravel entities have
+        $properties = [
+            'id' => [
+                'type' => 'integer',
+                'description' => "The unique identifier for the {$entityName}",
+            ],
+            'created_at' => [
+                'type' => 'string',
+                'format' => 'date-time',
+                'description' => 'The creation timestamp',
+            ],
+            'updated_at' => [
+                'type' => 'string',
+                'format' => 'date-time',
+                'description' => 'The last update timestamp',
+            ],
+        ];
+        
+        // Add entity-specific common fields based on naming patterns
+        if (str_contains($entityName, 'user')) {
+            $properties['name'] = ['type' => 'string', 'description' => 'The user name'];
+            $properties['email'] = ['type' => 'string', 'format' => 'email', 'description' => 'The user email'];
+        } elseif (str_contains($entityName, 'product')) {
+            $properties['name'] = ['type' => 'string', 'description' => 'The product name'];
+            $properties['price'] = ['type' => 'number', 'description' => 'The product price'];
+        } elseif (str_contains($entityName, 'order')) {
+            $properties['total'] = ['type' => 'number', 'description' => 'The order total'];
+            $properties['status'] = ['type' => 'string', 'description' => 'The order status'];
+        }
+        
+        return $properties;
+    }
+
+    /**
+     * Generate minimal but useful schema as last resort
+     */
+    private function generateMinimalSchema(string $resourceClass): array
+    {
+        $entityName = strtolower(str_replace('Resource', '', class_basename($resourceClass)));
+        
+        return [
+            'id' => [
+                'type' => 'integer',
+                'description' => "The {$entityName} identifier",
+            ],
+            'data' => [
+                'type' => 'object',
+                'description' => "The {$entityName} data",
+            ],
+        ];
+    }
+
+    /**
+     * Generate enhanced collection response with intelligent defaults for edge cases
+     */
+    private function generateEnhancedCollectionResponse(string $resourceClass, ?string $resourceType): array
+    {
+        // Try to extract item properties using fallback methods
+        $itemProperties = [];
+        
+        if ($resourceType) {
+            $itemProperties = $this->analyzeResourceWithFallbackMethods($resourceType, $resourceType);
+        }
+        
+        if (empty($itemProperties)) {
+            $itemProperties = $this->analyzeResourceWithFallbackMethods($resourceClass, $resourceClass);
+        }
+        
+        // If we still have no properties, use intelligent defaults based on resource class name
+        if (empty($itemProperties)) {
+            $itemProperties = $this->generateIntelligentDefaults($resourceType ?: $resourceClass);
+        }
+        
+        // Generate example from properties
+        $exampleItem = $this->generateExampleFromProperties($itemProperties);
+        
+        return [
+            'type' => 'array',
+            'items' => [
+                'type' => 'object',
+                'properties' => $itemProperties,
+            ],
+            'example' => [$exampleItem],
+            'enhanced_analysis' => true,
+        ];
+    }
+
+    /**
+     * Analyze AnonymousResourceCollection by examining method body for Resource::collection() calls
+     */
+    private function analyzeAnonymousResourceCollection(string $controller, string $method): array
+    {
+        try {
+            $reflection = new ReflectionClass($controller);
+            $methodReflection = $reflection->getMethod($method);
+            $filename = $reflection->getFileName();
+            
+            if (!$filename || !file_exists($filename)) {
+                return $this->generateDefaultCollectionResponse();
+            }
+            
+            // Use AST to analyze method body for Resource::collection() patterns
+            $parser = (new ParserFactory)->createForNewestSupportedVersion();
+            $ast = $parser->parse(file_get_contents($filename));
+            
+            $nodeFinder = new NodeFinder;
+            
+            // Find the specific method
+            $methodNode = $nodeFinder->findFirst($ast, function ($node) use ($method) {
+                return $node instanceof \PhpParser\Node\Stmt\ClassMethod 
+                    && $node->name->toString() === $method;
+            });
+            
+            if (!$methodNode) {
+                return $this->generateDefaultCollectionResponse();
+            }
+            
+            // Look for Resource::collection() calls
+            $collectionCalls = $nodeFinder->find($methodNode, function ($node) {
+                return $node instanceof \PhpParser\Node\Expr\StaticCall
+                    && $node->class instanceof \PhpParser\Node\Name
+                    && $node->name->toString() === 'collection';
+            });
+            
+            foreach ($collectionCalls as $collectionCall) {
+                $className = $collectionCall->class->toString();
+                
+                // Try to resolve the full class name
+                $resourceClass = $this->resolveResourceClassName($className, $reflection);
+                
+                if ($resourceClass && class_exists($resourceClass) && is_subclass_of($resourceClass, JsonResource::class)) {
+                    // Analyze the resource class for item properties
+                    $itemProperties = $this->extractResourceProperties($resourceClass);
+                    
+                    if (empty($itemProperties)) {
+                        $itemProperties = $this->analyzeResourceWithFallbackMethods($resourceClass, $resourceClass);
+                    }
+                    
+                    if (!empty($itemProperties)) {
+                        $example = $this->generateExampleFromProperties($itemProperties);
+                        
+                        return [
+                            'type' => 'array',
+                            'items' => [
+                                'type' => 'object',
+                                'properties' => $itemProperties,
+                            ],
+                            'example' => [$example],
+                            'enhanced_analysis' => true,
+                            'detected_resource' => $resourceClass,
+                        ];
+                    }
+                }
+            }
+            
+            // Fallback to enhanced collection response if no specific resource found
+            return $this->generateEnhancedCollectionResponse('UnknownCollection', null);
+            
+        } catch (Throwable $e) {
+            return $this->generateDefaultCollectionResponse();
+        }
+    }
+
+    /**
+     * Resolve resource class name from AST node within controller context
+     */
+    private function resolveResourceClassName(string $className, ReflectionClass $controllerReflection): ?string
+    {
+        // Use the same dynamic resolution logic as buildResourceClassName
+        return $this->buildResourceClassName($className, $controllerReflection);
+    }
+
+
+    /**
+     * Analyze method body for resource patterns when no return type is available
+     */
+    private function analyzeMethodBodyForResourcePatterns(string $controller, string $method): array
+    {
+        try {
+            $reflection = new ReflectionClass($controller);
+            $methodReflection = $reflection->getMethod($method);
+            $filename = $reflection->getFileName();
+            
+            if (!$filename || !file_exists($filename)) {
+                return [];
+            }
+            
+            // Get method body text for pattern analysis
+            $fileContent = file_get_contents($filename);
+            $lines = explode("\n", $fileContent);
+            $startLine = $methodReflection->getStartLine() - 1;
+            $endLine = $methodReflection->getEndLine() - 1;
+            $methodBody = implode("\n", array_slice($lines, $startLine, $endLine - $startLine + 1));
+            
+            // Look for common Laravel response patterns (enhanced with more variations)
+            $patterns = [
+                // Resource::collection() patterns (various forms)
+                '/(\w+Resource)::collection\s*\(/i' => 'collection',
+                '/(\w+)::collection\s*\(/i' => 'collection',
+                '/return\s+(\w+Resource)::collection/i' => 'collection',
+                '/return\s+(\w+)::collection/i' => 'collection',
+                // new ResourceClass() patterns  
+                '/new\s+(\w+Resource)\s*\(/i' => 'resource',
+                '/return\s+new\s+(\w+Resource)/i' => 'resource',
+                // return ResourceClass::make() patterns
+                '/(\w+Resource)::make\s*\(/i' => 'resource',
+                '/(\w+)::make\s*\(/i' => 'resource',
+                '/return\s+(\w+)::make/i' => 'resource',
+                // ResourceClass::create() patterns
+                '/(\w+)::create\s*\(/i' => 'resource',
+                // response()->json() with resource patterns
+                '/response\(\)->json\(\s*(\w+Resource)::collection/i' => 'collection',
+                '/response\(\)->json\(\s*(\w+)::collection/i' => 'collection',
+            ];
+            
+            foreach ($patterns as $pattern => $type) {
+                if (preg_match($pattern, $methodBody, $matches)) {
+                    $resourceClassName = $matches[1];
+                    
+                    // Try to resolve the full class name
+                    $fullResourceClass = $this->resolveResourceClassName($resourceClassName, $reflection);
+                    
+                    if ($fullResourceClass && class_exists($fullResourceClass)) {
+                        if ($type === 'collection') {
+                            // It's a collection - analyze as AnonymousResourceCollection
+                            return $this->analyzeAnonymousResourceCollection($controller, $method);
+                        } else {
+                            // It's a single resource
+                            return $this->analyzeJsonResourceResponse($fullResourceClass);
+                        }
+                    }
+                }
+            }
+            
+            // Look for return patterns with specific resource types
+            if (preg_match('/return\s+new\s+(\w+)\s*\(/', $methodBody, $matches)) {
+                $className = $matches[1];
+                $fullClassName = $this->resolveResourceClassName($className, $reflection);
+                
+                if ($fullClassName && class_exists($fullClassName) && is_subclass_of($fullClassName, JsonResource::class)) {
+                    return $this->analyzeJsonResourceResponse($fullClassName);
+                }
+            }
+            
+            // Fallback to intelligent defaults based on method name patterns
+            return $this->generateMethodNameBasedDefaults($method);
+            
+        } catch (Throwable $e) {
+            return [];
+        }
+    }
+
+    /**
+     * Generate intelligent defaults based on method name patterns
+     */
+    private function generateMethodNameBasedDefaults(string $method): array
+    {
+        $methodLower = strtolower($method);
+        
+        // Collection endpoints
+        if (str_contains($methodLower, 'index') || str_contains($methodLower, 'list') || str_contains($methodLower, 'all')) {
+            return [
+                'type' => 'array',
+                'items' => [
+                    'type' => 'object',
+                    'properties' => [
+                        'id' => ['type' => 'integer', 'description' => 'The item identifier'],
+                        'name' => ['type' => 'string', 'description' => 'The item name'],
+                        'created_at' => ['type' => 'string', 'format' => 'date-time', 'description' => 'Creation timestamp'],
+                        'updated_at' => ['type' => 'string', 'format' => 'date-time', 'description' => 'Update timestamp'],
+                    ],
+                ],
+            ];
+        }
+        
+        // Single resource endpoints  
+        if (str_contains($methodLower, 'show') || str_contains($methodLower, 'get') || str_contains($methodLower, 'find')) {
+            return [
+                'type' => 'object',
+                'properties' => [
+                    'id' => ['type' => 'integer', 'description' => 'The resource identifier'],
+                    'name' => ['type' => 'string', 'description' => 'The resource name'],
+                    'created_at' => ['type' => 'string', 'format' => 'date-time', 'description' => 'Creation timestamp'],
+                    'updated_at' => ['type' => 'string', 'format' => 'date-time', 'description' => 'Update timestamp'],
+                ],
+            ];
+        }
+        
+        // Create/Update endpoints
+        if (str_contains($methodLower, 'store') || str_contains($methodLower, 'create') || str_contains($methodLower, 'update')) {
+            return [
+                'type' => 'object',
+                'properties' => [
+                    'id' => ['type' => 'integer', 'description' => 'The created/updated resource identifier'],
+                    'message' => ['type' => 'string', 'description' => 'Success message'],
+                    'data' => ['type' => 'object', 'description' => 'The created/updated resource data'],
+                ],
+            ];
+        }
+        
+        // Delete endpoints
+        if (str_contains($methodLower, 'destroy') || str_contains($methodLower, 'delete') || str_contains($methodLower, 'remove')) {
+            return [
+                'type' => 'object',
+                'properties' => [
+                    'message' => ['type' => 'string', 'description' => 'Success message'],
+                    'success' => ['type' => 'boolean', 'description' => 'Operation success status'],
+                ],
+            ];
+        }
+        
+        // Default fallback
+        return [
+            'type' => 'object',
+            'properties' => [
+                'data' => ['type' => 'object', 'description' => 'Response data'],
+            ],
+        ];
+    }
+
+    /**
+     * Comprehensive resource analysis with simplified, reliable detection
+     */
+    private function performComprehensiveResourceAnalysis(string $controller, string $method): array
+    {
+        try {
+            $reflection = new ReflectionClass($controller);
+            $methodReflection = $reflection->getMethod($method);
+            $filename = $reflection->getFileName();
+            
+            if (!$filename || !file_exists($filename)) {
+                return [];
+            }
+            
+            // Read entire method body
+            $fileContent = file_get_contents($filename);
+            $lines = explode("\n", $fileContent);
+            $startLine = $methodReflection->getStartLine() - 1;
+            $endLine = $methodReflection->getEndLine() - 1;
+            $methodBody = implode("\n", array_slice($lines, $startLine, $endLine - $startLine + 1));
+            
+            // Simple pattern matching for Resource::collection()
+            if (preg_match('/(\w+Resource)::collection/', $methodBody, $matches)) {
+                $resourceClass = $matches[1];
+                
+                // Try to build the full resource class name with simple domain patterns
+                $fullResourceClass = $this->buildResourceClassName($resourceClass, $reflection);
+                
+                if ($fullResourceClass && class_exists($fullResourceClass)) {
+                    // Analyze the resource to get properties
+                    $properties = $this->extractResourceProperties($fullResourceClass);
+                    
+                    if (empty($properties)) {
+                        // Use intelligent defaults for common resource patterns
+                        $properties = $this->generateResourceDefaults($resourceClass);
+                    }
+                    
+                    return [
+                        'type' => 'array',
+                        'items' => [
+                            'type' => 'object',
+                            'properties' => $properties,
+                        ],
+                        'example' => [$this->generateExampleFromProperties($properties)],
+                        'enhanced_analysis' => true,
+                        'detected_resource' => $fullResourceClass,
+                        'detection_method' => 'comprehensive_pattern_analysis',
+                    ];
+                } else {
+                    // Return array schema with defaults even if class isn't found
+                    return [
+                        'type' => 'array',
+                        'items' => [
+                            'type' => 'object',
+                            'properties' => $this->generateResourceDefaults($resourceClass),
+                        ],
+                        'enhanced_analysis' => true,
+                        'detection_method' => 'pattern_analysis_with_defaults',
+                    ];
+                }
+            }
+            
+            // Check for simple method name patterns
+            $methodLower = strtolower($method);
+            if (in_array($methodLower, ['index', 'list', 'all'])) {
+                return [
+                    'type' => 'array',
+                    'items' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'id' => ['type' => 'integer', 'description' => 'The item identifier'],
+                            'name' => ['type' => 'string', 'description' => 'The item name'],
+                            'created_at' => ['type' => 'string', 'format' => 'date-time', 'description' => 'Creation timestamp'],
+                        ],
+                    ],
+                    'enhanced_analysis' => true,
+                    'detection_method' => 'method_name_pattern',
+                ];
+            }
+            
+            if (in_array($methodLower, ['show', 'get', 'find'])) {
+                return [
+                    'type' => 'object',
+                    'properties' => [
+                        'id' => ['type' => 'integer', 'description' => 'The resource identifier'],
+                        'name' => ['type' => 'string', 'description' => 'The resource name'],
+                        'created_at' => ['type' => 'string', 'format' => 'date-time', 'description' => 'Creation timestamp'],
+                        'updated_at' => ['type' => 'string', 'format' => 'date-time', 'description' => 'Update timestamp'],
+                    ],
+                    'enhanced_analysis' => true,
+                    'detection_method' => 'method_name_pattern',
+                ];
+            }
+            
+            return [];
+            
+        } catch (Throwable $e) {
+            return [];
+        }
+    }
+
+    /**
+     * Build resource class name with simple domain patterns
+     */
+    private function buildResourceClassName(string $resourceClass, ReflectionClass $controllerReflection): ?string
+    {
+        // First check if it's already a fully qualified class name
+        if (class_exists($resourceClass)) {
+            return $resourceClass;
+        }
+
+        // Use AST parsing to extract imported classes from the controller file
+        $importedClasses = $this->extractImportedClasses($controllerReflection->getFileName());
+        
+        // Check if the resource class is imported
+        if (isset($importedClasses[$resourceClass])) {
+            $fullClassName = $importedClasses[$resourceClass];
+            if (class_exists($fullClassName)) {
+                return $fullClassName;
+            }
+        }
+
+        // Dynamic namespace resolution based on controller's actual namespace
+        $controllerNamespace = $controllerReflection->getNamespaceName();
+        $attempts = $this->generateNamespaceAttempts($controllerNamespace, $resourceClass);
+        
+        foreach ($attempts as $className) {
+            if (class_exists($className)) {
+                return $className;
+            }
+        }
+        
+        return null;
+    }
+
+    /**
+     * Extract imported classes from a PHP file using AST parsing
+     */
+    private function extractImportedClasses(?string $filename): array
+    {
+        if (!$filename || !file_exists($filename)) {
+            return [];
+        }
+
+        try {
+            $parser = (new ParserFactory)->createForNewestSupportedVersion();
+            $ast = $parser->parse(file_get_contents($filename));
+            
+            $nodeFinder = new NodeFinder;
+            $useStatements = $nodeFinder->findInstanceOf($ast, \PhpParser\Node\Stmt\Use_::class);
+            
+            $imports = [];
+            foreach ($useStatements as $useStatement) {
+                foreach ($useStatement->uses as $use) {
+                    $alias = $use->alias ? $use->alias->toString() : $use->name->getLast();
+                    $imports[$alias] = $use->name->toString();
+                }
+            }
+            
+            return $imports;
+        } catch (Throwable $e) {
+            return [];
+        }
+    }
+
+    /**
+     * Generate dynamic namespace attempts based on controller namespace patterns
+     */
+    private function generateNamespaceAttempts(string $controllerNamespace, string $resourceClass): array
+    {
+        $attempts = [];
+        
+        // Pattern 1: Replace 'Controllers' with 'Resources' in the namespace
+        if (str_contains($controllerNamespace, 'Controllers')) {
+            $resourceNamespace = str_replace('Controllers', 'Resources', $controllerNamespace);
+            $attempts[] = $resourceNamespace . '\\' . $resourceClass;
+            
+            // Handle subdirectories like Controllers\Queries\, Controllers\Commands\
+            $resourceNamespace = preg_replace('/\\\\Controllers\\\\[^\\\\]+/', '\\Resources', $controllerNamespace);
+            $attempts[] = $resourceNamespace . '\\' . $resourceClass;
+        }
+        
+        // Pattern 2: Same base namespace as controller but with Resources
+        $namespaceParts = explode('\\', $controllerNamespace);
+        
+        // Find the deepest common namespace and try Resources there
+        for ($i = count($namespaceParts) - 1; $i >= 0; $i--) {
+            $baseNamespace = implode('\\', array_slice($namespaceParts, 0, $i + 1));
+            $attempts[] = $baseNamespace . '\\Resources\\' . $resourceClass;
+            $attempts[] = $baseNamespace . '\\Http\\Resources\\' . $resourceClass;
+        }
+        
+        // Pattern 3: Standard Laravel patterns (fallback)
+        $attempts[] = 'App\\Http\\Resources\\' . $resourceClass;
+        
+        return array_unique($attempts);
+    }
+
+    /**
+     * Generate resource defaults for common resource patterns
+     */
+    private function generateResourceDefaults(string $resourceClass): array
+    {
+        $entityName = strtolower(str_replace('Resource', '', $resourceClass));
+        
+        $defaults = [
+            'id' => ['type' => 'integer', 'description' => "The {$entityName} identifier"],
+        ];
+        
+        // Add common patterns based on resource name
+        if (str_contains($entityName, 'subscription')) {
+            $defaults['status'] = ['type' => 'string', 'description' => 'The subscription status'];
+            $defaults['started_at'] = ['type' => 'string', 'format' => 'date-time', 'description' => 'Subscription start date'];
+            $defaults['renews_at'] = ['type' => 'string', 'format' => 'date-time', 'description' => 'Next renewal date'];
+        } elseif (str_contains($entityName, 'user')) {
+            $defaults['name'] = ['type' => 'string', 'description' => 'The user name'];
+            $defaults['email'] = ['type' => 'string', 'format' => 'email', 'description' => 'The user email'];
+        }
+        
+        // Add common timestamp fields
+        $defaults['created_at'] = ['type' => 'string', 'format' => 'date-time', 'description' => 'Creation timestamp'];
+        $defaults['updated_at'] = ['type' => 'string', 'format' => 'date-time', 'description' => 'Update timestamp'];
+        
+        return $defaults;
     }
 }

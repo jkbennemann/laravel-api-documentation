@@ -614,6 +614,24 @@ class EnhancedValidationRuleAnalyzer
                 $result['example'] = '123e4567-e89b-12d3-a456-426614174000';
                 break;
 
+            case 'regex':
+                $result['type'] = 'string';
+                if (! empty($ruleParams[0])) {
+                    $pattern = $ruleParams[0];
+                    $result['pattern'] = $pattern;
+                    
+                    // Analyze the regex pattern to provide a meaningful description
+                    $description = $this->analyzeRegexPattern($pattern);
+                    $result['description'] = $description;
+                    
+                    // Try to generate an example based on the pattern
+                    $example = $this->generateRegexExample($pattern);
+                    if ($example) {
+                        $result['example'] = $example;
+                    }
+                }
+                break;
+
             case 'date':
                 $result['type'] = 'string';
                 $result['format'] = 'date';
@@ -644,5 +662,109 @@ class EnhancedValidationRuleAnalyzer
         }
 
         return $result;
+    }
+
+    /**
+     * Analyze a regex pattern to provide a meaningful description
+     */
+    private function analyzeRegexPattern(string $pattern): string
+    {
+        // Remove delimiters and flags from pattern
+        $cleanPattern = $this->cleanRegexPattern($pattern);
+        
+        // Common regex pattern descriptions
+        $commonPatterns = [
+            '/^\d+$/' => 'Must contain only digits.',
+            '/^[a-zA-Z]+$/' => 'Must contain only letters.',
+            '/^[a-zA-Z0-9]+$/' => 'Must contain only letters and numbers.',
+            '/^[a-zA-Z0-9_-]+$/' => 'Must contain only letters, numbers, underscores, and hyphens.',
+            '/^\w+$/' => 'Must contain only word characters (letters, numbers, underscores).',
+            '/^.{10}-.{10}$/' => 'Must be in format: 10 characters, hyphen, 10 characters.',
+            '/.{10}-.{10}/' => 'Must be in format: 10 characters, hyphen, 10 characters.',
+            '/^[0-9]{2,4}$/' => 'Must be 2 to 4 digits.',
+            '/^[A-Z]{2,3}$/' => 'Must be 2 to 3 uppercase letters.',
+            '/^[a-z]{3,}$/' => 'Must be at least 3 lowercase letters.',
+            '/^\+?[1-9]\d{1,14}$/' => 'Must be a valid phone number.',
+        ];
+
+        // Check for exact matches first
+        if (isset($commonPatterns[$pattern])) {
+            return $commonPatterns[$pattern];
+        }
+
+        // Analyze pattern components for dynamic description
+        $description = 'Must match the pattern: ' . $pattern;
+        
+        // Try to provide more specific descriptions based on pattern analysis
+        if (preg_match('/\{(\d+)\}/', $cleanPattern, $matches)) {
+            $length = $matches[1];
+            $description = "Must be exactly {$length} characters matching pattern: {$pattern}";
+        } elseif (preg_match('/\{(\d+),(\d+)\}/', $cleanPattern, $matches)) {
+            $min = $matches[1];
+            $max = $matches[2];
+            $description = "Must be {$min} to {$max} characters matching pattern: {$pattern}";
+        } elseif (preg_match('/\{(\d+),\}/', $cleanPattern, $matches)) {
+            $min = $matches[1];
+            $description = "Must be at least {$min} characters matching pattern: {$pattern}";
+        } elseif (str_contains($cleanPattern, '\d')) {
+            $description = "Must contain digits and match pattern: {$pattern}";
+        } elseif (str_contains($cleanPattern, '[a-zA-Z]') || str_contains($cleanPattern, '[A-Z]') || str_contains($cleanPattern, '[a-z]')) {
+            $description = "Must contain letters and match pattern: {$pattern}";
+        }
+
+        return $description;
+    }
+
+    /**
+     * Generate an example value based on a regex pattern
+     */
+    private function generateRegexExample(string $pattern): ?string
+    {
+        // Remove delimiters and flags from pattern
+        $cleanPattern = $this->cleanRegexPattern($pattern);
+        
+        // Common regex pattern examples
+        $commonExamples = [
+            '/^\d+$/' => '123456',
+            '/^[a-zA-Z]+$/' => 'example',
+            '/^[a-zA-Z0-9]+$/' => 'example123',
+            '/^[a-zA-Z0-9_-]+$/' => 'example_123',
+            '/^\w+$/' => 'example_123',
+            '/^.{10}-.{10}$/' => 'abcd123456-xyz7890123',
+            '/.{10}-.{10}/' => 'abcd123456-xyz7890123',
+            '/^[0-9]{2,4}$/' => '1234',
+            '/^[A-Z]{2,3}$/' => 'ABC',
+            '/^[a-z]{3,}$/' => 'example',
+            '/^\+?[1-9]\d{1,14}$/' => '+1234567890',
+        ];
+
+        // Check for exact matches first
+        if (isset($commonExamples[$pattern])) {
+            return $commonExamples[$pattern];
+        }
+
+        // Generate simple examples based on pattern analysis
+        if (preg_match('/\{(\d+)\}/', $cleanPattern)) {
+            // Pattern with exact length - generate appropriate example
+            if (str_contains($cleanPattern, '\d') || str_contains($cleanPattern, '[0-9]')) {
+                return '1234567890'; // Numeric example
+            } elseif (str_contains($cleanPattern, '[a-zA-Z]') || str_contains($cleanPattern, '[A-Z]')) {
+                return 'ABCDEFGHIJ'; // Letter example
+            } else {
+                return 'example123'; // Mixed example
+            }
+        }
+
+        // For complex patterns, return null to avoid incorrect examples
+        return null;
+    }
+
+    /**
+     * Clean regex pattern by removing delimiters and flags
+     */
+    private function cleanRegexPattern(string $pattern): string
+    {
+        // Remove common delimiters (/, #, ~, etc.) and flags (i, m, s, etc.)
+        return preg_replace('/^[\/~#!@](.+)[\/~#!@][a-zA-Z]*$/', '$1', $pattern);
     }
 }

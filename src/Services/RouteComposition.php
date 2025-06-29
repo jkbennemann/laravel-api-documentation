@@ -205,6 +205,15 @@ class RouteComposition
                                                 'deprecated' => false,
                                                 'parameters' => [],
                                             ];
+                                        } else {
+                                            // Merge AST properties with existing analyzed parameters, preserving validation fields
+                                            $existing = $analyzedParameters[$name];
+                                            $analyzedParameters[$name] = array_merge($existing, [
+                                                'type' => $property['type'] ?? $existing['type'],
+                                                'format' => $property['format'] ?? $existing['format'] ?? null,
+                                                'description' => $property['description'] ?? $existing['description'] ?? null,
+                                                'enum' => $property['enum'] ?? $existing['enum'] ?? null,
+                                            ]);
                                         }
                                     }
                                 }
@@ -927,6 +936,29 @@ class RouteComposition
             'required' => $parameter['required'] ?? false,
             'deprecated' => $parameter['deprecated'] ?? false,
         ];
+
+        // Add validation fields if present
+        if (isset($parameter['pattern'])) {
+            $result['pattern'] = $parameter['pattern'];
+        }
+        if (isset($parameter['example'])) {
+            $result['example'] = $parameter['example'];
+        }
+        if (isset($parameter['enum'])) {
+            $result['enum'] = $parameter['enum'];
+        }
+        if (isset($parameter['minimum'])) {
+            $result['minimum'] = $parameter['minimum'];
+        }
+        if (isset($parameter['maximum'])) {
+            $result['maximum'] = $parameter['maximum'];
+        }
+        if (isset($parameter['minLength'])) {
+            $result['minLength'] = $parameter['minLength'];
+        }
+        if (isset($parameter['maxLength'])) {
+            $result['maxLength'] = $parameter['maxLength'];
+        }
 
         // Handle nested parameters recursively
         if (! empty($parameter['parameters']) && is_array($parameter['parameters'])) {

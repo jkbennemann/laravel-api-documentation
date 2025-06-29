@@ -543,21 +543,43 @@ class OpenApi
             } else {
                 $schemaProps = [
                     'type' => $param['type'] ?? 'string',
-                    'format' => $param['format'] ?? null,
                     'description' => $param['description'] ?? '',
                 ];
 
-                // Add enum values if present
+                // Only add format if it's not null
+                if ($param['format'] ?? null) {
+                    $schemaProps['format'] = $param['format'];
+                }
+
+                $schema = new Schema($schemaProps);
+
+                // Set additional properties after construction
                 if (! empty($param['enum'])) {
-                    $schemaProps['enum'] = $param['enum'];
+                    $schema->enum = $param['enum'];
                 }
 
-                // Add example if present
                 if (! empty($param['example'])) {
-                    $schemaProps['example'] = $this->filterSpatieInternalFields($param['example']);
+                    $schema->example = $this->filterSpatieInternalFields($param['example']);
                 }
 
-                $properties[$name] = new Schema($schemaProps);
+                if (! empty($param['pattern'])) {
+                    $schema->pattern = $param['pattern'];
+                }
+
+                if (isset($param['minimum'])) {
+                    $schema->minimum = $param['minimum'];
+                }
+                if (isset($param['maximum'])) {
+                    $schema->maximum = $param['maximum'];
+                }
+                if (isset($param['minLength'])) {
+                    $schema->minLength = $param['minLength'];
+                }
+                if (isset($param['maxLength'])) {
+                    $schema->maxLength = $param['maxLength'];
+                }
+
+                $properties[$name] = $schema;
             }
 
             if ($param['required'] ?? false) {
