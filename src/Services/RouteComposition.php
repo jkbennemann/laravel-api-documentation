@@ -867,6 +867,26 @@ class RouteComposition
             ];
         }
 
+        // CRITICAL: Fallback to comprehensive ResponseAnalyzer for any method that wasn't handled above
+        // This ensures 100% coverage for methods without explicit return types
+        if (!isset($responses[200]) || (isset($responses[200]) && $responses[200]['type'] === 'object' && empty($responses[200]['properties']))) {
+            $analysis = $this->responseAnalyzer->analyzeControllerMethod($controller, $action);
+            
+            if (!empty($analysis)) {
+                $responses[200] = [
+                    'description' => $responses[200]['description'] ?? '',
+                    'headers' => $responses[200]['headers'] ?? [],
+                    'type' => $analysis['type'] ?? 'object',
+                    'content_type' => 'application/json',
+                    'properties' => $analysis['properties'] ?? [],
+                    'items' => $analysis['items'] ?? null,
+                    'example' => $analysis['example'] ?? null,
+                    'enhanced_analysis' => true,
+                    'detection_method' => $analysis['detection_method'] ?? 'fallback_analysis',
+                ];
+            }
+        }
+
         return $responses;
     }
 
