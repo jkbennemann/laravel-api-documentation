@@ -16,7 +16,7 @@ class ScalarController
         $oldFile[] = [
             'name' => $filename,
             'url' => $filename ? asset($filename) : null,
-            'proxyUrl' => 'https://proxy.scalar.com'
+            'proxyUrl' => 'https://proxy.scalar.com',
         ];
 
         $files = [];
@@ -25,13 +25,13 @@ class ScalarController
                 $files[] = [
                     'title' => $file['filename'],
                     'url' => asset($file['filename']),
-                    'proxyUrl' => 'https://proxy.scalar.com'
+                    'proxyUrl' => 'https://proxy.scalar.com',
                 ];
             }
         }
 
         return view('api-documentation::scalar.index', [
-            'files' => !empty($files) ? $files : $oldFile,
+            'files' => ! empty($files) ? $files : $oldFile,
         ]);
     }
 }

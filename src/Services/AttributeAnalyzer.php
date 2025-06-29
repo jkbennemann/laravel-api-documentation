@@ -23,7 +23,7 @@ class AttributeAnalyzer
         foreach ($queryParamAttributes as $attribute) {
             /** @var QueryParameter $queryParam */
             $queryParam = $attribute->newInstance();
-            
+
             $parameters[$queryParam->name] = [
                 'type' => $queryParam->type,
                 'format' => $queryParam->format,
@@ -43,14 +43,14 @@ class AttributeAnalyzer
     public function extractRequestBody(ReflectionMethod $method): ?array
     {
         $requestBodyAttributes = $method->getAttributes(RequestBody::class);
-        
+
         if (empty($requestBodyAttributes)) {
             return null;
         }
 
         /** @var RequestBody $requestBody */
         $requestBody = $requestBodyAttributes[0]->newInstance();
-        
+
         return [
             'description' => $requestBody->description,
             'content_type' => $requestBody->contentType,
@@ -71,7 +71,7 @@ class AttributeAnalyzer
         foreach ($responseBodyAttributes as $attribute) {
             /** @var ResponseBody $responseBody */
             $responseBody = $attribute->newInstance();
-            
+
             $responses[$responseBody->statusCode] = [
                 'description' => $responseBody->description,
                 'content_type' => $responseBody->contentType,
@@ -95,7 +95,7 @@ class AttributeAnalyzer
         foreach ($responseHeaderAttributes as $attribute) {
             /** @var ResponseHeader $responseHeader */
             $responseHeader = $attribute->newInstance();
-            
+
             $headers[$responseHeader->name] = [
                 'description' => $responseHeader->description,
                 'type' => $responseHeader->type,
@@ -121,7 +121,7 @@ class AttributeAnalyzer
         ];
 
         foreach ($attributeClasses as $attributeClass) {
-            if (!empty($method->getAttributes($attributeClass))) {
+            if (! empty($method->getAttributes($attributeClass))) {
                 return true;
             }
         }

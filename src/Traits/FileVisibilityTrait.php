@@ -8,7 +8,7 @@ trait FileVisibilityTrait
     {
         $host = request()->host();
 
-        $defaultFileHost = config("api-documentation.domains.default.main");
+        $defaultFileHost = config('api-documentation.domains.default.main');
         $explicitFileHost = config("api-documentation.domains.{$key}.main");
 
         $replacedDefaultHost = str_replace(['http://', 'https://'], '', $defaultFileHost);

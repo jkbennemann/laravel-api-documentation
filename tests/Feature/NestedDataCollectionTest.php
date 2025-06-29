@@ -25,7 +25,7 @@ it('generates correct OpenAPI schema for NestedData with DataCollectionOf', func
     // Verify that NestedData is properly analyzed with DataCollectionOf
     $analyzer = app(\JkBennemann\LaravelApiDocumentation\Services\ResponseAnalyzer::class);
     $schema = $analyzer->analyzeSpatieDataObject(NestedData::class);
-    
+
     // Check the items property has correct DataCollectionOf structure
     expect($schema['properties']['items'])
         ->toBeArray()
@@ -35,13 +35,13 @@ it('generates correct OpenAPI schema for NestedData with DataCollectionOf', func
         ->toBeArray()
         ->and($schema['properties']['items']['items']['type'])
         ->toBe('object');
-    
+
     // Verify nested Data object properties are correctly mapped
     expect($schema['properties']['items']['items']['properties'])
         ->toHaveKey('id')
         ->toHaveKey('age')
         ->toHaveKey('is_active'); // snake_case from isActive due to SnakeCaseMapper
-    
+
     // Verify property types
     expect($schema['properties']['items']['items']['properties']['id']['type'])
         ->toBe('string')
@@ -67,7 +67,7 @@ it('handles nested data collections in route processing', function () {
         ->and($routeData[0]['responses'])
         ->toBeArray()
         ->toHaveKey(200);
-    
+
     // Verify response structure
     expect($routeData[0]['responses'][200])
         ->toBeArray()

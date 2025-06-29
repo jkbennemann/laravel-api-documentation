@@ -16,13 +16,13 @@ it('can execute the command with a specific file parameter', function () {
         'docOne' => [
             'name' => 'Doc one',
             'filename' => 'api-documentation-one.json',
-            'process' => true
+            'process' => true,
         ],
         'docTwo' => [
             'name' => 'Doc two',
             'filename' => 'api-documentation-two.json',
-            'process' => true
-        ]
+            'process' => true,
+        ],
     ]);
 
     // Execute command with specific file parameter
@@ -57,8 +57,8 @@ it('returns error when specifying non-existent file', function () {
         'docOne' => [
             'name' => 'Doc one',
             'filename' => 'api-documentation-one.json',
-            'process' => true
-        ]
+            'process' => true,
+        ],
     ]);
 
     $this->artisan('documentation:generate --file=nonExistent')

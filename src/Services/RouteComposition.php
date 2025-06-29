@@ -7,7 +7,6 @@ namespace JkBennemann\LaravelApiDocumentation\Services;
 use Illuminate\Config\Repository;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Http\Resources\Json\ResourceCollection;
@@ -23,11 +22,6 @@ use JkBennemann\LaravelApiDocumentation\Attributes\Parameter;
 use JkBennemann\LaravelApiDocumentation\Attributes\PathParameter;
 use JkBennemann\LaravelApiDocumentation\Attributes\Summary;
 use JkBennemann\LaravelApiDocumentation\Attributes\Tag;
-use JkBennemann\LaravelApiDocumentation\Services\AstAnalyzer;
-use JkBennemann\LaravelApiDocumentation\Services\AttributeAnalyzer;
-use JkBennemann\LaravelApiDocumentation\Services\QueryParameterExtractor;
-use JkBennemann\LaravelApiDocumentation\Services\RequestAnalyzer;
-use JkBennemann\LaravelApiDocumentation\Services\ResponseAnalyzer;
 use ReflectionAttribute;
 use ReflectionClass;
 use ReflectionMethod;
@@ -51,6 +45,7 @@ class RouteComposition
         private readonly RequestAnalyzer $requestAnalyzer,
         private readonly ResponseAnalyzer $responseAnalyzer,
         private readonly AttributeAnalyzer $attributeAnalyzer,
+        private readonly RouteConstraintAnalyzer $routeConstraintAnalyzer,
         private ?AstAnalyzer $astAnalyzer = null
     ) {
         $this->routes = $router->getRoutes();
@@ -77,7 +72,7 @@ class RouteComposition
             // Get controller class and method from route action
             $action = $route->getAction();
 
-            if (!isset($action['controller']) || !is_string($action['controller'])) {
+            if (! isset($action['controller']) || ! is_string($action['controller'])) {
                 continue;
             }
 
@@ -100,12 +95,12 @@ class RouteComposition
                 $reflectionMethod = new ReflectionMethod($controllerClass, $actionMethod);
             } catch (\ReflectionException $e) {
                 // For test stubs, continue without reflection
-                if (!$isTestStub) {
+                if (! $isTestStub) {
                     continue;
                 }
             }
 
-            if (!is_null($docName) && !$this->belongsToDoc($docName, $controllerClass, $actionMethod)) {
+            if (! is_null($docName) && ! $this->belongsToDoc($docName, $controllerClass, $actionMethod)) {
                 continue;
             }
 
@@ -123,12 +118,12 @@ class RouteComposition
                 'description' => $description,
                 'middlewares' => $middlewares,
                 'is_vendor' => $isVendorClass,
-                'parameters' => $this->processRequestParameters($controllerClass, $actionMethod),
-                'request_parameters' => $this->processPathParameters($uri, $controllerClass, $actionMethod),
+                'parameters' => $this->processRequestParameters($controllerClass, $actionMethod, $route),
+                'request_parameters' => $this->processPathParameters($route, $uri, $controllerClass, $actionMethod),
                 'tags' => array_filter($tags),
                 'documentation' => null,
                 'additional_documentation' => $additionalDocs,
-                'query_parameters' => $this->mergeQueryParameters($controllerClass, $actionMethod, $reflectionMethod),
+                'query_parameters' => $this->mergeQueryParameters($controllerClass, $actionMethod, $reflectionMethod, $route),
                 'request_body' => $reflectionMethod ? $this->attributeAnalyzer->extractRequestBody($reflectionMethod) : null,
                 'response_headers' => $reflectionMethod ? $this->attributeAnalyzer->extractResponseHeaders($reflectionMethod) : [],
                 'response_bodies' => $reflectionMethod ? $this->attributeAnalyzer->extractResponseBodies($reflectionMethod) : [],
@@ -163,23 +158,26 @@ class RouteComposition
         return $parameters;
     }
 
-    private function processRequestParameters(string $controller, string $action): array
+    private function processRequestParameters(string $controller, string $action, Route $route): array
     {
         try {
             $method = new ReflectionMethod($controller, $action);
+            
+            // Get path parameter names to exclude them from request body parameters
+            $pathParameterNames = $route->parameterNames();
 
             // Check for FormRequest parameters and analyze them using RequestAnalyzer
             foreach ($method->getParameters() as $parameter) {
                 $parameterType = $parameter->getType();
-                if (!$parameterType) {
+                if (! $parameterType) {
                     continue;
                 }
 
                 $typeName = $parameterType->getName();
                 if (is_a($typeName, FormRequest::class, true)) {
                     // Rule: Prefer iteration and modularization over code duplication
-                    // Use RequestAnalyzer to analyze the FormRequest class
-                    $analyzedParameters = $this->requestAnalyzer->analyzeRequest($typeName);
+                    // Use RequestAnalyzer to analyze the FormRequest class, excluding path parameters
+                    $analyzedParameters = $this->requestAnalyzer->analyzeRequest($typeName, $pathParameterNames);
 
                     // If AST analyzer is available and parameters aren't complete, enhance them
                     if ($this->astAnalyzer && class_exists($typeName)) {
@@ -192,10 +190,10 @@ class RouteComposition
                                 // Use enhanced property type detection to improve parameter documentation
                                 $propertyAnalysis = $this->astAnalyzer->analyzePropertyTypes($filePath, $className);
 
-                                if (!empty($propertyAnalysis)) {
+                                if (! empty($propertyAnalysis)) {
                                     // Merge AST analysis with existing parameters or add new ones
                                     foreach ($propertyAnalysis as $name => $property) {
-                                        if (!isset($analyzedParameters[$name]) || empty($analyzedParameters[$name]['type'])) {
+                                        if (! isset($analyzedParameters[$name]) || empty($analyzedParameters[$name]['type'])) {
                                             // Add or enhance parameter with AST-analyzed properties
                                             $analyzedParameters[$name] = [
                                                 'name' => $name,
@@ -238,14 +236,14 @@ class RouteComposition
     {
         try {
             $filename = $method->getFileName();
-            if (!$filename || !file_exists($filename)) {
+            if (! $filename || ! file_exists($filename)) {
                 return [];
             }
 
             // First try AST-based analysis for more accurate results
             if ($this->astAnalyzer) {
                 $rules = $this->astAnalyzer->extractValidationRules($filename, $method->getName());
-                if (!empty($rules)) {
+                if (! empty($rules)) {
                     return $rules;
                 }
             }
@@ -263,6 +261,7 @@ class RouteComposition
             // Look for $request->validate([...]) patterns
             if (preg_match('/\$request\s*->\s*validate\s*\(\s*\[(.*?)\]\s*\)/s', $methodBody, $matches)) {
                 $validationRules = $matches[1];
+
                 return $this->parseValidationRules($validationRules);
             }
 
@@ -327,10 +326,10 @@ class RouteComposition
 
         try {
             // Convert controller class to file path
-            $classFile = str_replace('\\', '/', $controller) . '.php';
-            $stubFile = __DIR__ . '/../../' . str_replace('JkBennemann/LaravelApiDocumentation/', '', $classFile);
+            $classFile = str_replace('\\', '/', $controller).'.php';
+            $stubFile = __DIR__.'/../../'.str_replace('JkBennemann/LaravelApiDocumentation/', '', $classFile);
 
-            if (!file_exists($stubFile)) {
+            if (! file_exists($stubFile)) {
                 return $parameters;
             }
 
@@ -338,7 +337,7 @@ class RouteComposition
             $lines = explode("\n", $fileContent);
 
             // Find the method using regex
-            $pattern = '/public\s+function\s+' . preg_quote($action) . '\s*\([^}]*?\{(.*?)(?=public\s+function|\}[\s]*$)/s';
+            $pattern = '/public\s+function\s+'.preg_quote($action).'\s*\([^}]*?\{(.*?)(?=public\s+function|\}[\s]*$)/s';
             if (preg_match($pattern, $fileContent, $methodMatches)) {
                 $methodCode = $methodMatches[1];
 
@@ -530,13 +529,13 @@ class RouteComposition
                             if ($filePath && $this->astAnalyzer) {
                                 $propertyAnalysis = $this->astAnalyzer->analyzePropertyTypes($filePath, $className);
 
-                                if (!empty($propertyAnalysis)) {
+                                if (! empty($propertyAnalysis)) {
                                     // If we have AST-analyzed properties, enhance or create the analysis array
                                     if (empty($analysis)) {
                                         $analysis = [
                                             'enhanced_analysis' => true,
                                             'type' => 'object',
-                                            'properties' => $propertyAnalysis
+                                            'properties' => $propertyAnalysis,
                                         ];
                                     } elseif (empty($analysis['properties'])) {
                                         $analysis['properties'] = $propertyAnalysis;
@@ -551,7 +550,7 @@ class RouteComposition
                 }
 
                 // If analysis was successful, include the example
-                if (!empty($analysis) && isset($analysis['enhanced_analysis']) && $analysis['enhanced_analysis'] === true) {
+                if (! empty($analysis) && isset($analysis['enhanced_analysis']) && $analysis['enhanced_analysis'] === true) {
                     $responses[$statusCode] = [
                         'description' => $description,
                         'headers' => $headers,
@@ -662,7 +661,7 @@ class RouteComposition
                         class_exists($typeName)) {
                         $analysis = $this->responseAnalyzer->analyzeControllerMethod($controller, $action);
 
-                        if (!empty($analysis)) {
+                        if (! empty($analysis)) {
                             // ResponseAnalyzer found dynamic structure - use it
                             $responses[$statusCode] = [
                                 'description' => $description,
@@ -767,7 +766,7 @@ class RouteComposition
                     ];
 
                     // Add items property for enhanced schema generation
-                    if (!$resource && (!$detectedResource || $detectedResource === $typeName)) {
+                    if (! $resource && (! $detectedResource || $detectedResource === $typeName)) {
                         $responses[$statusCode]['items'] = [
                             'type' => 'object',
                         ];
@@ -776,7 +775,7 @@ class RouteComposition
             } elseif (is_a($typeName, JsonResource::class, true)) {
                 $analysis = $this->responseAnalyzer->analyzeControllerMethod($controller, $action);
 
-                if (!empty($analysis)) {
+                if (! empty($analysis)) {
                     // ResponseAnalyzer found dynamic structure - use it
                     $responses[$statusCode] = [
                         'description' => $description,
@@ -894,13 +893,13 @@ class RouteComposition
                     return $resourceClass;
                 }
                 // Check if it's a short class name that needs namespace resolution
-                $className = $method->getDeclaringClass()->getNamespaceName() . '\\' . $resourceClass;
+                $className = $method->getDeclaringClass()->getNamespaceName().'\\'.$resourceClass;
                 if (class_exists($className)) {
                     return $className;
                 }
                 // Try different namespace patterns for resources
                 $testNamespace = str_replace('Controllers', 'Resources', $method->getDeclaringClass()->getNamespaceName());
-                $fullClassName = $testNamespace . '\\' . $resourceClass;
+                $fullClassName = $testNamespace.'\\'.$resourceClass;
                 if (class_exists($fullClassName)) {
                     return $fullClassName;
                 }
@@ -930,7 +929,7 @@ class RouteComposition
         ];
 
         // Handle nested parameters recursively
-        if (!empty($parameter['parameters']) && is_array($parameter['parameters'])) {
+        if (! empty($parameter['parameters']) && is_array($parameter['parameters'])) {
             $nestedParameters = [];
             foreach ($parameter['parameters'] as $nestedName => $nestedParameter) {
                 $nestedParameters[$nestedName] = $this->transformParameter($nestedName, $nestedParameter);
@@ -1052,7 +1051,7 @@ class RouteComposition
                     $method->getName()
                 );
 
-                if (!empty($rules)) {
+                if (! empty($rules)) {
                     return true;
                 }
             }
@@ -1178,10 +1177,13 @@ class RouteComposition
         };
     }
 
-    private function processPathParameters(string $uri, string $controller, string $action): array
+    private function processPathParameters(Route $route, string $uri, string $controller, string $action): array
     {
         $parameters = [];
         preg_match_all('/{([^}]+)}/', $uri, $matches);
+
+        // Get route constraints from RouteConstraintAnalyzer
+        $routeConstraints = $this->routeConstraintAnalyzer->analyzeRouteConstraints($route);
 
         $pathParamAttrs = [];
 
@@ -1209,13 +1211,18 @@ class RouteComposition
             // Find matching PathParameter attribute
             $pathParam = $pathParams[$index] ?? null;
 
+            // Get route constraint for this parameter
+            $routeConstraint = $routeConstraints[$cleanName] ?? null;
+
             if ($pathParam) {
+                // Use PathParameter attribute as primary source
                 $type = $this->normalizeType($pathParam['type'] ?? 'string');
                 $format = $pathParam['format'] ?? null;
                 $example = $pathParam['example'] ?? null;
+                $description = $pathParam['description'] ?? '';
 
                 $parameters[$pathParam['name']] = [
-                    'description' => $pathParam['description'] ?? '',
+                    'description' => $description,
                     'required' => $isOptional ? false : ($pathParam['required'] ?? true),
                     'type' => $type,
                     'format' => $format,
@@ -1225,10 +1232,21 @@ class RouteComposition
                         'value' => $example,
                     ] : null,
                 ];
-            } else {
-                // Default values if no attribute found
+            } elseif ($routeConstraint) {
+                // Use route constraint as secondary source
                 $parameters[$cleanName] = [
-                    'description' => '',
+                    'description' => $routeConstraint['description'] ?? "Path parameter: {$cleanName}",
+                    'required' => $isOptional ? false : ($routeConstraint['required'] ?? true),
+                    'type' => $routeConstraint['type'] ?? 'string',
+                    'format' => $routeConstraint['format'] ?? null,
+                    'pattern' => $routeConstraint['pattern'] ?? null,
+                    'enum' => $routeConstraint['enum'] ?? null,
+                    'example' => $routeConstraint['example'] ?? null,
+                ];
+            } else {
+                // Default values if no attribute or constraint found
+                $parameters[$cleanName] = [
+                    'description' => "Path parameter: {$cleanName}",
                     'required' => ! $isOptional,
                     'type' => 'string',
                     'format' => null,
@@ -1260,7 +1278,7 @@ class RouteComposition
                 }
             }
 
-            if(empty($docFiles)) {
+            if (empty($docFiles)) {
                 // If no doc attributes provided - try default doc
                 return $docName === $this->defaultDocFile;
             }
@@ -1269,8 +1287,8 @@ class RouteComposition
             if (in_array($docName, $docFiles)) {
                 return true;
             }
-            
-            // Special handling: if this route is tagged with 'public-api' and we're generating 
+
+            // Special handling: if this route is tagged with 'public-api' and we're generating
             // docs for a public API variant, include it automatically
             if (in_array('public-api', $docFiles) && $this->isPublicApiVariant($docName)) {
                 return true;
@@ -1280,6 +1298,7 @@ class RouteComposition
         } catch (Throwable) {
             // Ignore reflection errors
         }
+
         return false;
     }
 
@@ -1344,7 +1363,7 @@ class RouteComposition
             foreach ($classAttributes as $attribute) {
                 if ($attribute->getName() === Summary::class) {
                     $args = $attribute->getArguments();
-                    if (!empty($args)) {
+                    if (! empty($args)) {
                         return $args[0] ?? null;
                     }
                 }
@@ -1378,7 +1397,7 @@ class RouteComposition
             foreach ($classAttributes as $attribute) {
                 if ($attribute->getName() === Description::class) {
                     $args = $attribute->getArguments();
-                    if (!empty($args)) {
+                    if (! empty($args)) {
                         return $args[0] ?? null;
                     }
                 }
@@ -1415,6 +1434,7 @@ class RouteComposition
             foreach ($classAttributes as $attribute) {
                 if ($attribute->getName() === \JkBennemann\LaravelApiDocumentation\Attributes\AdditionalDocumentation::class) {
                     $instance = $attribute->newInstance();
+
                     return [
                         'url' => $instance->url,
                         'description' => $instance->description,
@@ -1429,6 +1449,7 @@ class RouteComposition
             foreach ($attributes as $attribute) {
                 if ($attribute->getName() === \JkBennemann\LaravelApiDocumentation\Attributes\AdditionalDocumentation::class) {
                     $instance = $attribute->newInstance();
+
                     return [
                         'url' => $instance->url,
                         'description' => $instance->description,
@@ -1450,24 +1471,29 @@ class RouteComposition
         // Get method body content
         $startLine = $method->getStartLine() - 1; // 0-indexed
         $endLine = $method->getEndLine() - $startLine;
+
         return implode('', array_slice($lines, $startLine, $endLine));
     }
 
-    private function processQueryParameters(string $controller, string $action): array
+    private function processQueryParameters(string $controller, string $action, Route $route): array
     {
         try {
             // Use QueryParameterExtractor to extract @queryParam from docblocks
             $extractor = app(QueryParameterExtractor::class);
-            return $extractor->extractFromMethod($controller, $action);
+            
+            // Get path parameter names from the route
+            $pathParameters = $route->parameterNames();
+
+            return $extractor->extractFromMethod($controller, $action, $pathParameters);
         } catch (Throwable) {
             // Fallback to empty array if extraction fails
             return [];
         }
     }
 
-    private function mergeQueryParameters(string $controller, string $action, ?ReflectionMethod $reflectionMethod): array
+    private function mergeQueryParameters(string $controller, string $action, ?ReflectionMethod $reflectionMethod, Route $route): array
     {
-        $parameters = $this->processQueryParameters($controller, $action);
+        $parameters = $this->processQueryParameters($controller, $action, $route);
 
         if ($reflectionMethod) {
             $attributeParameters = $this->attributeAnalyzer->extractQueryParameters($reflectionMethod);
@@ -1476,17 +1502,17 @@ class RouteComposition
 
         return $parameters;
     }
-    
+
     private function isPublicApiVariant(string $docName): bool
     {
         // Define the known public API variant patterns
         $publicApiVariants = [
             'public-api',
             'staging-public-api',
-            'https-public-api', 
-            'https-staging-public-api'
+            'https-public-api',
+            'https-staging-public-api',
         ];
-        
+
         return in_array($docName, $publicApiVariants);
     }
 }

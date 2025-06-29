@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace JkBennemann\LaravelApiDocumentation\Tests\Feature;
 
 use Illuminate\Support\Facades\Route;
-use JkBennemann\LaravelApiDocumentation\Services\DocumentationBuilder;
 use JkBennemann\LaravelApiDocumentation\Services\OpenApi;
 use JkBennemann\LaravelApiDocumentation\Services\RouteComposition;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\SmartController;

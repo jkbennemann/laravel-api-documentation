@@ -66,7 +66,7 @@ return [
                 'default' => [
                     'name' => 'Default doc',
                     'filename' => 'api-documentation.json',
-                    'process' => true
+                    'process' => true,
                 ],
             ],
         ],
@@ -81,7 +81,7 @@ return [
                     'description' => env('APP_NAME', 'Service'),
                 ],
             ],
-        ]
+        ],
     ],
 
     /*

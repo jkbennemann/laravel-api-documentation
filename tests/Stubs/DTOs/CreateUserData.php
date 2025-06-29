@@ -12,11 +12,11 @@ use Spatie\LaravelData\Mappers\SnakeCaseMapper;
 class CreateUserData extends Data
 {
     /**
-     * @param string $name The user's full name
-     * @param string $email The user's email address
-     * @param string|null $password The user's password (optional for updates)
-     * @param bool $isActive Whether the user should be active
-     * @param array $preferences User preferences as key-value pairs
+     * @param  string  $name  The user's full name
+     * @param  string  $email  The user's email address
+     * @param  string|null  $password  The user's password (optional for updates)
+     * @param  bool  $isActive  Whether the user should be active
+     * @param  array  $preferences  User preferences as key-value pairs
      */
     public function __construct(
         public string $name,

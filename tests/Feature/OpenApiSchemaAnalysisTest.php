@@ -7,9 +7,9 @@ namespace JkBennemann\LaravelApiDocumentation\Tests\Feature;
 use Illuminate\Support\Facades\Route;
 use JkBennemann\LaravelApiDocumentation\Services\OpenApi;
 use JkBennemann\LaravelApiDocumentation\Services\RouteComposition;
-use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\EnhancedApiController;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\DtoController;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\DynamicResponseController;
+use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\EnhancedApiController;
 use JkBennemann\LaravelApiDocumentation\Tests\TestCase;
 
 class OpenApiSchemaAnalysisTest extends TestCase
@@ -59,8 +59,8 @@ class OpenApiSchemaAnalysisTest extends TestCase
 
         if ($usersGetOperation && $usersGetOperation->parameters) {
             $queryParams = collect($usersGetOperation->parameters)
-                ->filter(fn($param) => $param->in === 'query')
-                ->keyBy(fn($param) => $param->name);
+                ->filter(fn ($param) => $param->in === 'query')
+                ->keyBy(fn ($param) => $param->name);
 
             // Check if attribute-defined query parameters are properly extracted
             $expectedQueryParams = ['search', 'page', 'per_page', 'status'];
@@ -80,11 +80,11 @@ class OpenApiSchemaAnalysisTest extends TestCase
                 if (isset($statusParam->schema->enum)) {
                     expect($statusParam->schema->enum)->toContain('active', 'inactive', 'pending');
                 } else {
-                    dump("❌ Status parameter missing enum values");
+                    dump('❌ Status parameter missing enum values');
                 }
             }
         } else {
-            dump("❌ No query parameters found in users GET operation");
+            dump('❌ No query parameters found in users GET operation');
         }
     }
 
@@ -107,7 +107,7 @@ class OpenApiSchemaAnalysisTest extends TestCase
                 if (isset($schema->properties)) {
                     $expectedProperties = ['name', 'email', 'password', 'is_active', 'preferences'];
                     foreach ($expectedProperties as $property) {
-                        if (!isset($schema->properties[$property])) {
+                        if (! isset($schema->properties[$property])) {
                             dump("❌ Request property '{$property}' missing");
                         }
                     }
@@ -116,16 +116,16 @@ class OpenApiSchemaAnalysisTest extends TestCase
                     if (isset($schema->required)) {
                         expect($schema->required)->toContain('name', 'email');
                     } else {
-                        dump("❌ No required fields defined in request schema");
+                        dump('❌ No required fields defined in request schema');
                     }
                 } else {
-                    dump("❌ Request body schema has no properties");
+                    dump('❌ Request body schema has no properties');
                 }
             } else {
-                dump("❌ Request body has no JSON content or schema");
+                dump('❌ Request body has no JSON content or schema');
             }
         } else {
-            dump("❌ Users POST operation has no request body");
+            dump('❌ Users POST operation has no request body');
         }
     }
 
@@ -147,15 +147,15 @@ class OpenApiSchemaAnalysisTest extends TestCase
                     // Check if UserData properties are properly extracted
                     $expectedProperties = ['id', 'name', 'email'];
                     foreach ($expectedProperties as $property) {
-                        if (!isset($schema->properties[$property])) {
+                        if (! isset($schema->properties[$property])) {
                             dump("❌ Response property '{$property}' missing");
                         }
                     }
                 } else {
-                    dump("❌ Response schema has no properties");
+                    dump('❌ Response schema has no properties');
                 }
             } else {
-                dump("❌ Response has no JSON content or schema");
+                dump('❌ Response has no JSON content or schema');
             }
         }
 
@@ -168,8 +168,8 @@ class OpenApiSchemaAnalysisTest extends TestCase
             if ($jsonContent && $jsonContent->schema) {
                 $schema = $jsonContent->schema;
 
-                if (!isset($schema->properties)) {
-                    dump("❌ Dynamic response missing extracted properties");
+                if (! isset($schema->properties)) {
+                    dump('❌ Dynamic response missing extracted properties');
                 }
             }
         }
@@ -183,7 +183,7 @@ class OpenApiSchemaAnalysisTest extends TestCase
         $usersShowOperation = $spec->paths['/users/{id}']->get ?? null;
         if ($usersShowOperation && $usersShowOperation->parameters) {
             $pathParams = collect($usersShowOperation->parameters)
-                ->filter(fn($param) => $param->in === 'path');
+                ->filter(fn ($param) => $param->in === 'path');
 
             if ($pathParams->isNotEmpty()) {
                 foreach ($pathParams as $param) {
@@ -191,7 +191,7 @@ class OpenApiSchemaAnalysisTest extends TestCase
                     expect($param->schema->type)->not()->toBeEmpty('Path parameter should have type');
                 }
             } else {
-                dump("❌ No path parameters found for /users/{id}");
+                dump('❌ No path parameters found for /users/{id}');
             }
         }
     }
@@ -206,16 +206,16 @@ class OpenApiSchemaAnalysisTest extends TestCase
             $response = $usersGetOperation->responses['200'];
 
             if (isset($response->headers)) {
-                $headers = array_keys((array)$response->headers);
+                $headers = array_keys((array) $response->headers);
 
                 $expectedHeaders = ['X-Total-Count', 'X-Page-Count'];
                 foreach ($expectedHeaders as $header) {
-                    if (!in_array($header, $headers)) {
+                    if (! in_array($header, $headers)) {
                         dump("❌ Header '{$header}' missing");
                     }
                 }
             } else {
-                dump("❌ No response headers found in users GET operation");
+                dump('❌ No response headers found in users GET operation');
             }
         }
     }
@@ -231,7 +231,9 @@ class OpenApiSchemaAnalysisTest extends TestCase
         foreach ($spec->paths as $path => $pathItem) {
             foreach (['get', 'post', 'put', 'patch', 'delete'] as $method) {
                 $operation = $pathItem->{$method} ?? null;
-                if (!$operation) continue;
+                if (! $operation) {
+                    continue;
+                }
 
                 // Check request body schemas
                 if ($operation->requestBody && $operation->requestBody->content) {
@@ -272,8 +274,8 @@ class OpenApiSchemaAnalysisTest extends TestCase
                 $schema = $jsonContent->schema;
 
                 if ($schema->type === 'array' && isset($schema->items)) {
-                    if (!isset($schema->items->properties)) {
-                        dump("❌ Resource items missing dynamic properties");
+                    if (! isset($schema->items->properties)) {
+                        dump('❌ Resource items missing dynamic properties');
                     }
                 }
             }

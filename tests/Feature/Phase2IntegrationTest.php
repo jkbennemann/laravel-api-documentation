@@ -20,11 +20,12 @@ beforeEach(function () {
 function findRouteInDocs(array $docs, string $uri, string $method = 'GET'): ?array
 {
     foreach ($docs as $doc) {
-        if (isset($doc['method']) && $doc['method'] === $method && 
+        if (isset($doc['method']) && $doc['method'] === $method &&
             isset($doc['uri']) && str_contains($doc['uri'], $uri)) {
             return $doc;
         }
     }
+
     return null;
 }
 
@@ -41,17 +42,17 @@ it('generates proper schema for paginated responses', function () {
     expect($paginatedUsersRoute)->toHaveKey('uri');
     expect($paginatedUsersRoute['uri'])->toContain('users/paginated');
     expect($paginatedUsersRoute)->toHaveKey('responses');
-    
+
     // Check response structure
     $responses = $paginatedUsersRoute['responses'];
     expect($responses)->toHaveKey('200');
-    
+
     $successResponse = $responses['200'];
     expect($successResponse)->toHaveKey('content_type');
     expect($successResponse['content_type'])->toBe('application/json');
     expect($successResponse)->toHaveKey('type');
     expect($successResponse['type'])->toBe('object');
-    
+
     // Verify resource information is present
     expect($successResponse)->toHaveKey('resource');
     expect($successResponse['resource'])->toBe('JkBennemann\LaravelApiDocumentation\Tests\Stubs\Resources\PaginatedUserResource');
@@ -70,17 +71,17 @@ it('handles conditional response fields properly', function () {
     expect($conditionalPostRoute)->toHaveKey('uri');
     expect($conditionalPostRoute['uri'])->toContain('posts');
     expect($conditionalPostRoute)->toHaveKey('responses');
-    
+
     // Check response structure
     $responses = $conditionalPostRoute['responses'];
     expect($responses)->toHaveKey('200');
-    
+
     $successResponse = $responses['200'];
     expect($successResponse)->toHaveKey('content_type');
     expect($successResponse['content_type'])->toBe('application/json');
     expect($successResponse)->toHaveKey('type');
     expect($successResponse['type'])->toBe('object');
-    
+
     // Note: We don't check for resource information as it might not be present in all implementations
 });
 
@@ -100,34 +101,34 @@ it('generates standardized error response schemas', function () {
     // Test server error endpoint
     $serverErrorRoute = findRouteInDocs($documentation, 'errors/server');
     expect($serverErrorRoute)->not->toBeNull('Server error endpoint should be documented');
-    
+
     // Verify the endpoints have response structures
     expect($validationErrorRoute)->toHaveKey('responses');
     expect($notFoundErrorRoute)->toHaveKey('responses');
     expect($serverErrorRoute)->toHaveKey('responses');
-    
+
     // Check that responses exist for each route
     $validationResponses = $validationErrorRoute['responses'];
     $notFoundResponses = $notFoundErrorRoute['responses'];
     $serverErrorResponses = $serverErrorRoute['responses'];
-    
+
     // Verify that the responses are not empty
     expect($validationResponses)->not->toBeEmpty('Validation error should have responses');
     expect($notFoundResponses)->not->toBeEmpty('Not found error should have responses');
     expect($serverErrorResponses)->not->toBeEmpty('Server error should have responses');
-    
+
     // Get the first response from each endpoint to verify content type
     $validationResponse = reset($validationResponses);
     $notFoundResponse = reset($notFoundResponses);
     $serverErrorResponse = reset($serverErrorResponses);
-    
+
     // Verify content type for all responses
     expect($validationResponse)->toHaveKey('content_type');
     expect($validationResponse['content_type'])->toBe('application/json');
-    
+
     expect($notFoundResponse)->toHaveKey('content_type');
     expect($notFoundResponse['content_type'])->toBe('application/json');
-    
+
     expect($serverErrorResponse)->toHaveKey('content_type');
     expect($serverErrorResponse['content_type'])->toBe('application/json');
 });
@@ -145,16 +146,16 @@ it('handles custom pagination structures', function () {
     expect($customPaginatedRoute)->toHaveKey('uri');
     expect($customPaginatedRoute['uri'])->toContain('custom/paginated');
     expect($customPaginatedRoute)->toHaveKey('responses');
-    
+
     // Check response structure
     $responses = $customPaginatedRoute['responses'];
     expect($responses)->toHaveKey('200');
-    
+
     $successResponse = $responses['200'];
     expect($successResponse)->toHaveKey('content_type');
     expect($successResponse['content_type'])->toBe('application/json');
     expect($successResponse)->toHaveKey('type');
-    
+
     // For JsonResponse with custom structure, we expect object type
     expect($successResponse['type'])->toBe('object', 'Should be object type for JsonResponse');
 });
@@ -172,16 +173,16 @@ it('documents conditional posts collection properly', function () {
     expect($conditionalPostsRoute)->toHaveKey('uri');
     expect($conditionalPostsRoute['uri'])->toContain('posts/conditional');
     expect($conditionalPostsRoute)->toHaveKey('responses');
-    
+
     // Check response structure
     $responses = $conditionalPostsRoute['responses'];
     expect($responses)->toHaveKey('200');
-    
+
     $successResponse = $responses['200'];
     expect($successResponse)->toHaveKey('content_type');
     expect($successResponse['content_type'])->toBe('application/json');
     expect($successResponse)->toHaveKey('type');
-    
+
     // We expect this to be an object since it's a ResourceCollection
     expect($successResponse['type'])->toBe('object', 'Should be object type for ResourceCollection');
 });
@@ -194,37 +195,37 @@ it('maintains consistent error response structure across endpoints', function ()
     // Find error endpoints
     $notFoundRoute = findRouteInDocs($documentation, 'errors/not-found');
     $serverErrorRoute = findRouteInDocs($documentation, 'errors/server');
-    
+
     // Verify routes exist
     expect($notFoundRoute)->not->toBeNull('Not found endpoint should be documented');
     expect($serverErrorRoute)->not->toBeNull('Server error endpoint should be documented');
-    
+
     // Verify routes have responses
     expect($notFoundRoute)->toHaveKey('responses');
     expect($serverErrorRoute)->toHaveKey('responses');
-    
+
     // Get responses
     $notFoundResponses = $notFoundRoute['responses'];
     $serverErrorResponses = $serverErrorRoute['responses'];
-    
+
     // Verify responses are not empty
     expect($notFoundResponses)->not->toBeEmpty('Not found should have responses');
     expect($serverErrorResponses)->not->toBeEmpty('Server error should have responses');
-    
+
     // Get the first response from each endpoint
     $notFoundResponse = reset($notFoundResponses);
     $serverErrorResponse = reset($serverErrorResponses);
-    
+
     // Verify content type consistency
     expect($notFoundResponse)->toHaveKey('content_type');
     expect($serverErrorResponse)->toHaveKey('content_type');
-    
+
     expect($notFoundResponse['content_type'])->toBe('application/json');
     expect($serverErrorResponse['content_type'])->toBe('application/json');
-    
+
     // Verify type consistency
     expect($notFoundResponse)->toHaveKey('type');
     expect($serverErrorResponse)->toHaveKey('type');
-    
+
     expect($notFoundResponse['type'])->toBe($serverErrorResponse['type']);
 });

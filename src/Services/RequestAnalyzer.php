@@ -26,16 +26,22 @@ class RequestAnalyzer
 
     private bool $enabled;
 
+    private EnhancedValidationRuleAnalyzer $enhancedAnalyzer;
+
+    private NestedArrayValidationAnalyzer $nestedArrayAnalyzer;
+
     public function __construct(private readonly Repository $configuration)
     {
         $this->enabled = $configuration->get('api-documentation.smart_requests.enabled', true);
         $this->ruleTypeMapping = $configuration->get('api-documentation.smart_requests.rule_types', []);
+        $this->enhancedAnalyzer = new EnhancedValidationRuleAnalyzer;
+        $this->nestedArrayAnalyzer = new NestedArrayValidationAnalyzer($this->enhancedAnalyzer);
     }
 
     /**
      * Analyze a request class to determine its parameter structure
      */
-    public function analyzeRequest(?string $requestClass): array
+    public function analyzeRequest(?string $requestClass, array $excludePathParameters = []): array
     {
         if (! $this->enabled || ! $requestClass || ! class_exists($requestClass)) {
             return [];
@@ -54,38 +60,46 @@ class RequestAnalyzer
             if ($reflection->isSubclassOf(FormRequest::class)) {
                 // Check for parameters merged from route values in prepareForValidation
                 $routeParameters = $this->detectRouteParameters($reflection);
-                
+
                 // Check for parameters to ignore via IgnoreDataParameter attribute
                 $ignoredParameters = $this->detectIgnoredParameters($reflection);
-                
+
                 // Try rules() method first
                 $parameters = $this->analyzeRulesMethod($reflection);
-                
-                // Remove route parameters and ignored parameters from the body parameters
+
+                // Remove route parameters, path parameters, and ignored parameters from the body parameters
                 foreach ($routeParameters as $param) {
                     unset($parameters[$param]);
                 }
                 
+                foreach ($excludePathParameters as $param) {
+                    unset($parameters[$param]);
+                }
+
                 foreach ($ignoredParameters as $param) {
                     unset($parameters[$param]);
                 }
-                
+
                 if (! empty($parameters)) {
                     return $parameters;
                 }
 
                 // Then try rules property
                 $parameters = $this->analyzeValidationRulesProperty($reflection);
-                
-                // Remove route parameters and ignored parameters from the body parameters
+
+                // Remove route parameters, path parameters, and ignored parameters from the body parameters
                 foreach ($routeParameters as $param) {
                     unset($parameters[$param]);
                 }
                 
+                foreach ($excludePathParameters as $param) {
+                    unset($parameters[$param]);
+                }
+
                 foreach ($ignoredParameters as $param) {
                     unset($parameters[$param]);
                 }
-                
+
                 return $parameters;
             }
 
@@ -115,7 +129,7 @@ class RequestAnalyzer
     private function extractParameterAttributes(ReflectionClass $reflection): array
     {
         $parameters = [];
-        
+
         // First check for attributes on the class itself
         $attributes = $reflection->getAttributes(Parameter::class);
         foreach ($attributes as $attribute) {
@@ -138,12 +152,12 @@ class RequestAnalyzer
                 $parameters[$parameter->name]['example'] = $parameter->example;
             }
         }
-        
+
         // Then check for attributes on the rules() method if it exists
         if ($reflection->hasMethod('rules')) {
             $rulesMethod = $reflection->getMethod('rules');
             $methodAttributes = $rulesMethod->getAttributes(Parameter::class);
-            
+
             foreach ($methodAttributes as $attribute) {
                 $parameter = $attribute->newInstance();
                 $parameters[$parameter->name] = [
@@ -214,18 +228,21 @@ class RequestAnalyzer
                 $fieldName = $item->key->value;
                 $rules = $this->extractRules($item->value);
 
-                $parameters[$fieldName] = $this->parseValidationRules($rules);
+                $parameters[$fieldName] = $this->enhancedAnalyzer->parseValidationRules($rules);
             }
 
             // Transform flat nested parameters into proper nested structure
-            return $this->transformNestedParameters($parameters);
+            $transformedParameters = $this->transformNestedParameters($parameters);
+
+            // Apply nested array validation analysis
+            return $this->nestedArrayAnalyzer->analyzeNestedArrayValidation($transformedParameters);
         } catch (Throwable) {
             return [];
         }
     }
 
     /**
-     * Extract rules from node value
+     * Extract rules from node value (enhanced to handle Rule objects, Enums, etc.)
      */
     private function extractRules($value): array
     {
@@ -240,9 +257,16 @@ class RequestAnalyzer
                     $rules[] = $ruleItem->value->value;
                 } elseif ($ruleItem->value instanceof \PhpParser\Node\Expr\ClassConstFetch) {
                     // Handle class constants like Rule::in([...])
-                    $rules[] = 'in'; // Simplified handling
+                    $rules[] = 'in'; // Simplified handling for now
+                } elseif ($ruleItem->value instanceof \PhpParser\Node\Expr\StaticCall) {
+                    // Handle static calls like Rule::in(['value1', 'value2'])
+                    $rules[] = $this->extractRuleFromStaticCall($ruleItem->value);
+                } elseif ($ruleItem->value instanceof \PhpParser\Node\Expr\New_) {
+                    // Handle new instances like new Enum(MyEnum::class)
+                    $rules[] = $this->extractRuleFromNewInstance($ruleItem->value);
                 }
             }
+
             return $rules;
         } elseif ($value instanceof String_) {
             // Handle string rules like 'required|string|max:255'
@@ -253,371 +277,57 @@ class RequestAnalyzer
     }
 
     /**
-     * Parse Laravel validation rules into OpenAPI schema
-     * 
-     * Rule: Write concise, technical PHP code with accurate examples
-     * Rule: Keep the code clean and readable
+     * Extract rule information from static method calls (e.g., Rule::in(...))
      */
-    private function parseValidationRules(array $rules): array
+    private function extractRuleFromStaticCall(\PhpParser\Node\Expr\StaticCall $staticCall): string
     {
-        $type = 'string'; // Default type
-        $format = null;
-        $required = false;
-        $description = [];
-        $deprecated = false;
-        $minimum = null;
-        $maximum = null;
-        $minLength = null;
-        $maxLength = null;
-        $pattern = null;
-        $enum = null;
-        $example = null;
-        $items = null;
-        $nullable = false;
+        try {
+            // Get the class name and method name
+            $className = $staticCall->class->toString() ?? '';
+            $methodName = $staticCall->name->toString() ?? '';
 
-        foreach ($rules as $rule) {
-            $rule = trim($rule);
-            
-            // Skip empty rules
-            if (empty($rule)) {
-                continue;
+            // Handle Laravel Rule class
+            if ($className === 'Rule' || str_ends_with($className, '\\Rule')) {
+                return match ($methodName) {
+                    'in' => 'in',
+                    'notIn' => 'not_in',
+                    'exists' => 'exists',
+                    'unique' => 'unique',
+                    'required' => 'required',
+                    'nullable' => 'nullable',
+                    'email' => 'email',
+                    'url' => 'url',
+                    default => $methodName,
+                };
             }
-            
-            // Check for rule with parameters (rule:param1,param2)
-            $ruleName = $rule;
-            $ruleParams = [];
-            if (str_contains($rule, ':')) {
-                [$ruleName, $paramStr] = explode(':', $rule, 2);
-                $ruleParams = explode(',', $paramStr);
+
+            // Return method name as fallback
+            return $methodName;
+        } catch (Throwable) {
+            return 'custom_rule';
+        }
+    }
+
+    /**
+     * Extract rule information from new instance calls (e.g., new Enum(...))
+     */
+    private function extractRuleFromNewInstance(\PhpParser\Node\Expr\New_ $newInstance): string
+    {
+        try {
+            $className = $newInstance->class->toString() ?? '';
+
+            // Handle Enum validation rule
+            if (str_ends_with($className, 'Enum') || $className === 'Enum') {
+                return 'enum';
             }
-            
-            // Process rules
-            switch ($ruleName) {
-                // Basic presence rules
-                case 'required':
-                    $required = true;
-                    $description[] = 'Required.';
-                    break;
-                    
-                case 'nullable':
-                    $nullable = true;
-                    $description[] = 'Can be null.';
-                    break;
-                    
-                case 'sometimes':
-                    $required = false;
-                    $description[] = 'Optional.';
-                    break;
-                    
-                case 'deprecated':
-                    $deprecated = true;
-                    $description[] = 'Deprecated.';
-                    break;
-                    
-                // Type rules
-                case 'integer':
-                case 'numeric':
-                case 'int':
-                    $type = 'integer';
-                    $description[] = 'Must be an integer.';
-                    break;
-                    
-                case 'decimal':
-                    $type = 'number';
-                    $format = 'float';
-                    $description[] = 'Must be a decimal number.';
-                    if (!empty($ruleParams[0])) {
-                        $description[] = "Total digits: {$ruleParams[0]}.";
-                    }
-                    if (!empty($ruleParams[1])) {
-                        $description[] = "Decimal places: {$ruleParams[1]}.";
-                    }
-                    break;
-                    
-                case 'numeric':
-                    $type = 'number';
-                    $description[] = 'Must be a number.';
-                    break;
-                    
-                case 'boolean':
-                case 'bool':
-                    $type = 'boolean';
-                    $description[] = 'Must be a boolean.';
-                    break;
-                    
-                case 'array':
-                    $type = 'array';
-                    $description[] = 'Must be an array.';
-                    // Initialize items if not set
-                    if ($items === null) {
-                        $items = ['type' => 'string'];
-                    }
-                    break;
-                    
-                case 'file':
-                    $type = 'string';
-                    $format = 'binary';
-                    $description[] = 'Must be a file.';
-                    break;
-                    
-                case 'image':
-                    $type = 'string';
-                    $format = 'binary';
-                    $description[] = 'Must be an image file.';
-                    break;
-                    
-                case 'date':
-                    $type = 'string';
-                    $format = 'date';
-                    $description[] = 'Must be a valid date.';
-                    break;
-                    
-                case 'date_format':
-                    $type = 'string';
-                    $format = 'date-time';
-                    if (!empty($ruleParams[0])) {
-                        $description[] = "Must match the format: {$ruleParams[0]}.";
-                        // Try to guess if it's a date or datetime
-                        if (str_contains($ruleParams[0], 'H:i') || str_contains($ruleParams[0], 'h:i')) {
-                            $format = 'date-time';
-                        } else {
-                            $format = 'date';
-                        }
-                        // Create example based on format
-                        try {
-                            $example = (new \DateTime())->format($ruleParams[0]);
-                        } catch (\Throwable $e) {
-                            // If format is invalid, don't set example
-                        }
-                    }
-                    break;
-                    
-                case 'email':
-                    $type = 'string';
-                    $format = 'email';
-                    $description[] = 'Must be a valid email address.';
-                    $example = 'user@example.com';
-                    break;
-                    
-                case 'uuid':
-                    $type = 'string';
-                    $format = 'uuid';
-                    $description[] = 'Must be a valid UUID.';
-                    $example = '123e4567-e89b-12d3-a456-426614174000';
-                    break;
-                    
-                case 'url':
-                    $type = 'string';
-                    $format = 'uri';
-                    $description[] = 'Must be a valid URL.';
-                    $example = 'https://example.com';
-                    break;
-                    
-                case 'ip':
-                    $type = 'string';
-                    $format = 'ipv4';
-                    $description[] = 'Must be a valid IP address.';
-                    $example = '192.168.1.1';
-                    break;
-                    
-                case 'json':
-                    $type = 'object';
-                    $description[] = 'Must be a valid JSON string.';
-                    break;
-                    
-                // String rules
-                case 'string':
-                    $type = 'string';
-                    $description[] = 'Must be a string.';
-                    break;
-                    
-                case 'alpha':
-                    $type = 'string';
-                    $pattern = '^[a-zA-Z]+$';
-                    $description[] = 'Must contain only alphabetic characters.';
-                    break;
-                    
-                case 'alpha_num':
-                case 'alpha_numeric':
-                    $type = 'string';
-                    $pattern = '^[a-zA-Z0-9]+$';
-                    $description[] = 'Must contain only alphanumeric characters.';
-                    break;
-                    
-                case 'alpha_dash':
-                    $type = 'string';
-                    $pattern = '^[a-zA-Z0-9_-]+$';
-                    $description[] = 'Must contain only letters, numbers, dashes, and underscores.';
-                    break;
-                    
-                // Size rules
-                case 'min':
-                    if ($type === 'string') {
-                        $minLength = (int)$ruleParams[0];
-                        $description[] = "Minimum length: {$ruleParams[0]}.";
-                    } elseif ($type === 'integer' || $type === 'number') {
-                        $minimum = (int)$ruleParams[0];
-                        $description[] = "Minimum value: {$ruleParams[0]}.";
-                    } elseif ($type === 'array') {
-                        $description[] = "Minimum items: {$ruleParams[0]}.";
-                    }
-                    break;
-                    
-                case 'max':
-                    if ($type === 'string') {
-                        $maxLength = (int)$ruleParams[0];
-                        $description[] = "Maximum length: {$ruleParams[0]}.";
-                    } elseif ($type === 'integer' || $type === 'number') {
-                        $maximum = (int)$ruleParams[0];
-                        $description[] = "Maximum value: {$ruleParams[0]}.";
-                    } elseif ($type === 'array') {
-                        $description[] = "Maximum items: {$ruleParams[0]}.";
-                    }
-                    break;
-                    
-                case 'size':
-                    if ($type === 'string') {
-                        $minLength = $maxLength = (int)$ruleParams[0];
-                        $description[] = "Exact length: {$ruleParams[0]}.";
-                    } elseif ($type === 'integer' || $type === 'number') {
-                        $minimum = $maximum = (int)$ruleParams[0];
-                        $description[] = "Exact value: {$ruleParams[0]}.";
-                    } elseif ($type === 'array') {
-                        $description[] = "Exact item count: {$ruleParams[0]}.";
-                    }
-                    break;
-                    
-                case 'between':
-                    if (!empty($ruleParams[0]) && !empty($ruleParams[1])) {
-                        if ($type === 'string') {
-                            $minLength = (int)$ruleParams[0];
-                            $maxLength = (int)$ruleParams[1];
-                            $description[] = "Length between {$ruleParams[0]} and {$ruleParams[1]}.";
-                        } elseif ($type === 'integer' || $type === 'number') {
-                            $minimum = (int)$ruleParams[0];
-                            $maximum = (int)$ruleParams[1];
-                            $description[] = "Value between {$ruleParams[0]} and {$ruleParams[1]}.";
-                        } elseif ($type === 'array') {
-                            $description[] = "Item count between {$ruleParams[0]} and {$ruleParams[1]}.";
-                        }
-                    }
-                    break;
-                    
-                // Content rules
-                case 'in':
-                    if (!empty($ruleParams)) {
-                        $enum = $ruleParams;
-                        $description[] = 'Must be one of: ' . implode(', ', $ruleParams) . '.';
-                        // Set example to first allowed value
-                        $example = $ruleParams[0];
-                    }
-                    break;
-                    
-                case 'not_in':
-                    if (!empty($ruleParams)) {
-                        $description[] = 'Must not be any of: ' . implode(', ', $ruleParams) . '.';
-                    }
-                    break;
-                    
-                case 'regex':
-                    if (!empty($ruleParams[0])) {
-                        $pattern = trim($ruleParams[0], '/');
-                        $description[] = 'Must match pattern: ' . $pattern . '.';
-                    }
-                    break;
-                    
-                case 'not_regex':
-                    if (!empty($ruleParams[0])) {
-                        $description[] = 'Must not match pattern: ' . trim($ruleParams[0], '/') . '.';
-                    }
-                    break;
-                    
-                case 'password':
-                    $type = 'string';
-                    $format = 'password';
-                    $description[] = 'Must be a password.';
-                    if (!empty($ruleParams)) {
-                        $description[] = 'Password rules: ' . implode(', ', $ruleParams) . '.';
-                    }
-                    break;
-                    
-                // Check for custom mappings from configuration
-                default:
-                    foreach ($this->ruleTypeMapping as $rulePattern => $mappedType) {
-                        if (preg_match('/^' . $rulePattern . '/', $ruleName)) {
-                            $type = $mappedType;
-                            break;
-                        }
-                    }
-                    break;
-            }
+
+            // Extract class name for custom rules
+            $shortName = basename(str_replace('\\', '/', $className));
+
+            return strtolower(preg_replace('/([A-Z])/', '_$1', lcfirst($shortName)));
+        } catch (Throwable) {
+            return 'custom_rule';
         }
-
-        // Combine description array into a string
-        $descriptionText = implode(' ', array_unique($description));
-
-        // Build the result with all collected information
-        $result = [
-            'type' => $type,
-            'required' => $required,
-        ];
-
-        // Add nullable type if applicable
-        if ($nullable) {
-            $result['nullable'] = true;
-        }
-
-        // Add format if defined
-        if ($format) {
-            $result['format'] = $format;
-        }
-
-        // Add description if not empty
-        if (!empty($descriptionText)) {
-            $result['description'] = $descriptionText;
-        }
-
-        // Add deprecated flag if true
-        if ($deprecated) {
-            $result['deprecated'] = true;
-        }
-
-        // Add constraints if defined
-        if ($minimum !== null) {
-            $result['minimum'] = $minimum;
-        }
-
-        if ($maximum !== null) {
-            $result['maximum'] = $maximum;
-        }
-
-        if ($minLength !== null) {
-            $result['minLength'] = $minLength;
-        }
-
-        if ($maxLength !== null) {
-            $result['maxLength'] = $maxLength;
-        }
-
-        if ($pattern !== null) {
-            $result['pattern'] = $pattern;
-        }
-
-        if ($enum !== null) {
-            $result['enum'] = $enum;
-        }
-
-        // Add example if available
-        if ($example !== null) {
-            $result['example'] = $example;
-        }
-
-        // Add items definition for arrays
-        if ($type === 'array' && $items !== null) {
-            $result['items'] = $items;
-        }
-
-        return $result;
     }
 
     /**
@@ -632,15 +342,15 @@ class RequestAnalyzer
 
             $rulesProperty = $reflection->getProperty('rules');
             $rulesProperty->setAccessible(true);
-            
+
             // Create an instance to get the rules
             $instance = $reflection->newInstanceWithoutConstructor();
             $rules = $rulesProperty->getValue($instance);
-            
+
             if (! is_array($rules)) {
                 return [];
             }
-            
+
             $parameters = [];
             foreach ($rules as $field => $fieldRules) {
                 if (is_string($fieldRules)) {
@@ -650,11 +360,13 @@ class RequestAnalyzer
                 } else {
                     continue; // Skip if not string or array
                 }
-                
-                $parameters[$field] = $this->parseValidationRules($fieldRules);
+
+                $parameters[$field] = $this->enhancedAnalyzer->parseValidationRules($fieldRules);
             }
-            
-            return $this->transformNestedParameters($parameters);
+
+            $transformedParameters = $this->transformNestedParameters($parameters);
+
+            return $this->nestedArrayAnalyzer->analyzeNestedArrayValidation($transformedParameters);
         } catch (Throwable) {
             return [];
         }
@@ -704,7 +416,7 @@ class RequestAnalyzer
                 $fieldName = $item->key->value;
                 $rules = $this->extractRules($item->value);
 
-                $parameters[$fieldName] = $this->parseValidationRules($rules);
+                $parameters[$fieldName] = $this->enhancedAnalyzer->parseValidationRules($rules);
             }
 
             return $parameters;
@@ -733,7 +445,7 @@ class RequestAnalyzer
      */
     public function analyzeSpatieDataRequest(string $dataClass): array
     {
-        if (!class_exists($dataClass) || !is_subclass_of($dataClass, \Spatie\LaravelData\Data::class)) {
+        if (! class_exists($dataClass) || ! is_subclass_of($dataClass, \Spatie\LaravelData\Data::class)) {
             return [];
         }
 
@@ -754,7 +466,7 @@ class RequestAnalyzer
         try {
             $reflection = new ReflectionClass($dataClass);
             $constructor = $reflection->getConstructor();
-            if (!$constructor) {
+            if (! $constructor) {
                 return [];
             }
 
@@ -763,32 +475,34 @@ class RequestAnalyzer
 
             foreach ($constructor->getParameters() as $parameter) {
                 $parameterName = $parameter->getName();
-                
+
                 // Skip internal Spatie Data properties that shouldn't be included in the API documentation
                 if ($parameterName === '_additional' || $parameterName === '_data_context') {
                     continue;
                 }
-                
+
                 $outputName = $this->getOutputPropertyName($reflection, $parameterName, $hasSnakeCaseMapping);
                 $fullName = $prefix ? "{$prefix}.{$outputName}" : $outputName;
 
                 $parameterType = $parameter->getType();
-                if (!$parameterType) {
+                if (! $parameterType) {
                     continue;
                 }
 
                 // Handle union types
                 if ($parameterType instanceof \ReflectionUnionType) {
                     $parameters[$fullName] = $this->handleRequestUnionType($parameterType, $processedClasses, $fullName);
+
                     continue;
                 }
 
                 $typeName = $parameterType->getName();
-                
+
                 // Handle nested Spatie Data objects
                 if (is_subclass_of($typeName, \Spatie\LaravelData\Data::class)) {
                     $nestedParams = $this->buildSpatieDataRequestSchema($typeName, $processedClasses, $fullName);
                     $parameters = array_merge($parameters, $nestedParams);
+
                     continue;
                 }
 
@@ -798,15 +512,16 @@ class RequestAnalyzer
                         'type' => 'array',
                         'format' => null,
                         'description' => $this->getParameterDescription($constructor, $parameterName),
-                        'required' => !$parameter->isOptional(),
+                        'required' => ! $parameter->isOptional(),
                     ];
+
                     continue;
                 }
 
                 // Handle basic types
                 $parameters[$fullName] = $this->buildRequestParameterSchema($parameterType, $processedClasses, $fullName);
                 $parameters[$fullName]['description'] = $this->getParameterDescription($constructor, $parameterName);
-                $parameters[$fullName]['required'] = !$parameter->isOptional();
+                $parameters[$fullName]['required'] = ! $parameter->isOptional();
             }
 
             return $parameters;
@@ -825,7 +540,7 @@ class RequestAnalyzer
         }
 
         $typeName = $type->getName();
-        
+
         // Handle basic types
         return [
             'type' => $this->mapPhpTypeToOpenApi($typeName),
@@ -839,13 +554,13 @@ class RequestAnalyzer
     private function handleRequestUnionType(\ReflectionUnionType $unionType, array $processedClasses = [], string $fullName = ''): array
     {
         $types = [];
-        
+
         foreach ($unionType->getTypes() as $type) {
             $typeName = $type->getName();
-            
+
             if (is_subclass_of($typeName, \Spatie\LaravelData\Data::class)) {
                 $nestedParams = $this->buildSpatieDataRequestSchema($typeName, $processedClasses, $fullName);
-                if (!empty($nestedParams)) {
+                if (! empty($nestedParams)) {
                     return [
                         'type' => 'object',
                         'format' => null,
@@ -853,22 +568,23 @@ class RequestAnalyzer
                     ];
                 }
             }
-            
+
             if ($this->isCollection($typeName)) {
                 $types[] = 'array';
+
                 continue;
             }
-            
+
             $types[] = $this->mapPhpTypeToOpenApi($typeName);
         }
-        
+
         if (count($types) === 1) {
             return [
                 'type' => $types[0],
                 'format' => null,
             ];
         }
-        
+
         // Multiple types - use string as fallback
         return [
             'type' => 'string',
@@ -883,14 +599,14 @@ class RequestAnalyzer
     {
         $mapNameAttributes = $reflection->getAttributes(\Spatie\LaravelData\Attributes\MapName::class);
         $mapOutputAttributes = $reflection->getAttributes(\Spatie\LaravelData\Attributes\MapOutputName::class);
-        
+
         foreach (array_merge($mapNameAttributes, $mapOutputAttributes) as $attribute) {
             $args = $attribute->getArguments();
-            if (!empty($args) && $args[0] === \Spatie\LaravelData\Mappers\SnakeCaseMapper::class) {
+            if (! empty($args) && $args[0] === \Spatie\LaravelData\Mappers\SnakeCaseMapper::class) {
                 return true;
             }
         }
-        
+
         return false;
     }
 
@@ -902,7 +618,7 @@ class RequestAnalyzer
         if ($hasSnakeCaseMapping) {
             return Str::snake($propertyName);
         }
-        
+
         return $propertyName;
     }
 
@@ -912,13 +628,13 @@ class RequestAnalyzer
     private function getParameterDescription(\ReflectionMethod $constructor, string $parameterName): string
     {
         $docComment = $constructor->getDocComment();
-        if (!$docComment) {
+        if (! $docComment) {
             return '';
         }
 
         // Extract @param descriptions
-        preg_match_all('/@param\s+[^\s]+\s+\$' . preg_quote($parameterName) . '\s+(.*)$/m', $docComment, $matches);
-        
+        preg_match_all('/@param\s+[^\s]+\s+\$'.preg_quote($parameterName).'\s+(.*)$/m', $docComment, $matches);
+
         return trim($matches[1][0] ?? '');
     }
 
@@ -962,7 +678,7 @@ class RequestAnalyzer
                 $childKey = $parts[1];
 
                 // Initialize the parent parameter if it doesn't exist
-                if (!isset($nestedGroups[$parentKey])) {
+                if (! isset($nestedGroups[$parentKey])) {
                     $nestedGroups[$parentKey] = [
                         'name' => $parentKey,
                         'description' => null,
@@ -988,7 +704,7 @@ class RequestAnalyzer
                 // Check if this key is a parent of nested parameters
                 $hasNestedChildren = false;
                 foreach (array_keys($parameters) as $otherKey) {
-                    if (strpos($otherKey, $key . '.') === 0) {
+                    if (strpos($otherKey, $key.'.') === 0) {
                         $hasNestedChildren = true;
                         break;
                     }
@@ -996,7 +712,7 @@ class RequestAnalyzer
 
                 if ($hasNestedChildren) {
                     // This will be handled when processing the nested children
-                    if (!isset($nestedGroups[$key])) {
+                    if (! isset($nestedGroups[$key])) {
                         $nestedGroups[$key] = [
                             'name' => $key,
                             'description' => $value['description'] ?? null,
@@ -1017,39 +733,39 @@ class RequestAnalyzer
         // Merge nested groups into the result
         return array_merge($transformedParameters, $nestedGroups);
     }
-    
+
     /**
      * Detect parameters merged from route values in prepareForValidation method
      */
     private function detectRouteParameters(ReflectionClass $reflection): array
     {
         try {
-            if (!$reflection->hasMethod('prepareForValidation')) {
+            if (! $reflection->hasMethod('prepareForValidation')) {
                 return [];
             }
-            
+
             $method = $reflection->getMethod('prepareForValidation');
             $fileName = $method->getFileName();
-            
-            if (!$fileName || !file_exists($fileName)) {
+
+            if (! $fileName || ! file_exists($fileName)) {
                 return [];
             }
-            
+
             $parser = (new ParserFactory)->createForNewestSupportedVersion();
             $ast = $parser->parse(file_get_contents($fileName));
-            
+
             $nodeFinder = new NodeFinder;
             $prepareMethod = $nodeFinder->findFirst($ast, function ($node) {
                 return $node instanceof \PhpParser\Node\Stmt\ClassMethod
                     && $node->name->toString() === 'prepareForValidation';
             });
-            
-            if (!$prepareMethod) {
+
+            if (! $prepareMethod) {
                 return [];
             }
-            
+
             $routeParameters = [];
-            
+
             // Find $this->merge(['param' => $this->route('paramName')]) patterns
             $mergeNodes = $nodeFinder->find($prepareMethod, function ($node) {
                 return $node instanceof MethodCall
@@ -1057,19 +773,19 @@ class RequestAnalyzer
                     && $node->var->name === 'this'
                     && $node->name->toString() === 'merge';
             });
-            
+
             foreach ($mergeNodes as $mergeNode) {
-                if (!isset($mergeNode->args[0]) || !$mergeNode->args[0]->value instanceof Array_) {
+                if (! isset($mergeNode->args[0]) || ! $mergeNode->args[0]->value instanceof Array_) {
                     continue;
                 }
-                
+
                 foreach ($mergeNode->args[0]->value->items as $item) {
-                    if (!$item || !$item->key instanceof String_) {
+                    if (! $item || ! $item->key instanceof String_) {
                         continue;
                     }
-                    
+
                     $paramName = $item->key->value;
-                    
+
                     // Check if the value is $this->route(...)
                     $isRouteParam = $nodeFinder->findFirst($item->value, function ($node) {
                         return $node instanceof MethodCall
@@ -1077,19 +793,19 @@ class RequestAnalyzer
                             && $node->var->name === 'this'
                             && $node->name->toString() === 'route';
                     });
-                    
+
                     if ($isRouteParam) {
                         $routeParameters[] = $paramName;
                     }
                 }
             }
-            
+
             return $routeParameters;
         } catch (Throwable) {
             return [];
         }
     }
-    
+
     /**
      * Detect parameters to ignore via IgnoreDataParameter attribute
      */
@@ -1097,21 +813,21 @@ class RequestAnalyzer
     {
         try {
             $ignoredParameters = [];
-            
+
             // Check for IgnoreDataParameter attributes on public methods
             foreach ($reflection->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
                 $attributes = $method->getAttributes(IgnoreDataParameter::class);
-                
+
                 foreach ($attributes as $attribute) {
                     $instance = $attribute->newInstance();
                     $params = explode(',', $instance->parameters);
-                    
+
                     foreach ($params as $param) {
                         $ignoredParameters[] = trim($param);
                     }
                 }
             }
-            
+
             return $ignoredParameters;
         } catch (Throwable) {
             return [];

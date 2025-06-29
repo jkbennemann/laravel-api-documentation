@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers;
 
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
-use JkBennemann\LaravelApiDocumentation\Attributes\Tag;
-use JkBennemann\LaravelApiDocumentation\Attributes\Summary;
+use Illuminate\Http\Request;
 use JkBennemann\LaravelApiDocumentation\Attributes\Description;
+use JkBennemann\LaravelApiDocumentation\Attributes\Summary;
+use JkBennemann\LaravelApiDocumentation\Attributes\Tag;
 
 class ValidationController
 {
@@ -25,12 +25,12 @@ class ValidationController
             'website' => 'nullable|url',
             'profile' => 'nullable|array',
             'profile.bio' => 'nullable|string|max:1000',
-            'profile.social' => 'nullable|array'
+            'profile.social' => 'nullable|array',
         ]);
-        
+
         return response()->json($validated);
     }
-    
+
     #[Tag('Validation')]
     #[Summary('Complex nested validation example')]
     public function complexValidation(Request $request): JsonResponse
@@ -48,10 +48,10 @@ class ValidationController
             'address.zip' => 'required_with:address|string',
             'address.country' => 'required_with:address|string',
         ]);
-        
+
         return response()->json($validated);
     }
-    
+
     #[Tag('Validation')]
     #[Summary('Validation with custom error response')]
     public function validationWithErrors(Request $request): JsonResponse
@@ -62,7 +62,7 @@ class ValidationController
                 'password' => 'required|string|min:8',
                 'password_confirmation' => 'required|same:password',
             ]);
-            
+
             return response()->json(['message' => 'Validation passed']);
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
