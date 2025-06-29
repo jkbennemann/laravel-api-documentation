@@ -56,7 +56,7 @@ class ResponseAnalyzer
 
         // CRITICAL: Always check for resource patterns first with comprehensive analysis
         $comprehensiveResult = $this->performComprehensiveResourceAnalysis($controller, $method);
-        if (!empty($comprehensiveResult)) {
+        if (! empty($comprehensiveResult)) {
             return $comprehensiveResult;
         }
 
@@ -66,16 +66,16 @@ class ResponseAnalyzer
         if (! $returnType) {
             // Try multiple fallback methods for better detection
             $docBlockResult = $this->extractFromDocBlock($reflection);
-            if (!empty($docBlockResult)) {
+            if (! empty($docBlockResult)) {
                 return $docBlockResult;
             }
-            
+
             // Analyze method body for resource patterns when no return type
             $methodBodyResult = $this->analyzeMethodBodyForResourcePatterns($controller, $method);
-            if (!empty($methodBodyResult)) {
+            if (! empty($methodBodyResult)) {
                 return $methodBodyResult;
             }
-            
+
             // Final fallback to method name patterns
             return $this->generateMethodNameBasedDefaults($method);
         }
@@ -113,10 +113,10 @@ class ResponseAnalyzer
         // Final fallback: even when we have a return type, check method body for resource patterns
         // This is critical for catching cases where return type is generic but method body has specific patterns
         $methodBodyResult = $this->analyzeMethodBodyForResourcePatterns($controller, $method);
-        if (!empty($methodBodyResult) && isset($methodBodyResult['type'])) {
+        if (! empty($methodBodyResult) && isset($methodBodyResult['type'])) {
             return $methodBodyResult;
         }
-        
+
         return [
             'type' => $this->mapPhpTypeToOpenApi($typeName),
             'format' => $this->getFormatForType($typeName),
@@ -801,6 +801,7 @@ class ResponseAnalyzer
                     } else {
                         // Enhanced collection response with intelligent defaults
                         $schema = $this->generateEnhancedCollectionResponse($resourceClass, $resourceType);
+
                         return $schema;
                     }
                 }
@@ -814,7 +815,7 @@ class ResponseAnalyzer
 
                 // Extract properties from the resource class with enhanced fallback methods
                 $properties = $this->extractResourceProperties($resourceClass);
-                
+
                 // Enhanced edge case handling for better accuracy
                 if (empty($properties)) {
                     $properties = $this->analyzeResourceWithFallbackMethods($resourceClass, $resourceClass);
@@ -1864,42 +1865,42 @@ class ResponseAnalyzer
         try {
             $parser = (new ParserFactory)->createForNewestSupportedVersion();
             $ast = $parser->parse(file_get_contents($filename));
-            
+
             $nodeFinder = new NodeFinder;
             $properties = [];
-            
+
             // Find the specific class
             $classNode = $nodeFinder->findFirst($ast, function ($node) use ($className) {
-                return $node instanceof \PhpParser\Node\Stmt\Class_ 
+                return $node instanceof \PhpParser\Node\Stmt\Class_
                     && $node->name && $node->name->toString() === $className;
             });
-            
-            if (!$classNode) {
+
+            if (! $classNode) {
                 return [];
             }
-            
+
             // Find the toArray method
             $toArrayMethod = $nodeFinder->findFirst($classNode, function ($node) {
-                return $node instanceof \PhpParser\Node\Stmt\ClassMethod 
+                return $node instanceof \PhpParser\Node\Stmt\ClassMethod
                     && $node->name->toString() === 'toArray';
             });
-            
-            if (!$toArrayMethod) {
+
+            if (! $toArrayMethod) {
                 return [];
             }
-            
+
             // Find return statements in the method
             $returnNodes = $nodeFinder->find($toArrayMethod, function ($node) {
                 return $node instanceof \PhpParser\Node\Stmt\Return_;
             });
-            
+
             foreach ($returnNodes as $returnNode) {
                 if ($returnNode->expr instanceof Array_) {
                     $extractedProperties = $this->extractPropertiesFromArrayNode($returnNode->expr);
                     $properties = array_merge($properties, $extractedProperties);
                 }
             }
-            
+
             return $properties;
         } catch (Throwable $e) {
             // Fall back gracefully if AST parsing fails
@@ -1913,45 +1914,72 @@ class ResponseAnalyzer
     private function extractPropertiesFromArrayNode(Array_ $arrayNode): array
     {
         $properties = [];
-        
+
         foreach ($arrayNode->items as $item) {
-            if (!$item instanceof ArrayItem || !$item->key) {
+            if (! $item instanceof ArrayItem || ! $item->key) {
                 continue;
             }
-            
+
             $key = null;
             $type = 'string'; // Default type
             $description = '';
-            
+            $isConditional = false;
+
             // Extract the key name
             if ($item->key instanceof String_) {
                 $key = $item->key->value;
             } elseif ($item->key instanceof \PhpParser\Node\Scalar\LNumber) {
-                $key = (string)$item->key->value;
+                $key = (string) $item->key->value;
             }
-            
-            if (!$key) {
+
+            if (! $key) {
                 continue;
             }
-            
-            // Analyze the value to determine type and description
+
+            // CRITICAL: Check for conditional field patterns first (when, mergeWhen, etc.)
+            $conditionalAnalysis = $this->analyzeConditionalField($item->value);
+            if ($conditionalAnalysis) {
+                $isConditional = true;
+                $type = $conditionalAnalysis['type'];
+                $description = $conditionalAnalysis['description'];
+
+                $properties[$key] = [
+                    'type' => $type,
+                    'description' => $description ?: "The {$key} field (conditionally included)",
+                    'conditional' => true, // Mark as conditional for documentation
+                ];
+
+                // Add format if detected
+                if (! empty($conditionalAnalysis['format'])) {
+                    $properties[$key]['format'] = $conditionalAnalysis['format'];
+                }
+
+                // Add nested properties for objects/arrays
+                if (! empty($conditionalAnalysis['properties'])) {
+                    $properties[$key]['properties'] = $conditionalAnalysis['properties'];
+                }
+
+                continue;
+            }
+
+            // Standard value analysis if not conditional
             $valueAnalysis = $this->analyzeArrayValueNode($item->value);
             if ($valueAnalysis) {
                 $type = $valueAnalysis['type'];
                 $description = $valueAnalysis['description'];
-                
+
                 $properties[$key] = [
                     'type' => $type,
                     'description' => $description ?: "The {$key} field",
                 ];
-                
+
                 // Add format if detected
-                if (!empty($valueAnalysis['format'])) {
+                if (! empty($valueAnalysis['format'])) {
                     $properties[$key]['format'] = $valueAnalysis['format'];
                 }
-                
+
                 // Add nested properties for objects/arrays
-                if (!empty($valueAnalysis['properties'])) {
+                if (! empty($valueAnalysis['properties'])) {
                     $properties[$key]['properties'] = $valueAnalysis['properties'];
                 }
             } else {
@@ -1962,7 +1990,7 @@ class ResponseAnalyzer
                 ];
             }
         }
-        
+
         return $properties;
     }
 
@@ -1981,10 +2009,10 @@ class ResponseAnalyzer
                 ];
             } elseif ($valueNode->var instanceof Variable && $valueNode->name instanceof \PhpParser\Node\Identifier) {
                 $propertyName = $valueNode->name->toString();
-                
+
                 // Infer type based on common property names
                 $inferredType = $this->inferTypeFromPropertyName($propertyName);
-                
+
                 return [
                     'type' => $inferredType['type'],
                     'description' => '',
@@ -1995,11 +2023,13 @@ class ResponseAnalyzer
             // Method calls like $this->formatDate(), $resource->toArray(), etc.
             if ($valueNode->name instanceof \PhpParser\Node\Identifier) {
                 $methodName = $valueNode->name->toString();
+
                 return $this->inferTypeFromMethodName($methodName);
             }
         } elseif ($valueNode instanceof Array_) {
             // Nested array
             $nestedProperties = $this->extractPropertiesFromArrayNode($valueNode);
+
             return [
                 'type' => 'object',
                 'description' => '',
@@ -2021,7 +2051,7 @@ class ResponseAnalyzer
                 'format' => null,
             ];
         }
-        
+
         return null;
     }
 
@@ -2031,7 +2061,7 @@ class ResponseAnalyzer
     private function inferTypeFromPropertyName(string $propertyName): array
     {
         $result = ['type' => 'string', 'format' => null];
-        
+
         // Common patterns for type inference
         if (str_ends_with($propertyName, '_id') || $propertyName === 'id') {
             $result['type'] = 'integer';
@@ -2051,7 +2081,7 @@ class ResponseAnalyzer
         } elseif (in_array($propertyName, ['active', 'enabled', 'visible', 'public', 'private'])) {
             $result['type'] = 'boolean';
         }
-        
+
         return $result;
     }
 
@@ -2061,7 +2091,7 @@ class ResponseAnalyzer
     private function inferTypeFromMethodName(string $methodName): array
     {
         $result = ['type' => 'string', 'format' => null];
-        
+
         // Common method patterns
         if (str_contains($methodName, 'format') && str_contains($methodName, 'date')) {
             $result['format'] = 'date-time';
@@ -2072,7 +2102,7 @@ class ResponseAnalyzer
         } elseif (str_contains($methodName, 'url') || str_contains($methodName, 'link')) {
             $result['format'] = 'uri';
         }
-        
+
         return $result;
     }
 
@@ -2082,35 +2112,35 @@ class ResponseAnalyzer
     private function analyzeEloquentModelProperties($resourceVariable): array
     {
         $properties = [];
-        
+
         try {
             // Try to determine the model class from the resource
             $modelClass = $this->inferModelClassFromResource($resourceVariable);
-            
+
             if ($modelClass && class_exists($modelClass)) {
                 $modelReflection = new ReflectionClass($modelClass);
-                
+
                 // Get properties from model casts
                 if ($modelReflection->hasProperty('casts')) {
                     $castsProperty = $modelReflection->getProperty('casts');
                     $castsProperty->setAccessible(true);
                     $instance = $modelReflection->newInstanceWithoutConstructor();
                     $casts = $castsProperty->getValue($instance);
-                    
+
                     foreach ($casts as $field => $castType) {
                         $properties[$field] = $this->mapEloquentCastToOpenApiType($castType);
                     }
                 }
-                
+
                 // Get properties from fillable/guarded
                 if ($modelReflection->hasProperty('fillable')) {
                     $fillableProperty = $modelReflection->getProperty('fillable');
                     $fillableProperty->setAccessible(true);
                     $instance = $modelReflection->newInstanceWithoutConstructor();
                     $fillable = $fillableProperty->getValue($instance);
-                    
+
                     foreach ($fillable as $field) {
-                        if (!isset($properties[$field])) {
+                        if (! isset($properties[$field])) {
                             $properties[$field] = [
                                 'type' => 'string',
                                 'description' => "The {$field} field",
@@ -2118,16 +2148,16 @@ class ResponseAnalyzer
                         }
                     }
                 }
-                
+
                 // Add common timestamp fields
-                if (!isset($properties['created_at'])) {
+                if (! isset($properties['created_at'])) {
                     $properties['created_at'] = [
                         'type' => 'string',
                         'format' => 'date-time',
                         'description' => 'The creation timestamp',
                     ];
                 }
-                if (!isset($properties['updated_at'])) {
+                if (! isset($properties['updated_at'])) {
                     $properties['updated_at'] = [
                         'type' => 'string',
                         'format' => 'date-time',
@@ -2138,7 +2168,7 @@ class ResponseAnalyzer
         } catch (Throwable $e) {
             // Continue gracefully if model analysis fails
         }
-        
+
         return $properties;
     }
 
@@ -2149,20 +2179,20 @@ class ResponseAnalyzer
     {
         // This could be enhanced to parse constructor parameters or type hints
         // For now, use common naming conventions
-        
+
         if (is_string($resourceVariable)) {
             // Convert ResourceClass to ModelClass (e.g., UserResource -> User)
             $resourceClass = $resourceVariable;
             if (str_ends_with($resourceClass, 'Resource')) {
                 $modelClass = str_replace('Resource', '', $resourceClass);
                 $modelClass = str_replace('\\Resources\\', '\\Models\\', $modelClass);
-                
+
                 if (class_exists($modelClass)) {
                     return $modelClass;
                 }
             }
         }
-        
+
         return null;
     }
 
@@ -2172,7 +2202,7 @@ class ResponseAnalyzer
     private function mapEloquentCastToOpenApiType(string $castType): array
     {
         $result = ['type' => 'string', 'description' => ''];
-        
+
         switch ($castType) {
             case 'int':
             case 'integer':
@@ -2217,7 +2247,7 @@ class ResponseAnalyzer
                 }
                 break;
         }
-        
+
         return $result;
     }
 
@@ -2227,38 +2257,38 @@ class ResponseAnalyzer
     private function analyzeResourceWithFallbackMethods(string $resourceClass, ?string $resourceType): array
     {
         $properties = [];
-        
+
         try {
             // Method 1: Analyze parent resource classes for inherited properties
             if ($resourceType) {
                 $properties = $this->analyzeParentResourceClasses($resourceType);
             }
-            
+
             // Method 2: Analyze static resource methods and properties
             if (empty($properties)) {
                 $properties = $this->analyzeStaticResourceMethods($resourceClass);
             }
-            
+
             // Method 3: Analyze constructor parameters for data hints
             if (empty($properties)) {
                 $properties = $this->analyzeResourceConstructorHints($resourceClass);
             }
-            
+
             // Method 4: Analyze related model properties using naming conventions
             if (empty($properties)) {
                 $properties = $this->analyzeRelatedModelProperties($resourceClass);
             }
-            
+
             // Method 5: Use intelligent defaults based on common Laravel patterns
             if (empty($properties)) {
                 $properties = $this->generateIntelligentDefaults($resourceClass);
             }
-            
+
         } catch (Throwable $e) {
             // Graceful fallback - provide minimal but useful schema
             $properties = $this->generateMinimalSchema($resourceClass);
         }
-        
+
         return $properties;
     }
 
@@ -2270,11 +2300,11 @@ class ResponseAnalyzer
         try {
             $reflection = new ReflectionClass($resourceType);
             $parentClass = $reflection->getParentClass();
-            
+
             while ($parentClass && $parentClass->getName() !== JsonResource::class) {
                 if ($parentClass->hasMethod('toArray')) {
                     $properties = $this->analyzeToArrayMethodBody($parentClass);
-                    if (!empty($properties)) {
+                    if (! empty($properties)) {
                         return $properties;
                     }
                 }
@@ -2283,7 +2313,7 @@ class ResponseAnalyzer
         } catch (Throwable $e) {
             // Continue to next method
         }
-        
+
         return [];
     }
 
@@ -2295,7 +2325,7 @@ class ResponseAnalyzer
         try {
             $reflection = new ReflectionClass($resourceClass);
             $properties = [];
-            
+
             // Look for static properties that might define schema structure
             foreach ($reflection->getProperties(ReflectionProperty::IS_STATIC) as $property) {
                 if ($property->getName() === 'schema' || $property->getName() === 'fields') {
@@ -2311,7 +2341,7 @@ class ResponseAnalyzer
                     }
                 }
             }
-            
+
             // Look for static methods that might provide schema information
             foreach ($reflection->getMethods(ReflectionMethod::IS_STATIC) as $method) {
                 if (in_array($method->getName(), ['schema', 'fields', 'properties'])) {
@@ -2330,7 +2360,7 @@ class ResponseAnalyzer
                     }
                 }
             }
-            
+
             return $properties;
         } catch (Throwable $e) {
             return [];
@@ -2346,19 +2376,19 @@ class ResponseAnalyzer
             $reflection = new ReflectionClass($resourceClass);
             $constructor = $reflection->getConstructor();
             $properties = [];
-            
+
             if ($constructor) {
                 foreach ($constructor->getParameters() as $parameter) {
                     $type = $parameter->getType();
-                    if ($type && !$type->isBuiltin()) {
+                    if ($type && ! $type->isBuiltin()) {
                         $typeName = $type->getName();
-                        
+
                         // If it's an Eloquent model, extract its properties
                         if (class_exists($typeName) && is_subclass_of($typeName, \Illuminate\Database\Eloquent\Model::class)) {
                             $modelProperties = $this->analyzeEloquentModelProperties($typeName);
                             $properties = array_merge($properties, $modelProperties);
                         }
-                        
+
                         // If it's a Spatie Data object, extract its properties
                         if (class_exists($typeName) && is_subclass_of($typeName, Data::class)) {
                             $dataProperties = $this->buildSpatieDataSchema($typeName);
@@ -2369,7 +2399,7 @@ class ResponseAnalyzer
                     }
                 }
             }
-            
+
             return $properties;
         } catch (Throwable $e) {
             return [];
@@ -2388,16 +2418,16 @@ class ResponseAnalyzer
                 '/Resources\\\\/' => 'Models\\\\',  // App\Resources\User -> App\Models\User
                 '/Http\\\\Resources\\\\/' => 'Models\\\\', // App\Http\Resources\User -> App\Models\User
             ];
-            
+
             $modelClass = $resourceClass;
             foreach ($patterns as $pattern => $replacement) {
                 $modelClass = preg_replace($pattern, $replacement, $modelClass);
             }
-            
+
             if (class_exists($modelClass) && is_subclass_of($modelClass, \Illuminate\Database\Eloquent\Model::class)) {
                 return $this->analyzeEloquentModelProperties($modelClass);
             }
-            
+
             return [];
         } catch (Throwable $e) {
             return [];
@@ -2413,7 +2443,7 @@ class ResponseAnalyzer
         $className = class_basename($resourceClass);
         $entityName = str_replace('Resource', '', $className);
         $entityName = strtolower($entityName);
-        
+
         // Common properties that most Laravel entities have
         $properties = [
             'id' => [
@@ -2431,7 +2461,7 @@ class ResponseAnalyzer
                 'description' => 'The last update timestamp',
             ],
         ];
-        
+
         // Add entity-specific common fields based on naming patterns
         if (str_contains($entityName, 'user')) {
             $properties['name'] = ['type' => 'string', 'description' => 'The user name'];
@@ -2443,7 +2473,7 @@ class ResponseAnalyzer
             $properties['total'] = ['type' => 'number', 'description' => 'The order total'];
             $properties['status'] = ['type' => 'string', 'description' => 'The order status'];
         }
-        
+
         return $properties;
     }
 
@@ -2453,7 +2483,7 @@ class ResponseAnalyzer
     private function generateMinimalSchema(string $resourceClass): array
     {
         $entityName = strtolower(str_replace('Resource', '', class_basename($resourceClass)));
-        
+
         return [
             'id' => [
                 'type' => 'integer',
@@ -2473,23 +2503,23 @@ class ResponseAnalyzer
     {
         // Try to extract item properties using fallback methods
         $itemProperties = [];
-        
+
         if ($resourceType) {
             $itemProperties = $this->analyzeResourceWithFallbackMethods($resourceType, $resourceType);
         }
-        
+
         if (empty($itemProperties)) {
             $itemProperties = $this->analyzeResourceWithFallbackMethods($resourceClass, $resourceClass);
         }
-        
+
         // If we still have no properties, use intelligent defaults based on resource class name
         if (empty($itemProperties)) {
             $itemProperties = $this->generateIntelligentDefaults($resourceType ?: $resourceClass);
         }
-        
+
         // Generate example from properties
         $exampleItem = $this->generateExampleFromProperties($itemProperties);
-        
+
         return [
             'type' => 'array',
             'items' => [
@@ -2510,51 +2540,51 @@ class ResponseAnalyzer
             $reflection = new ReflectionClass($controller);
             $methodReflection = $reflection->getMethod($method);
             $filename = $reflection->getFileName();
-            
-            if (!$filename || !file_exists($filename)) {
+
+            if (! $filename || ! file_exists($filename)) {
                 return $this->generateDefaultCollectionResponse();
             }
-            
+
             // Use AST to analyze method body for Resource::collection() patterns
             $parser = (new ParserFactory)->createForNewestSupportedVersion();
             $ast = $parser->parse(file_get_contents($filename));
-            
+
             $nodeFinder = new NodeFinder;
-            
+
             // Find the specific method
             $methodNode = $nodeFinder->findFirst($ast, function ($node) use ($method) {
-                return $node instanceof \PhpParser\Node\Stmt\ClassMethod 
+                return $node instanceof \PhpParser\Node\Stmt\ClassMethod
                     && $node->name->toString() === $method;
             });
-            
-            if (!$methodNode) {
+
+            if (! $methodNode) {
                 return $this->generateDefaultCollectionResponse();
             }
-            
+
             // Look for Resource::collection() calls
             $collectionCalls = $nodeFinder->find($methodNode, function ($node) {
                 return $node instanceof \PhpParser\Node\Expr\StaticCall
                     && $node->class instanceof \PhpParser\Node\Name
                     && $node->name->toString() === 'collection';
             });
-            
+
             foreach ($collectionCalls as $collectionCall) {
                 $className = $collectionCall->class->toString();
-                
+
                 // Try to resolve the full class name
                 $resourceClass = $this->resolveResourceClassName($className, $reflection);
-                
+
                 if ($resourceClass && class_exists($resourceClass) && is_subclass_of($resourceClass, JsonResource::class)) {
                     // Analyze the resource class for item properties
                     $itemProperties = $this->extractResourceProperties($resourceClass);
-                    
+
                     if (empty($itemProperties)) {
                         $itemProperties = $this->analyzeResourceWithFallbackMethods($resourceClass, $resourceClass);
                     }
-                    
-                    if (!empty($itemProperties)) {
+
+                    if (! empty($itemProperties)) {
                         $example = $this->generateExampleFromProperties($itemProperties);
-                        
+
                         return [
                             'type' => 'array',
                             'items' => [
@@ -2568,10 +2598,10 @@ class ResponseAnalyzer
                     }
                 }
             }
-            
+
             // Fallback to enhanced collection response if no specific resource found
             return $this->generateEnhancedCollectionResponse('UnknownCollection', null);
-            
+
         } catch (Throwable $e) {
             return $this->generateDefaultCollectionResponse();
         }
@@ -2586,7 +2616,6 @@ class ResponseAnalyzer
         return $this->buildResourceClassName($className, $controllerReflection);
     }
 
-
     /**
      * Analyze method body for resource patterns when no return type is available
      */
@@ -2596,18 +2625,18 @@ class ResponseAnalyzer
             $reflection = new ReflectionClass($controller);
             $methodReflection = $reflection->getMethod($method);
             $filename = $reflection->getFileName();
-            
-            if (!$filename || !file_exists($filename)) {
+
+            if (! $filename || ! file_exists($filename)) {
                 return [];
             }
-            
+
             // Get method body text for pattern analysis
             $fileContent = file_get_contents($filename);
             $lines = explode("\n", $fileContent);
             $startLine = $methodReflection->getStartLine() - 1;
             $endLine = $methodReflection->getEndLine() - 1;
             $methodBody = implode("\n", array_slice($lines, $startLine, $endLine - $startLine + 1));
-            
+
             // Look for common Laravel response patterns (enhanced with more variations)
             $patterns = [
                 // Resource::collection() patterns (various forms)
@@ -2615,7 +2644,7 @@ class ResponseAnalyzer
                 '/(\w+)::collection\s*\(/i' => 'collection',
                 '/return\s+(\w+Resource)::collection/i' => 'collection',
                 '/return\s+(\w+)::collection/i' => 'collection',
-                // new ResourceClass() patterns  
+                // new ResourceClass() patterns
                 '/new\s+(\w+Resource)\s*\(/i' => 'resource',
                 '/return\s+new\s+(\w+Resource)/i' => 'resource',
                 // return ResourceClass::make() patterns
@@ -2628,14 +2657,14 @@ class ResponseAnalyzer
                 '/response\(\)->json\(\s*(\w+Resource)::collection/i' => 'collection',
                 '/response\(\)->json\(\s*(\w+)::collection/i' => 'collection',
             ];
-            
+
             foreach ($patterns as $pattern => $type) {
                 if (preg_match($pattern, $methodBody, $matches)) {
                     $resourceClassName = $matches[1];
-                    
+
                     // Try to resolve the full class name
                     $fullResourceClass = $this->resolveResourceClassName($resourceClassName, $reflection);
-                    
+
                     if ($fullResourceClass && class_exists($fullResourceClass)) {
                         if ($type === 'collection') {
                             // It's a collection - analyze as AnonymousResourceCollection
@@ -2647,20 +2676,20 @@ class ResponseAnalyzer
                     }
                 }
             }
-            
+
             // Look for return patterns with specific resource types
             if (preg_match('/return\s+new\s+(\w+)\s*\(/', $methodBody, $matches)) {
                 $className = $matches[1];
                 $fullClassName = $this->resolveResourceClassName($className, $reflection);
-                
+
                 if ($fullClassName && class_exists($fullClassName) && is_subclass_of($fullClassName, JsonResource::class)) {
                     return $this->analyzeJsonResourceResponse($fullClassName);
                 }
             }
-            
+
             // Fallback to intelligent defaults based on method name patterns
             return $this->generateMethodNameBasedDefaults($method);
-            
+
         } catch (Throwable $e) {
             return [];
         }
@@ -2672,7 +2701,7 @@ class ResponseAnalyzer
     private function generateMethodNameBasedDefaults(string $method): array
     {
         $methodLower = strtolower($method);
-        
+
         // Collection endpoints
         if (str_contains($methodLower, 'index') || str_contains($methodLower, 'list') || str_contains($methodLower, 'all')) {
             return [
@@ -2688,8 +2717,8 @@ class ResponseAnalyzer
                 ],
             ];
         }
-        
-        // Single resource endpoints  
+
+        // Single resource endpoints
         if (str_contains($methodLower, 'show') || str_contains($methodLower, 'get') || str_contains($methodLower, 'find')) {
             return [
                 'type' => 'object',
@@ -2701,7 +2730,7 @@ class ResponseAnalyzer
                 ],
             ];
         }
-        
+
         // Create/Update endpoints
         if (str_contains($methodLower, 'store') || str_contains($methodLower, 'create') || str_contains($methodLower, 'update')) {
             return [
@@ -2713,7 +2742,7 @@ class ResponseAnalyzer
                 ],
             ];
         }
-        
+
         // Delete endpoints
         if (str_contains($methodLower, 'destroy') || str_contains($methodLower, 'delete') || str_contains($methodLower, 'remove')) {
             return [
@@ -2724,7 +2753,7 @@ class ResponseAnalyzer
                 ],
             ];
         }
-        
+
         // Default fallback
         return [
             'type' => 'object',
@@ -2743,34 +2772,34 @@ class ResponseAnalyzer
             $reflection = new ReflectionClass($controller);
             $methodReflection = $reflection->getMethod($method);
             $filename = $reflection->getFileName();
-            
-            if (!$filename || !file_exists($filename)) {
+
+            if (! $filename || ! file_exists($filename)) {
                 return [];
             }
-            
+
             // Read entire method body
             $fileContent = file_get_contents($filename);
             $lines = explode("\n", $fileContent);
             $startLine = $methodReflection->getStartLine() - 1;
             $endLine = $methodReflection->getEndLine() - 1;
             $methodBody = implode("\n", array_slice($lines, $startLine, $endLine - $startLine + 1));
-            
-            // Simple pattern matching for Resource::collection()
+
+            // Simple pattern matching for Resource::collection() - HIGHEST PRIORITY
             if (preg_match('/(\w+Resource)::collection/', $methodBody, $matches)) {
                 $resourceClass = $matches[1];
-                
+
                 // Try to build the full resource class name with simple domain patterns
                 $fullResourceClass = $this->buildResourceClassName($resourceClass, $reflection);
-                
+
                 if ($fullResourceClass && class_exists($fullResourceClass)) {
                     // Analyze the resource to get properties
                     $properties = $this->extractResourceProperties($fullResourceClass);
-                    
+
                     if (empty($properties)) {
                         // Use intelligent defaults for common resource patterns
                         $properties = $this->generateResourceDefaults($resourceClass);
                     }
-                    
+
                     return [
                         'type' => 'array',
                         'items' => [
@@ -2795,7 +2824,19 @@ class ResponseAnalyzer
                     ];
                 }
             }
-            
+
+            // CRITICAL: Check for custom response helper methods before proxy patterns
+            $customResponseResult = $this->analyzeCustomResponseHelpers($methodBody, $reflection);
+            if (! empty($customResponseResult)) {
+                return $customResponseResult;
+            }
+
+            // Check for proxy/gateway patterns (after resource patterns)
+            $proxyResult = $this->analyzeProxyPatterns($methodBody, $reflection);
+            if (! empty($proxyResult)) {
+                return $proxyResult;
+            }
+
             // Check for simple method name patterns
             $methodLower = strtolower($method);
             if (in_array($methodLower, ['index', 'list', 'all'])) {
@@ -2813,7 +2854,7 @@ class ResponseAnalyzer
                     'detection_method' => 'method_name_pattern',
                 ];
             }
-            
+
             if (in_array($methodLower, ['show', 'get', 'find'])) {
                 return [
                     'type' => 'object',
@@ -2827,9 +2868,9 @@ class ResponseAnalyzer
                     'detection_method' => 'method_name_pattern',
                 ];
             }
-            
+
             return [];
-            
+
         } catch (Throwable $e) {
             return [];
         }
@@ -2847,7 +2888,7 @@ class ResponseAnalyzer
 
         // Use AST parsing to extract imported classes from the controller file
         $importedClasses = $this->extractImportedClasses($controllerReflection->getFileName());
-        
+
         // Check if the resource class is imported
         if (isset($importedClasses[$resourceClass])) {
             $fullClassName = $importedClasses[$resourceClass];
@@ -2859,13 +2900,13 @@ class ResponseAnalyzer
         // Dynamic namespace resolution based on controller's actual namespace
         $controllerNamespace = $controllerReflection->getNamespaceName();
         $attempts = $this->generateNamespaceAttempts($controllerNamespace, $resourceClass);
-        
+
         foreach ($attempts as $className) {
             if (class_exists($className)) {
                 return $className;
             }
         }
-        
+
         return null;
     }
 
@@ -2874,17 +2915,17 @@ class ResponseAnalyzer
      */
     private function extractImportedClasses(?string $filename): array
     {
-        if (!$filename || !file_exists($filename)) {
+        if (! $filename || ! file_exists($filename)) {
             return [];
         }
 
         try {
             $parser = (new ParserFactory)->createForNewestSupportedVersion();
             $ast = $parser->parse(file_get_contents($filename));
-            
+
             $nodeFinder = new NodeFinder;
             $useStatements = $nodeFinder->findInstanceOf($ast, \PhpParser\Node\Stmt\Use_::class);
-            
+
             $imports = [];
             foreach ($useStatements as $useStatement) {
                 foreach ($useStatement->uses as $use) {
@@ -2892,7 +2933,7 @@ class ResponseAnalyzer
                     $imports[$alias] = $use->name->toString();
                 }
             }
-            
+
             return $imports;
         } catch (Throwable $e) {
             return [];
@@ -2905,31 +2946,139 @@ class ResponseAnalyzer
     private function generateNamespaceAttempts(string $controllerNamespace, string $resourceClass): array
     {
         $attempts = [];
-        
+
         // Pattern 1: Replace 'Controllers' with 'Resources' in the namespace
         if (str_contains($controllerNamespace, 'Controllers')) {
             $resourceNamespace = str_replace('Controllers', 'Resources', $controllerNamespace);
-            $attempts[] = $resourceNamespace . '\\' . $resourceClass;
-            
+            $attempts[] = $resourceNamespace.'\\'.$resourceClass;
+
             // Handle subdirectories like Controllers\Queries\, Controllers\Commands\
             $resourceNamespace = preg_replace('/\\\\Controllers\\\\[^\\\\]+/', '\\Resources', $controllerNamespace);
-            $attempts[] = $resourceNamespace . '\\' . $resourceClass;
+            $attempts[] = $resourceNamespace.'\\'.$resourceClass;
         }
-        
+
         // Pattern 2: Same base namespace as controller but with Resources
         $namespaceParts = explode('\\', $controllerNamespace);
-        
+
         // Find the deepest common namespace and try Resources there
         for ($i = count($namespaceParts) - 1; $i >= 0; $i--) {
             $baseNamespace = implode('\\', array_slice($namespaceParts, 0, $i + 1));
-            $attempts[] = $baseNamespace . '\\Resources\\' . $resourceClass;
-            $attempts[] = $baseNamespace . '\\Http\\Resources\\' . $resourceClass;
+            $attempts[] = $baseNamespace.'\\Resources\\'.$resourceClass;
+            $attempts[] = $baseNamespace.'\\Http\\Resources\\'.$resourceClass;
         }
-        
+
         // Pattern 3: Standard Laravel patterns (fallback)
-        $attempts[] = 'App\\Http\\Resources\\' . $resourceClass;
-        
+        $attempts[] = 'App\\Http\\Resources\\'.$resourceClass;
+
         return array_unique($attempts);
+    }
+
+    /**
+     * Analyze proxy/gateway patterns for external service responses
+     */
+    private function analyzeProxyPatterns(string $methodBody, ReflectionClass $controllerReflection): array
+    {
+        // Pattern 1: Direct proxy - sendProxiedRequest(new ExternalRequest(...))
+        if (preg_match('/sendProxiedRequest\s*\(\s*new\s+([^(]+)\s*\(/', $methodBody, $matches)) {
+            $externalRequestClass = trim($matches[1]);
+
+            // Try to resolve the full external request class name
+            $fullExternalClass = $this->resolveExternalRequestClass($externalRequestClass, $controllerReflection);
+
+            if ($fullExternalClass) {
+                // For direct proxy, we can't know the exact structure, but we can provide intelligent defaults
+                return [
+                    'type' => 'object',
+                    'properties' => [
+                        'data' => [
+                            'type' => 'object',
+                            'description' => 'Response data from external service',
+                        ],
+                        'meta' => [
+                            'type' => 'object',
+                            'description' => 'Response metadata from external service',
+                        ],
+                    ],
+                    'enhanced_analysis' => true,
+                    'detection_method' => 'proxy_pattern_direct',
+                    'external_request_class' => $fullExternalClass,
+                ];
+            }
+        }
+
+        // Pattern 2: DTO proxy - sendRequestWithDtoResponse + Resource transformation
+        if (preg_match('/sendRequestWithDtoResponse\s*\(\s*new\s+([^(]+)\s*\(/', $methodBody, $matches)) {
+            $externalRequestClass = trim($matches[1]);
+
+            // Look for Resource wrapping in the same method
+            if (preg_match('/new\s+(\w+Resource)\s*\(\s*\$dto\s*\)/', $methodBody, $resourceMatches)) {
+                $resourceClass = $resourceMatches[1];
+
+                // Try to analyze the wrapping resource
+                $fullResourceClass = $this->buildResourceClassName($resourceClass, $controllerReflection);
+
+                if ($fullResourceClass && class_exists($fullResourceClass)) {
+                    $properties = $this->extractResourceProperties($fullResourceClass);
+
+                    if (! empty($properties)) {
+                        return [
+                            'type' => 'object',
+                            'properties' => [
+                                'data' => [
+                                    'type' => 'object',
+                                    'properties' => $properties,
+                                    'description' => 'Transformed resource data from external service',
+                                ],
+                            ],
+                            'enhanced_analysis' => true,
+                            'detection_method' => 'proxy_pattern_dto_resource',
+                            'external_request_class' => $externalRequestClass,
+                            'wrapper_resource' => $fullResourceClass,
+                        ];
+                    }
+                }
+            }
+
+            // Fallback: DTO proxy without clear resource pattern
+            return [
+                'type' => 'object',
+                'properties' => [
+                    'data' => [
+                        'type' => 'object',
+                        'description' => 'DTO response from external service',
+                    ],
+                ],
+                'enhanced_analysis' => true,
+                'detection_method' => 'proxy_pattern_dto',
+                'external_request_class' => $externalRequestClass,
+            ];
+        }
+
+        // Pattern 3: More specific external service calls (only if clear proxy indicators)
+        if (preg_match('/sendProxiedRequest|sendRequestWithDtoResponse|\.send\(\)|\.request\(/', $methodBody)) {
+            return [
+                'type' => 'object',
+                'properties' => [
+                    'data' => [
+                        'type' => 'object',
+                        'description' => 'Response from external service call',
+                    ],
+                ],
+                'enhanced_analysis' => true,
+                'detection_method' => 'proxy_pattern_generic',
+            ];
+        }
+
+        return [];
+    }
+
+    /**
+     * Resolve external request class name using import analysis
+     */
+    private function resolveExternalRequestClass(string $className, ReflectionClass $controllerReflection): ?string
+    {
+        // Use the same dynamic resolution as buildResourceClassName
+        return $this->buildResourceClassName($className, $controllerReflection);
     }
 
     /**
@@ -2938,11 +3087,11 @@ class ResponseAnalyzer
     private function generateResourceDefaults(string $resourceClass): array
     {
         $entityName = strtolower(str_replace('Resource', '', $resourceClass));
-        
+
         $defaults = [
             'id' => ['type' => 'integer', 'description' => "The {$entityName} identifier"],
         ];
-        
+
         // Add common patterns based on resource name
         if (str_contains($entityName, 'subscription')) {
             $defaults['status'] = ['type' => 'string', 'description' => 'The subscription status'];
@@ -2952,11 +3101,364 @@ class ResponseAnalyzer
             $defaults['name'] = ['type' => 'string', 'description' => 'The user name'];
             $defaults['email'] = ['type' => 'string', 'format' => 'email', 'description' => 'The user email'];
         }
-        
+
         // Add common timestamp fields
         $defaults['created_at'] = ['type' => 'string', 'format' => 'date-time', 'description' => 'Creation timestamp'];
         $defaults['updated_at'] = ['type' => 'string', 'format' => 'date-time', 'description' => 'Update timestamp'];
-        
+
         return $defaults;
+    }
+
+    /**
+     * Analyze conditional field patterns like $this->when(), $this->mergeWhen(), etc.
+     *
+     * @param  mixed  $valueNode  The AST node representing the field value
+     * @return array|null Returns analysis result or null if not a conditional field
+     */
+    private function analyzeConditionalField($valueNode): ?array
+    {
+        // Check for $this->when() patterns
+        if ($valueNode instanceof \PhpParser\Node\Expr\MethodCall) {
+            $methodName = null;
+
+            // Extract method name
+            if ($valueNode->name instanceof \PhpParser\Node\Identifier) {
+                $methodName = $valueNode->name->toString();
+            }
+
+            // Handle $this->when() and $this->mergeWhen() patterns
+            if (in_array($methodName, ['when', 'mergeWhen', 'whenNotEmpty', 'unless', 'mergeUnless'])) {
+
+                // Get the condition and value arguments
+                $args = $valueNode->args;
+                if (count($args) >= 2) {
+                    $condition = $args[0]->value ?? null;
+                    $value = $args[1]->value ?? null;
+
+                    // Analyze the conditional value to determine its type
+                    $valueAnalysis = $this->analyzeArrayValueNode($value);
+
+                    if ($valueAnalysis) {
+                        return [
+                            'type' => $valueAnalysis['type'],
+                            'description' => $this->buildConditionalDescription($methodName, $condition, $valueAnalysis['description']),
+                            'format' => $valueAnalysis['format'] ?? null,
+                            'properties' => $valueAnalysis['properties'] ?? null,
+                            'conditional_method' => $methodName,
+                        ];
+                    }
+
+                    // Default fallback for conditional fields
+                    return [
+                        'type' => 'string',
+                        'description' => $this->buildConditionalDescription($methodName, $condition),
+                        'format' => null,
+                        'conditional_method' => $methodName,
+                    ];
+                }
+            }
+
+            // Handle $this->whenLoaded() pattern for relationships
+            if ($methodName === 'whenLoaded') {
+                $args = $valueNode->args;
+                if (count($args) >= 1) {
+                    $relationshipName = null;
+
+                    // Extract relationship name from the first argument
+                    if ($args[0]->value instanceof String_) {
+                        $relationshipName = $args[0]->value->value;
+                    }
+
+                    return [
+                        'type' => 'object', // Relationships are typically objects or arrays
+                        'description' => $relationshipName
+                            ? "The {$relationshipName} relationship (loaded conditionally)"
+                            : 'Relationship data (loaded conditionally)',
+                        'format' => null,
+                        'conditional_method' => 'whenLoaded',
+                        'relationship' => $relationshipName,
+                    ];
+                }
+            }
+
+            // Handle $this->whenAppended() pattern for appended attributes
+            if ($methodName === 'whenAppended') {
+                $args = $valueNode->args;
+                if (count($args) >= 1) {
+                    $attributeName = null;
+
+                    // Extract attribute name from the first argument
+                    if ($args[0]->value instanceof String_) {
+                        $attributeName = $args[0]->value->value;
+                    }
+
+                    return [
+                        'type' => 'string', // Default type for appended attributes
+                        'description' => $attributeName
+                            ? "The {$attributeName} appended attribute (included conditionally)"
+                            : 'Appended attribute (included conditionally)',
+                        'format' => null,
+                        'conditional_method' => 'whenAppended',
+                        'appended_attribute' => $attributeName,
+                    ];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Build a descriptive text for conditional fields
+     */
+    private function buildConditionalDescription(string $methodName, $condition, string $baseDescription = ''): string
+    {
+        $methodDescriptions = [
+            'when' => 'conditionally included when condition is met',
+            'mergeWhen' => 'merged conditionally when condition is met',
+            'whenNotEmpty' => 'included when not empty',
+            'unless' => 'included unless condition is met',
+            'mergeUnless' => 'merged unless condition is met',
+            'whenLoaded' => 'included when relationship is loaded',
+            'whenAppended' => 'included when attribute is appended',
+        ];
+
+        $conditionalText = $methodDescriptions[$methodName] ?? 'conditionally included';
+
+        if ($baseDescription) {
+            return "{$baseDescription} ({$conditionalText})";
+        }
+
+        return "Field {$conditionalText}";
+    }
+
+    /**
+     * Analyze custom response helper methods used in controller methods
+     *
+     * @param  string  $methodBody  The method body content
+     * @param  ReflectionClass  $reflection  Controller reflection
+     * @return array|null Returns analysis result or null if no custom helpers detected
+     */
+    private function analyzeCustomResponseHelpers(string $methodBody, ReflectionClass $reflection): ?array
+    {
+        // Pattern matching for common custom response helpers
+        $customHelperPatterns = [
+            // Match returnNoContent(), returnAccepted(), etc.
+            '/return\s+\$this->return(\w+)\s*\(\s*([^)]*)\s*\)/' => function ($matches) {
+                $helperMethod = $matches[1];
+                $args = $matches[2] ?? '';
+
+                return $this->analyzeCustomHelperMethod($helperMethod, $args);
+            },
+
+            // Match $this->sendProxiedRequest() patterns
+            '/return\s+\$this->send(\w+)\s*\(\s*([^)]*)\s*\)/' => function ($matches) {
+                $helperMethod = $matches[1];
+                $args = $matches[2] ?? '';
+
+                return $this->analyzeCustomSendMethod($helperMethod, $args);
+            },
+
+            // Match response()->customMethod() patterns
+            '/response\(\)->(\w+)\s*\(\s*([^)]*)\s*\)/' => function ($matches) {
+                $responseMethod = $matches[1];
+                $args = $matches[2] ?? '';
+
+                return $this->analyzeCustomResponseMethod($responseMethod, $args);
+            },
+
+            // Match new JsonResponse() with specific patterns
+            '/new\s+JsonResponse\s*\(\s*([^,)]+)(?:,\s*([^,)]+))?\s*(?:,\s*([^)]+))?\s*\)/' => function ($matches) {
+                $data = $matches[1] ?? 'null';
+                $status = $matches[2] ?? '200';
+                $headers = $matches[3] ?? '[]';
+
+                return $this->analyzeJsonResponsePattern($data, $status, $headers);
+            },
+        ];
+
+        foreach ($customHelperPatterns as $pattern => $analyzer) {
+            if (preg_match($pattern, $methodBody, $matches)) {
+                $result = $analyzer($matches);
+                if (! empty($result)) {
+                    return $result;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Analyze custom helper methods like returnNoContent(), returnAccepted()
+     */
+    private function analyzeCustomHelperMethod(string $helperMethod, string $args): array
+    {
+        $helperMethodLower = strtolower($helperMethod);
+
+        // Map known helper method patterns to response structures
+        $helperMappings = [
+            'nocontent' => [
+                'type' => 'object',
+                'properties' => [],
+                'status_code' => 204,
+                'description' => 'No content response',
+                'detection_method' => 'custom_helper_no_content',
+            ],
+            'accepted' => [
+                'type' => 'object',
+                'properties' => [],
+                'status_code' => 202,
+                'description' => 'Request accepted for processing',
+                'detection_method' => 'custom_helper_accepted',
+            ],
+            'created' => [
+                'type' => 'object',
+                'properties' => [
+                    'id' => ['type' => 'integer', 'description' => 'The created resource ID'],
+                    'created_at' => ['type' => 'string', 'format' => 'date-time', 'description' => 'Creation timestamp'],
+                ],
+                'status_code' => 201,
+                'description' => 'Resource created successfully',
+                'detection_method' => 'custom_helper_created',
+            ],
+            'ok' => [
+                'type' => 'object',
+                'properties' => [
+                    'message' => ['type' => 'string', 'description' => 'Success message'],
+                    'success' => ['type' => 'boolean', 'description' => 'Operation success status'],
+                ],
+                'status_code' => 200,
+                'description' => 'Operation successful',
+                'detection_method' => 'custom_helper_ok',
+            ],
+        ];
+
+        return $helperMappings[$helperMethodLower] ?? [];
+    }
+
+    /**
+     * Analyze custom send methods like sendProxiedRequest()
+     */
+    private function analyzeCustomSendMethod(string $sendMethod, string $args): array
+    {
+        $sendMethodLower = strtolower($sendMethod);
+
+        if (str_contains($sendMethodLower, 'proxied') || str_contains($sendMethodLower, 'proxy')) {
+            return [
+                'type' => 'object',
+                'properties' => [
+                    'data' => ['type' => 'object', 'description' => 'Proxied response data'],
+                ],
+                'description' => 'Proxied response from external service',
+                'detection_method' => 'custom_send_proxied',
+                'is_proxy' => true,
+            ];
+        }
+
+        if (str_contains($sendMethodLower, 'dto')) {
+            return [
+                'type' => 'object',
+                'properties' => [
+                    'id' => ['type' => 'integer', 'description' => 'Resource identifier'],
+                    'data' => ['type' => 'object', 'description' => 'DTO response data'],
+                ],
+                'description' => 'Response with Data Transfer Object',
+                'detection_method' => 'custom_send_dto',
+            ];
+        }
+
+        return [];
+    }
+
+    /**
+     * Analyze custom response methods like response()->customMethod()
+     */
+    private function analyzeCustomResponseMethod(string $responseMethod, string $args): array
+    {
+        $responseMethodLower = strtolower($responseMethod);
+
+        // Map response method patterns
+        $responseMappings = [
+            'success' => [
+                'type' => 'object',
+                'properties' => [
+                    'success' => ['type' => 'boolean', 'description' => 'Operation success status'],
+                    'message' => ['type' => 'string', 'description' => 'Success message'],
+                ],
+                'description' => 'Success response',
+                'detection_method' => 'custom_response_success',
+            ],
+            'error' => [
+                'type' => 'object',
+                'properties' => [
+                    'error' => ['type' => 'boolean', 'description' => 'Error status'],
+                    'message' => ['type' => 'string', 'description' => 'Error message'],
+                ],
+                'description' => 'Error response',
+                'detection_method' => 'custom_response_error',
+            ],
+            'api' => [
+                'type' => 'object',
+                'properties' => [
+                    'data' => ['type' => 'object', 'description' => 'API response data'],
+                    'meta' => ['type' => 'object', 'description' => 'Response metadata'],
+                ],
+                'description' => 'Structured API response',
+                'detection_method' => 'custom_response_api',
+            ],
+        ];
+
+        return $responseMappings[$responseMethodLower] ?? [];
+    }
+
+    /**
+     * Analyze JsonResponse patterns for custom response structures
+     */
+    private function analyzeJsonResponsePattern(string $data, string $status, string $headers): array
+    {
+        // Parse status code
+        $statusCode = 200;
+        if (preg_match('/\d+/', $status, $matches)) {
+            $statusCode = (int) $matches[0];
+        }
+
+        // Determine response structure based on data pattern
+        if (trim($data) === 'null' || empty(trim($data))) {
+            return [
+                'type' => 'object',
+                'properties' => [],
+                'status_code' => $statusCode,
+                'description' => $statusCode === 204 ? 'No content' : 'Empty response',
+                'detection_method' => 'json_response_empty',
+            ];
+        }
+
+        // Check for array patterns
+        if (str_contains($data, '[') || str_contains($data, 'array')) {
+            return [
+                'type' => 'array',
+                'items' => [
+                    'type' => 'object',
+                    'properties' => [
+                        'id' => ['type' => 'integer', 'description' => 'Item identifier'],
+                    ],
+                ],
+                'status_code' => $statusCode,
+                'description' => 'Array response',
+                'detection_method' => 'json_response_array',
+            ];
+        }
+
+        // Default object response
+        return [
+            'type' => 'object',
+            'properties' => [
+                'data' => ['type' => 'object', 'description' => 'Response data'],
+            ],
+            'status_code' => $statusCode,
+            'description' => 'JSON object response',
+            'detection_method' => 'json_response_object',
+        ];
     }
 }

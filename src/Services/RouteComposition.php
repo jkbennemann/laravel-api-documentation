@@ -106,6 +106,12 @@ class RouteComposition
 
             $middlewares = $route->middleware();
             $isVendorClass = $this->isVendorClass($controllerClass);
+
+            // CRITICAL: Apply route filtering based on configuration
+            if ($this->shouldBeSkipped($uri, $httpMethod, $isVendorClass)) {
+                continue;
+            }
+
             $tags = $this->processTags($controllerClass, $actionMethod);
             $description = $this->processDescription($controllerClass, $actionMethod);
 
@@ -162,7 +168,7 @@ class RouteComposition
     {
         try {
             $method = new ReflectionMethod($controller, $action);
-            
+
             // Get path parameter names to exclude them from request body parameters
             $pathParameterNames = $route->parameterNames();
 
@@ -452,8 +458,17 @@ class RouteComposition
         }
 
         foreach ($this->excludedRoutes as $excludedRoute) {
-            if (str_is($excludedRoute, $uri)) {
-                return true;
+            // Handle negation patterns (e.g., '!api/*' means exclude all except api/*)
+            if (str_starts_with($excludedRoute, '!')) {
+                $pattern = substr($excludedRoute, 1);
+                if (! \Illuminate\Support\Str::is($pattern, $uri)) {
+                    return true;
+                }
+            } else {
+                // Standard exclusion pattern
+                if (\Illuminate\Support\Str::is($excludedRoute, $uri)) {
+                    return true;
+                }
             }
         }
 
@@ -476,7 +491,44 @@ class RouteComposition
 
     private function isVendorClass(string $class): bool
     {
-        return str_contains($class, 'vendor');
+        // Check for explicit 'vendor' in the class name (original behavior)
+        if (str_contains($class, 'vendor')) {
+            return true;
+        }
+
+        // Common vendor package namespace patterns
+        $vendorPatterns = [
+            'Laravel\\',
+            'Spatie\\',
+            'Facade\\',
+            'Illuminate\\Foundation\\Auth\\',  // Laravel Auth scaffolding controllers
+            'Illuminate\\Routing\\',         // Laravel framework routing controllers
+            'Barryvdh\\',                    // Barry vd. Heuvel packages (Debugbar, etc.)
+            'Filament\\',                    // Filament Admin Panel
+            'Livewire\\',                    // Livewire components
+            'Maatwebsite\\',                 // Laravel Excel, etc.
+            'Intervention\\',                // Image manipulation
+            'League\\',                      // The League packages
+            'Symfony\\',                     // Symfony components
+            'Monolog\\',                     // Logging
+            'Psr\\',                         // PSR standards
+            'GuzzleHttp\\',                  // Guzzle HTTP client
+            'Carbon\\',                      // Date manipulation
+            'Pusher\\',                      // Pusher SDK
+            'Socialite\\',                   // Laravel Socialite
+            'Horizon\\',                     // Laravel Horizon (legacy namespace)
+            'Telescope\\',                   // Laravel Telescope (legacy namespace)
+            'Sanctum\\',                     // Laravel Sanctum (legacy namespace)
+            'Passport\\',                    // Laravel Passport (legacy namespace)
+        ];
+
+        foreach ($vendorPatterns as $pattern) {
+            if (str_starts_with($class, $pattern)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function processParameters(Route $route): array
@@ -869,10 +921,10 @@ class RouteComposition
 
         // CRITICAL: Fallback to comprehensive ResponseAnalyzer for any method that wasn't handled above
         // This ensures 100% coverage for methods without explicit return types
-        if (!isset($responses[200]) || (isset($responses[200]) && $responses[200]['type'] === 'object' && empty($responses[200]['properties']))) {
+        if (! isset($responses[200]) || (isset($responses[200]) && $responses[200]['type'] === 'object' && empty($responses[200]['properties']))) {
             $analysis = $this->responseAnalyzer->analyzeControllerMethod($controller, $action);
-            
-            if (!empty($analysis)) {
+
+            if (! empty($analysis)) {
                 $responses[200] = [
                     'description' => $responses[200]['description'] ?? '',
                     'headers' => $responses[200]['headers'] ?? [],
@@ -1532,7 +1584,7 @@ class RouteComposition
         try {
             // Use QueryParameterExtractor to extract @queryParam from docblocks
             $extractor = app(QueryParameterExtractor::class);
-            
+
             // Get path parameter names from the route
             $pathParameters = $route->parameterNames();
 

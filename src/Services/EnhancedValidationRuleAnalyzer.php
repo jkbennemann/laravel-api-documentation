@@ -619,11 +619,11 @@ class EnhancedValidationRuleAnalyzer
                 if (! empty($ruleParams[0])) {
                     $pattern = $ruleParams[0];
                     $result['pattern'] = $pattern;
-                    
+
                     // Analyze the regex pattern to provide a meaningful description
                     $description = $this->analyzeRegexPattern($pattern);
                     $result['description'] = $description;
-                    
+
                     // Try to generate an example based on the pattern
                     $example = $this->generateRegexExample($pattern);
                     if ($example) {
@@ -671,7 +671,7 @@ class EnhancedValidationRuleAnalyzer
     {
         // Remove delimiters and flags from pattern
         $cleanPattern = $this->cleanRegexPattern($pattern);
-        
+
         // Common regex pattern descriptions
         $commonPatterns = [
             '/^\d+$/' => 'Must contain only digits.',
@@ -693,8 +693,8 @@ class EnhancedValidationRuleAnalyzer
         }
 
         // Analyze pattern components for dynamic description
-        $description = 'Must match the pattern: ' . $pattern;
-        
+        $description = 'Must match the pattern: '.$pattern;
+
         // Try to provide more specific descriptions based on pattern analysis
         if (preg_match('/\{(\d+)\}/', $cleanPattern, $matches)) {
             $length = $matches[1];
@@ -722,7 +722,7 @@ class EnhancedValidationRuleAnalyzer
     {
         // Remove delimiters and flags from pattern
         $cleanPattern = $this->cleanRegexPattern($pattern);
-        
+
         // Common regex pattern examples
         $commonExamples = [
             '/^\d+$/' => '123456',

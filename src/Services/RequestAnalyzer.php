@@ -72,7 +72,7 @@ class RequestAnalyzer
                 foreach ($routeParameters as $param) {
                     unset($parameters[$param]);
                 }
-                
+
                 foreach ($excludePathParameters as $param) {
                     unset($parameters[$param]);
                 }
@@ -92,7 +92,7 @@ class RequestAnalyzer
                 foreach ($routeParameters as $param) {
                     unset($parameters[$param]);
                 }
-                
+
                 foreach ($excludePathParameters as $param) {
                     unset($parameters[$param]);
                 }

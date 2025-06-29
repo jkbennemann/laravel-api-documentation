@@ -452,15 +452,75 @@ class OpenApi
                             continue;
                         }
 
-                        $properties[$propName] = new Schema([
+                        $schemaData = [
                             'type' => $propData['type'] ?? 'string',
                             'description' => $propData['description'] ?? '',
-                        ]);
+                        ];
+
+                        // Add format if available
+                        if (! empty($propData['format'])) {
+                            $schemaData['format'] = $propData['format'];
+                        }
+
+                        // Enhance description for conditional fields
+                        if (! empty($propData['conditional'])) {
+                            $schemaData['description'] .= ' (conditional field)';
+                        }
+
+                        $properties[$propName] = new Schema($schemaData);
                     }
                     $schema = new Schema([
                         'type' => $responseData['type'] ?? 'object',
                         'properties' => $properties,
                     ]);
+                }
+                // CRITICAL: Handle array responses with items schema (collections)
+                elseif (($responseData['type'] ?? 'object') === 'array' && ! empty($responseData['items'])) {
+                    $itemsData = $responseData['items'];
+
+                    // Build items schema from the items data
+                    if (! empty($itemsData['properties'])) {
+                        $itemProperties = [];
+                        foreach ($itemsData['properties'] as $propName => $propData) {
+                            // Filter out Spatie internal fields
+                            if ($propName === '_additional' || $propName === '_data_context') {
+                                continue;
+                            }
+
+                            $itemSchemaData = [
+                                'type' => $propData['type'] ?? 'string',
+                                'description' => $propData['description'] ?? '',
+                            ];
+
+                            // Add format if available and not null
+                            if (! empty($propData['format'])) {
+                                $itemSchemaData['format'] = $propData['format'];
+                            }
+
+                            // Enhance description for conditional fields
+                            if (! empty($propData['conditional'])) {
+                                $itemSchemaData['description'] .= ' (conditional field)';
+                            }
+
+                            $itemProperties[$propName] = new Schema($itemSchemaData);
+                        }
+
+                        $schema = new Schema([
+                            'type' => 'array',
+                            'items' => new Schema([
+                                'type' => $itemsData['type'] ?? 'object',
+                                'properties' => $itemProperties,
+                            ]),
+                        ]);
+                    } else {
+                        // Array without detailed item properties
+                        $schema = new Schema([
+                            'type' => 'array',
+                            'items' => new Schema([
+                                'type' => $itemsData['type'] ?? 'object',
+                            ]),
+                        ]);
+                    }
                 } else {
                     $schema = new Schema([
                         'type' => $responseData['type'] ?? 'object',
