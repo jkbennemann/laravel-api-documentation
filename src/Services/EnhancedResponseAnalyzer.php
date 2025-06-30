@@ -75,10 +75,16 @@ class EnhancedResponseAnalyzer
             }
 
             // Parse with AST for infinite depth analysis
-            // Wrap method source in a class context for proper AST parsing
-            $classWrappedSource = "<?php\nclass TempClass {\n".$methodSource."\n}";
-            $ast = $this->parser->parse($classWrappedSource);
-            if (! $ast) {
+            // Use a simpler approach: parse the entire file and find the method
+            $filename = $reflection->getDeclaringClass()->getFileName();
+            if ($filename && file_exists($filename)) {
+                $fileContent = file_get_contents($filename);
+                $ast = $this->parser->parse($fileContent);
+                
+                if (! $ast) {
+                    return $this->getDefaultResponses($controller, $method);
+                }
+            } else {
                 return $this->getDefaultResponses($controller, $method);
             }
 
@@ -119,8 +125,23 @@ class EnhancedResponseAnalyzer
                 private string $method
             ) {}
 
+            private bool $insideTargetMethod = false;
+            
             public function enterNode(Node $node)
             {
+                // Check if we're entering the target method
+                if ($node instanceof \PhpParser\Node\Stmt\ClassMethod && 
+                    $node->name instanceof Node\Identifier && 
+                    $node->name->toString() === $this->method) {
+                    $this->insideTargetMethod = true;
+                    return null;
+                }
+                
+                // Only analyze nodes if we're inside the target method
+                if (!$this->insideTargetMethod) {
+                    return null;
+                }
+                
                 // Detect response() helper calls
                 if ($node instanceof MethodCall && $this->isResponseCall($node)) {
                     $this->analyzer->analyzeResponseCall($node, $this->controller, $this->method);
@@ -146,6 +167,11 @@ class EnhancedResponseAnalyzer
                     $this->analyzer->analyzeCustomHelperCall($node, $this->controller, $this->method);
                 }
 
+                // Detect setStatusCode method calls
+                if ($node instanceof MethodCall && $this->isSetStatusCodeCall($node)) {
+                    $this->analyzer->analyzeSetStatusCodeCall($node, $this->controller, $this->method);
+                }
+
                 // Detect static Response::* calls
                 if ($node instanceof StaticCall && $this->isResponseStaticCall($node)) {
                     $this->analyzer->analyzeResponseStaticCall($node);
@@ -156,6 +182,18 @@ class EnhancedResponseAnalyzer
                     $this->analyzer->analyzeResourceNew($node, $this->controller, $this->method);
                 }
 
+                return null;
+            }
+            
+            public function leaveNode(Node $node)
+            {
+                // Check if we're leaving the target method
+                if ($node instanceof \PhpParser\Node\Stmt\ClassMethod && 
+                    $node->name instanceof Node\Identifier && 
+                    $node->name->toString() === $this->method) {
+                    $this->insideTargetMethod = false;
+                }
+                
                 return null;
             }
 
@@ -212,6 +250,12 @@ class EnhancedResponseAnalyzer
 
                 return str_ends_with($className, 'Resource') ||
                        str_contains($className, 'Resource');
+            }
+
+            private function isSetStatusCodeCall(MethodCall $node): bool
+            {
+                return $node->name instanceof Node\Identifier && 
+                       $node->name->toString() === 'setStatusCode';
             }
         };
 
@@ -331,6 +375,37 @@ class EnhancedResponseAnalyzer
         }
 
         $this->addErrorResponse($statusCode, $message);
+    }
+
+    /**
+     * Analyze setStatusCode method calls
+     */
+    public function analyzeSetStatusCodeCall(MethodCall $node, string $controller, string $method): void
+    {
+        if (empty($node->args)) {
+            return;
+        }
+
+        $statusArg = $node->args[0]->value;
+        $statusCode = '200'; // default
+
+        if ($statusArg instanceof LNumber) {
+            $statusCode = (string) $statusArg->value;
+        } elseif ($statusArg instanceof Node\Expr\ClassConstFetch) {
+            $statusCode = $this->resolveHttpConstant($statusArg);
+        }
+
+        // Get response schema from comprehensive analysis
+        $responseSchema = $this->responseAnalyzer->analyzeControllerMethod($controller, $method);
+        
+        $this->addSuccessResponse(
+            $statusCode, 
+            $this->getStatusDescription($statusCode), 
+            $controller, 
+            $method, 
+            'application/json',
+            $responseSchema
+        );
     }
 
     /**

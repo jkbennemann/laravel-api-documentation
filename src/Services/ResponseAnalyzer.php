@@ -1395,12 +1395,22 @@ class ResponseAnalyzer
         try {
             $reflection = new ReflectionClass($resourceClass);
 
-            // First try to analyze the toArray method body
+            // First try to analyze the toArray method body (only if it's a custom implementation)
             if ($reflection->hasMethod('toArray')) {
-                $methodProperties = $this->analyzeToArrayMethodBody($reflection);
-                if (! empty($methodProperties)) {
-                    return $methodProperties;
+                $toArrayMethod = $reflection->getMethod('toArray');
+                // Only analyze custom toArray methods, not inherited ones from JsonResource
+                if ($toArrayMethod->getDeclaringClass()->getName() === $resourceClass) {
+                    $methodProperties = $this->analyzeToArrayMethodBody($reflection);
+                    if (! empty($methodProperties)) {
+                        return $methodProperties;
+                    }
                 }
+            }
+
+            // Try constructor parameter analysis for DTO detection (CRITICAL for BoxSslResource -> BoxSslData)
+            $constructorProperties = $this->analyzeResourceConstructorHints($resourceClass);
+            if (! empty($constructorProperties)) {
+                return $constructorProperties;
             }
 
             $properties = [];
@@ -2821,6 +2831,41 @@ class ResponseAnalyzer
                         ],
                         'enhanced_analysis' => true,
                         'detection_method' => 'pattern_analysis_with_defaults',
+                    ];
+                }
+            }
+
+            // Pattern matching for Resource::make() - HIGH PRIORITY for single resources
+            if (preg_match('/(\w+Resource)::make/', $methodBody, $matches)) {
+                $resourceClass = $matches[1];
+
+                // Try to build the full resource class name with simple domain patterns
+                $fullResourceClass = $this->buildResourceClassName($resourceClass, $reflection);
+
+                if ($fullResourceClass && class_exists($fullResourceClass)) {
+                    // Analyze the resource to get properties
+                    $properties = $this->extractResourceProperties($fullResourceClass);
+
+                    if (empty($properties)) {
+                        // Use intelligent defaults for common resource patterns
+                        $properties = $this->generateResourceDefaults($resourceClass);
+                    }
+
+                    return [
+                        'type' => 'object',
+                        'properties' => $properties,
+                        'example' => $this->generateExampleFromProperties($properties),
+                        'enhanced_analysis' => true,
+                        'detected_resource' => $fullResourceClass,
+                        'detection_method' => 'resource_make_pattern_analysis',
+                    ];
+                } else {
+                    // Return object schema with defaults even if class isn't found
+                    return [
+                        'type' => 'object',
+                        'properties' => $this->generateResourceDefaults($resourceClass),
+                        'enhanced_analysis' => true,
+                        'detection_method' => 'resource_make_pattern_analysis_with_defaults',
                     ];
                 }
             }
