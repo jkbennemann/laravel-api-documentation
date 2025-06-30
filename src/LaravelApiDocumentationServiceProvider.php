@@ -37,7 +37,7 @@ class LaravelApiDocumentationServiceProvider extends PackageServiceProvider
         $this->app->singleton(RequestAnalyzer::class);
         $this->app->singleton(ResponseAnalyzer::class);
         $this->app->singleton(TemplateManager::class);
-        
+
         // Register ErrorMessageGenerator with all dependencies
         $this->app->singleton(ErrorMessageGenerator::class, function ($app) {
             return new ErrorMessageGenerator(

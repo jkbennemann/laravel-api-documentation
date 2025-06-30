@@ -13,6 +13,7 @@ use Throwable;
 class TemplateManager
 {
     private array $loadedTemplates = [];
+
     private array $config;
 
     public function __construct(private readonly ?Repository $configuration = null)
@@ -27,13 +28,13 @@ class TemplateManager
     {
         $locale = $locale ?? 'en';
         $cacheKey = "validation_messages_{$locale}";
-        
+
         if (isset($this->loadedTemplates[$cacheKey])) {
             return $this->loadedTemplates[$cacheKey];
         }
 
         $messages = [];
-        
+
         // Load from locale-specific template file if configured
         $templateFile = $this->getLocalizedTemplateFile('validation_rules', $locale);
         if ($templateFile && file_exists($templateFile)) {
@@ -52,6 +53,7 @@ class TemplateManager
         $messages = array_merge($messages, $configMessages);
 
         $this->loadedTemplates[$cacheKey] = $messages;
+
         return $messages;
     }
 
@@ -62,13 +64,13 @@ class TemplateManager
     {
         $locale = $locale ?? 'en';
         $cacheKey = "domain_templates_{$locale}";
-        
+
         if (isset($this->loadedTemplates[$cacheKey])) {
             return $this->loadedTemplates[$cacheKey];
         }
 
         $templates = [];
-        
+
         // Load from locale-specific template file if configured
         $templateFile = $this->getLocalizedTemplateFile('domain_templates', $locale);
         if ($templateFile && file_exists($templateFile)) {
@@ -87,6 +89,7 @@ class TemplateManager
         $templates = array_merge_recursive($templates, $configTemplates);
 
         $this->loadedTemplates[$cacheKey] = $templates;
+
         return $templates;
     }
 
@@ -97,13 +100,13 @@ class TemplateManager
     {
         $locale = $locale ?? 'en';
         $cacheKey = "field_labels_{$locale}";
-        
+
         if (isset($this->loadedTemplates[$cacheKey])) {
             return $this->loadedTemplates[$cacheKey];
         }
 
         $labels = [];
-        
+
         // Load from locale-specific template file if configured
         $templateFile = $this->getLocalizedTemplateFile('field_labels', $locale);
         if ($templateFile && file_exists($templateFile)) {
@@ -122,6 +125,7 @@ class TemplateManager
         $labels = array_merge($labels, $configLabels);
 
         $this->loadedTemplates[$cacheKey] = $labels;
+
         return $labels;
     }
 
@@ -131,9 +135,9 @@ class TemplateManager
     public function generateValidationMessagesTemplate(string $filePath): bool
     {
         $template = $this->getValidationMessagesTemplate();
-        
+
         $directory = dirname($filePath);
-        if (!is_dir($directory)) {
+        if (! is_dir($directory)) {
             mkdir($directory, 0755, true);
         }
 
@@ -146,9 +150,9 @@ class TemplateManager
     public function generateDomainTemplatesFile(string $filePath): bool
     {
         $template = $this->getDomainTemplatesTemplate();
-        
+
         $directory = dirname($filePath);
-        if (!is_dir($directory)) {
+        if (! is_dir($directory)) {
             mkdir($directory, 0755, true);
         }
 
@@ -161,9 +165,9 @@ class TemplateManager
     public function generateFieldLabelsFile(string $filePath): bool
     {
         $template = $this->getFieldLabelsTemplate();
-        
+
         $directory = dirname($filePath);
-        if (!is_dir($directory)) {
+        if (! is_dir($directory)) {
             mkdir($directory, 0755, true);
         }
 
@@ -176,14 +180,14 @@ class TemplateManager
     private function getLocalizedTemplateFile(string $templateType, string $locale): ?string
     {
         $baseFile = $this->config['template_files'][$templateType] ?? null;
-        if (!$baseFile) {
+        if (! $baseFile) {
             return null;
         }
 
         // Try locale-specific file first (e.g., validation-messages.es.php)
         if ($locale !== 'en') {
             $pathInfo = pathinfo($baseFile);
-            $localizedFile = $pathInfo['dirname'] . '/' . $pathInfo['filename'] . '.' . $locale . '.' . $pathInfo['extension'];
+            $localizedFile = $pathInfo['dirname'].'/'.$pathInfo['filename'].'.'.$locale.'.'.$pathInfo['extension'];
             if (file_exists($localizedFile)) {
                 return $localizedFile;
             }
@@ -199,7 +203,7 @@ class TemplateManager
     public function generateLocalizedTemplateFiles(string $locale, string $baseDirectory): array
     {
         $generatedFiles = [];
-        
+
         $templates = [
             'validation_rules' => 'validation-messages',
             'domain_templates' => 'domain-templates',
@@ -207,8 +211,8 @@ class TemplateManager
         ];
 
         foreach ($templates as $type => $filename) {
-            $filePath = $baseDirectory . '/' . $filename . '.' . $locale . '.php';
-            
+            $filePath = $baseDirectory.'/'.$filename.'.'.$locale.'.php';
+
             switch ($type) {
                 case 'validation_rules':
                     if ($this->generateValidationMessagesTemplate($filePath)) {
@@ -237,29 +241,29 @@ class TemplateManager
     public function getAvailableLocales(): array
     {
         $locales = ['en']; // Default locale
-        
+
         foreach ($this->config['template_files'] ?? [] as $templateFile) {
-            if (!$templateFile || !file_exists($templateFile)) {
+            if (! $templateFile || ! file_exists($templateFile)) {
                 continue;
             }
-            
+
             $directory = dirname($templateFile);
             $basename = pathinfo($templateFile, PATHINFO_FILENAME);
-            
+
             // Look for locale-specific files (e.g., validation-messages.es.php)
-            $pattern = $directory . '/' . $basename . '.*.php';
+            $pattern = $directory.'/'.$basename.'.*.php';
             foreach (glob($pattern) as $file) {
                 $filename = pathinfo($file, PATHINFO_FILENAME);
                 $parts = explode('.', $filename);
                 if (count($parts) >= 2) {
                     $locale = end($parts);
-                    if (!in_array($locale, $locales)) {
+                    if (! in_array($locale, $locales)) {
                         $locales[] = $locale;
                     }
                 }
             }
         }
-        
+
         return $locales;
     }
 

@@ -1426,7 +1426,7 @@ class EnhancedResponseAnalyzer
         // Check if error response enhancement is enabled
         $errorConfig = $this->configuration->get('api-documentation.error_responses', []);
         $enhancementEnabled = $errorConfig['enabled'] ?? true;
-        
+
         $errorSchema = [
             'type' => 'object',
             'properties' => [
@@ -1446,7 +1446,7 @@ class EnhancedResponseAnalyzer
                     'type' => $fieldConfig['type'] ?? 'string',
                     'description' => $fieldConfig['description'] ?? '',
                 ];
-                
+
                 if (isset($fieldConfig['format'])) {
                     $errorSchema['properties'][$fieldName]['format'] = $fieldConfig['format'];
                 }
@@ -1458,7 +1458,7 @@ class EnhancedResponseAnalyzer
             $validationConfig = $errorConfig['schema']['validation_details'] ?? [];
             $validationEnabled = $validationConfig['enabled'] ?? true;
             $detailsFieldName = $validationConfig['field_name'] ?? 'details';
-            
+
             if ($validationEnabled) {
                 if (! empty($validationRules) && $this->errorMessageGenerator) {
                     // Generate detailed validation error schema based on actual rules
@@ -1543,11 +1543,11 @@ class EnhancedResponseAnalyzer
     {
         // Use configured path pattern if available
         $pathPattern = $errorConfig['defaults']['path_pattern'] ?? '/api/v1/{controller}';
-        
+
         // Simple path generation based on controller and method
         $controllerName = class_basename($controller);
         $controllerName = str_replace('Controller', '', $controllerName);
-        
+
         $path = str_replace('{controller}', strtolower($controllerName), $pathPattern);
 
         // Add method-specific path segments

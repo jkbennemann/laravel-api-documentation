@@ -12,11 +12,17 @@ use Illuminate\Contracts\Translation\Translator;
 class ErrorMessageGenerator
 {
     private array $config;
+
     private ?TemplateManager $templateManager = null;
+
     private ?Translator $translator = null;
+
     private array $loadedValidationMessages = [];
+
     private array $loadedDomainTemplates = [];
+
     private array $loadedFieldLabels = [];
+
     private string $currentLocale;
 
     public function __construct(
@@ -29,6 +35,7 @@ class ErrorMessageGenerator
         $this->translator = $translator;
         $this->currentLocale = $this->config['localization']['default_locale'] ?? 'en';
     }
+
     /**
      * Validation rule to error message mapping
      */
@@ -172,7 +179,7 @@ class ErrorMessageGenerator
     public function generateValidationErrorMessage(string $field, string $rule, array $parameters = [], ?string $locale = null): string
     {
         $locale = $locale ?? $this->currentLocale;
-        
+
         // Try Laravel translation first if translator is available
         if ($this->translator) {
             $translatedMessage = $this->tryLaravelTranslation($field, $rule, $parameters, $locale);
@@ -190,10 +197,10 @@ class ErrorMessageGenerator
 
         // Load validation messages from templates
         $allValidationMessages = $this->getValidationMessages($locale);
-        $message = $allValidationMessages[$rule] 
+        $message = $allValidationMessages[$rule]
             ?? $allValidationMessages[$baseRule]
-            ?? $this->validationRuleMessages[$rule] 
-            ?? $this->validationRuleMessages[$baseRule] 
+            ?? $this->validationRuleMessages[$rule]
+            ?? $this->validationRuleMessages[$baseRule]
             ?? "The {$fieldLabel} field is invalid.";
 
         // Replace placeholders
@@ -232,7 +239,7 @@ class ErrorMessageGenerator
     public function generateDomainErrorMessage(string $domain, string $context, string $statusCode, ?string $field = null, ?string $locale = null): string
     {
         $locale = $locale ?? $this->currentLocale;
-        
+
         // Try Laravel translation first if translator is available
         if ($this->translator) {
             $translatedMessage = $this->tryDomainTranslation($domain, $context, $statusCode, $field, $locale);
@@ -240,11 +247,11 @@ class ErrorMessageGenerator
                 return $translatedMessage;
             }
         }
-        
+
         // Load domain templates from files and config
         $allDomainTemplates = $this->getDomainTemplates($locale);
-        $template = $allDomainTemplates[$domain][$context][$statusCode] 
-            ?? $this->domainTemplates[$domain][$context][$statusCode] 
+        $template = $allDomainTemplates[$domain][$context][$statusCode]
+            ?? $this->domainTemplates[$domain][$context][$statusCode]
             ?? null;
 
         if ($field && is_array($template)) {
@@ -264,7 +271,7 @@ class ErrorMessageGenerator
     public function getGenericErrorMessage(string $statusCode, ?string $locale = null): string
     {
         $locale = $locale ?? $this->currentLocale;
-        
+
         // Try Laravel translation first
         if ($this->translator) {
             $translationKey = "errors.{$statusCode}";
@@ -272,11 +279,12 @@ class ErrorMessageGenerator
                 return $this->translator->get($translationKey, [], $locale);
             }
         }
-        
+
         // Use configured status messages with fallback to default
         $configuredMessages = $this->config['defaults']['status_messages'] ?? [];
-        return $configuredMessages[$statusCode] 
-            ?? $this->domainTemplates['general'][$statusCode] 
+
+        return $configuredMessages[$statusCode]
+            ?? $this->domainTemplates['general'][$statusCode]
             ?? 'An error occurred.';
     }
 
@@ -324,12 +332,12 @@ class ErrorMessageGenerator
         $locale = $locale ?? $this->currentLocale;
         $appName = $this->config['defaults']['app_name'] ?? 'app';
         $key = "{$appName}.validation.{$field}.{$rule}";
-        
+
         // Add locale suffix if not default locale
         if ($locale !== 'en') {
             $key .= ".{$locale}";
         }
-        
+
         return "{$key}|default:Validation error";
     }
 
@@ -344,9 +352,9 @@ class ErrorMessageGenerator
         array $validationRules = []
     ): array {
         $examplesConfig = $this->config['examples'] ?? [];
-        
+
         // Check if examples are enabled
-        if (!($examplesConfig['enabled'] ?? true)) {
+        if (! ($examplesConfig['enabled'] ?? true)) {
             return [];
         }
 
@@ -381,7 +389,7 @@ class ErrorMessageGenerator
         if ($examplesConfig['realistic_timestamps'] ?? true) {
             return date('c');
         }
-        
+
         return '2024-01-01T12:00:00+00:00';
     }
 
@@ -392,9 +400,10 @@ class ErrorMessageGenerator
     {
         if ($examplesConfig['realistic_request_ids'] ?? true) {
             $pattern = $this->config['defaults']['request_id_pattern'] ?? 'req_{random}';
+
             return str_replace('{random}', substr(md5(uniqid()), 0, 8), $pattern);
         }
-        
+
         return 'req_12345678';
     }
 
@@ -404,13 +413,13 @@ class ErrorMessageGenerator
     private function generateAdditionalFieldValue(string $fieldName, array $fieldConfig): mixed
     {
         $type = $fieldConfig['type'] ?? 'string';
-        
+
         return match ($type) {
             'string' => $fieldConfig['example'] ?? "example_{$fieldName}",
             'integer' => $fieldConfig['example'] ?? 12345,
             'boolean' => $fieldConfig['example'] ?? true,
             'array' => $fieldConfig['example'] ?? [],
-            'object' => $fieldConfig['example'] ?? new \stdClass(),
+            'object' => $fieldConfig['example'] ?? new \stdClass,
             default => "example_{$fieldName}",
         };
     }
@@ -480,6 +489,7 @@ class ErrorMessageGenerator
         // Convert pattern to regex - handle wildcards correctly
         $regex = preg_quote($pattern, '/');
         $regex = str_replace('\*', '.*', $regex);
+
         return preg_match("/^{$regex}$/i", $controllerName) === 1;
     }
 
@@ -490,10 +500,11 @@ class ErrorMessageGenerator
     {
         $locale = $locale ?? $this->currentLocale;
         $cacheKey = "validation_messages_{$locale}";
-        
+
         if (empty($this->loadedValidationMessages[$cacheKey])) {
             $this->loadedValidationMessages[$cacheKey] = $this->templateManager->loadValidationMessages($locale);
         }
+
         return $this->loadedValidationMessages[$cacheKey];
     }
 
@@ -504,10 +515,11 @@ class ErrorMessageGenerator
     {
         $locale = $locale ?? $this->currentLocale;
         $cacheKey = "domain_templates_{$locale}";
-        
+
         if (empty($this->loadedDomainTemplates[$cacheKey])) {
             $this->loadedDomainTemplates[$cacheKey] = $this->templateManager->loadDomainTemplates($locale);
         }
+
         return $this->loadedDomainTemplates[$cacheKey];
     }
 
@@ -518,12 +530,13 @@ class ErrorMessageGenerator
     {
         $locale = $locale ?? $this->currentLocale;
         $cacheKey = "field_labels_{$locale}";
-        
+
         if (empty($this->loadedFieldLabels[$cacheKey])) {
             $fieldLabels = $this->templateManager->loadFieldLabels($locale);
             // Merge with default field labels
             $this->loadedFieldLabels[$cacheKey] = array_merge($this->fieldLabels, $fieldLabels);
         }
+
         return $this->loadedFieldLabels[$cacheKey];
     }
 
@@ -532,7 +545,7 @@ class ErrorMessageGenerator
      */
     private function tryLaravelTranslation(string $field, string $rule, array $parameters, string $locale): ?string
     {
-        if (!$this->translator) {
+        if (! $this->translator) {
             return null;
         }
 
@@ -586,7 +599,7 @@ class ErrorMessageGenerator
      */
     private function tryDomainTranslation(string $domain, string $context, string $statusCode, ?string $field, string $locale): ?string
     {
-        if (!$this->translator) {
+        if (! $this->translator) {
             return null;
         }
 
