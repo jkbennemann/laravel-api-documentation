@@ -420,16 +420,25 @@ class OpenApi
                     }
                 }
 
-                $responses[$statusCode] = new Response([
-                    'description' => $responseData['description'],
-                    'headers' => $responseHeaders,
-                    'content' => [
-                        $responseData['content_type'] => new MediaType([
-                            'schema' => $schema,
-                            'example' => $this->filterSpatieInternalFields($responseData['example']),
-                        ]),
-                    ],
-                ]);
+                // Handle 204 No Content responses or responses with no content
+                if ($statusCode == 204 || $statusCode === '204' || empty($responseData['content_type']) || $responseData['content_type'] === null || ($statusCode == 204 && ($responseData['type'] === 'null' || $responseData['type'] === null))) {
+                    $responses[$statusCode] = new Response([
+                        'description' => $responseData['description'] ?? ($statusCode === '204' ? 'No content' : ''),
+                        'headers' => $responseHeaders,
+                        // No content property for 204 responses or null/empty content_type
+                    ]);
+                } else {
+                    $responses[$statusCode] = new Response([
+                        'description' => $responseData['description'],
+                        'headers' => $responseHeaders,
+                        'content' => [
+                            $responseData['content_type'] => new MediaType([
+                                'schema' => $schema,
+                                'example' => $this->filterSpatieInternalFields($responseData['example']),
+                            ]),
+                        ],
+                    ]);
+                }
             }
         }
 
@@ -561,13 +570,22 @@ class OpenApi
                     $mediaTypeConfig['example'] = $this->filterSpatieInternalFields($responseData['example']);
                 }
 
-                $responses[$statusCode] = new Response([
-                    'description' => $responseData['description'] ?? '',
-                    'headers' => $responseHeaders,
-                    'content' => [
-                        $responseData['content_type'] ?? 'application/json' => new MediaType($mediaTypeConfig),
-                    ],
-                ]);
+                // Handle 204 No Content responses or responses with no content
+                if ($statusCode == 204 || $statusCode === '204' || empty($responseData['content_type']) || $responseData['content_type'] === null || ($statusCode == 204 && ($responseData['type'] === 'null' || $responseData['type'] === null))) {
+                    $responses[$statusCode] = new Response([
+                        'description' => $responseData['description'] ?? ($statusCode === '204' ? 'No content' : ''),
+                        'headers' => $responseHeaders,
+                        // No content property for 204 responses or null/empty content_type
+                    ]);
+                } else {
+                    $responses[$statusCode] = new Response([
+                        'description' => $responseData['description'] ?? '',
+                        'headers' => $responseHeaders,
+                        'content' => [
+                            $responseData['content_type'] ?? 'application/json' => new MediaType($mediaTypeConfig),
+                        ],
+                    ]);
+                }
             }
         }
 

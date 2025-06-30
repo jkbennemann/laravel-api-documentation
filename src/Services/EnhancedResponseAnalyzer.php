@@ -80,7 +80,7 @@ class EnhancedResponseAnalyzer
             if ($filename && file_exists($filename)) {
                 $fileContent = file_get_contents($filename);
                 $ast = $this->parser->parse($fileContent);
-                
+
                 if (! $ast) {
                     return $this->getDefaultResponses($controller, $method);
                 }
@@ -126,22 +126,23 @@ class EnhancedResponseAnalyzer
             ) {}
 
             private bool $insideTargetMethod = false;
-            
+
             public function enterNode(Node $node)
             {
                 // Check if we're entering the target method
-                if ($node instanceof \PhpParser\Node\Stmt\ClassMethod && 
-                    $node->name instanceof Node\Identifier && 
+                if ($node instanceof \PhpParser\Node\Stmt\ClassMethod &&
+                    $node->name instanceof Node\Identifier &&
                     $node->name->toString() === $this->method) {
                     $this->insideTargetMethod = true;
+
                     return null;
                 }
-                
+
                 // Only analyze nodes if we're inside the target method
-                if (!$this->insideTargetMethod) {
+                if (! $this->insideTargetMethod) {
                     return null;
                 }
-                
+
                 // Detect response() helper calls
                 if ($node instanceof MethodCall && $this->isResponseCall($node)) {
                     $this->analyzer->analyzeResponseCall($node, $this->controller, $this->method);
@@ -184,24 +185,49 @@ class EnhancedResponseAnalyzer
 
                 return null;
             }
-            
+
             public function leaveNode(Node $node)
             {
                 // Check if we're leaving the target method
-                if ($node instanceof \PhpParser\Node\Stmt\ClassMethod && 
-                    $node->name instanceof Node\Identifier && 
+                if ($node instanceof \PhpParser\Node\Stmt\ClassMethod &&
+                    $node->name instanceof Node\Identifier &&
                     $node->name->toString() === $this->method) {
                     $this->insideTargetMethod = false;
                 }
-                
+
                 return null;
             }
 
             private function isResponseCall(MethodCall $node): bool
             {
+                // Valid response helper methods
+                $validResponseMethods = [
+                    'json', 'created', 'accepted', 'noContent', 'view',
+                    'redirect', 'redirectTo', 'download', 'file', 'stream',
+                ];
+
+                if (! $node->name instanceof Node\Identifier) {
+                    return false;
+                }
+
+                $methodName = $node->name->toString();
+
+                // First check if this is a valid response method
+                if (! in_array($methodName, $validResponseMethods)) {
+                    return false;
+                }
+
+                // Check for direct response() helper chained calls: response()->method()
                 if ($node->var instanceof FuncCall &&
                     $node->var->name instanceof Name &&
                     $node->var->name->toString() === 'response') {
+                    return true;
+                }
+
+                // Check for response() helper variable assignments: $response = response(); $response->method()
+                if ($node->var instanceof Node\Expr\Variable &&
+                    is_string($node->var->name) &&
+                    $node->var->name === 'response') {
                     return true;
                 }
 
@@ -254,7 +280,7 @@ class EnhancedResponseAnalyzer
 
             private function isSetStatusCodeCall(MethodCall $node): bool
             {
-                return $node->name instanceof Node\Identifier && 
+                return $node->name instanceof Node\Identifier &&
                        $node->name->toString() === 'setStatusCode';
             }
         };
@@ -275,23 +301,63 @@ class EnhancedResponseAnalyzer
 
         $methodName = $node->name->toString();
 
+        // Only process if this is actually a response() helper call, not other method calls
+        if (! $this->isActualResponseHelperCall($node)) {
+            return;
+        }
+
         switch ($methodName) {
             case 'json':
                 $this->analyzeJsonCall($node, $controller, $method);
                 break;
             case 'created':
-                $this->addSuccessResponse('201', 'Resource created', $controller, $method, 'application/json');
+                $this->addSuccessResponse('201', 'Resource created', $controller, $method, 'application/json', null, [], null);
                 break;
             case 'accepted':
-                $this->addSuccessResponse('202', 'Request accepted', $controller, $method, 'application/json');
+                $this->addSuccessResponse('202', 'Request accepted', $controller, $method, 'application/json', null, [], null);
                 break;
             case 'noContent':
                 $this->addResponse('204', 'No content', null);
+                break;
+            case 'view':
+                $this->addResponse('200', 'HTML view response', 'text/html');
+                break;
+            case 'redirectTo':
+            case 'redirect':
+                $this->addResponse('302', 'Redirect response', null);
                 break;
             default:
                 // Try to extract status from method call
                 $this->analyzeGenericResponseCall($node);
         }
+    }
+
+    /**
+     * Check if this is actually a response() helper method call
+     */
+    private function isActualResponseHelperCall(MethodCall $node): bool
+    {
+        // Valid response helper methods
+        $validResponseMethods = [
+            'json', 'created', 'accepted', 'noContent', 'view',
+            'redirect', 'redirectTo', 'download', 'file', 'stream',
+        ];
+
+        if (! $node->name instanceof Node\Identifier) {
+            return false;
+        }
+
+        $methodName = $node->name->toString();
+
+        // Check if this is a valid response method
+        if (! in_array($methodName, $validResponseMethods)) {
+            return false;
+        }
+
+        // Check if the call is actually on the response() helper
+        return $node->var instanceof FuncCall &&
+               $node->var->name instanceof Name &&
+               $node->var->name->toString() === 'response';
     }
 
     /**
@@ -319,7 +385,7 @@ class EnhancedResponseAnalyzer
 
         // Use detailed schema analysis for success responses
         if (in_array($statusCode, ['200', '201', '202'])) {
-            $this->addSuccessResponse($statusCode, $this->getStatusDescription($statusCode), $controller, $method, 'application/json', $data);
+            $this->addSuccessResponse($statusCode, $this->getStatusDescription($statusCode), $controller, $method, 'application/json', $data, [], null);
         } else {
             $this->addResponse($statusCode, $this->getStatusDescription($statusCode), 'application/json', $data);
         }
@@ -397,14 +463,16 @@ class EnhancedResponseAnalyzer
 
         // Get response schema from comprehensive analysis
         $responseSchema = $this->responseAnalyzer->analyzeControllerMethod($controller, $method);
-        
+
         $this->addSuccessResponse(
-            $statusCode, 
-            $this->getStatusDescription($statusCode), 
-            $controller, 
-            $method, 
+            $statusCode,
+            $this->getStatusDescription($statusCode),
+            $controller,
+            $method,
             'application/json',
-            $responseSchema
+            $responseSchema,
+            [],
+            null
         );
     }
 
@@ -448,7 +516,7 @@ class EnhancedResponseAnalyzer
 
             // Use detailed schema analysis for success responses
             if (in_array($status, ['200', '201', '202']) && $contentType === 'application/json') {
-                $this->addSuccessResponse($status, $description, $controller, $method, $contentType);
+                $this->addSuccessResponse($status, $description, $controller, $method, $contentType, null, [], null);
             } else {
                 $this->addResponse($status, $description, $contentType);
             }
@@ -508,7 +576,7 @@ class EnhancedResponseAnalyzer
             }
 
             // Use detailed schema analysis for resource responses
-            $this->addSuccessResponse('200', 'Success', $controller, $method, 'application/json', $analysis);
+            $this->addSuccessResponse('200', 'Success', $controller, $method, 'application/json', $analysis, [], null);
         }
     }
 
@@ -684,7 +752,8 @@ class EnhancedResponseAnalyzer
                     $method->getName(),
                     'application/json',
                     $schema,
-                    $headers
+                    $headers,
+                    is_string($resource) ? $resource : null
                 );
             } else {
                 $this->addResponse($statusCode, $description, 'application/json', $schema, $headers);
@@ -1277,7 +1346,7 @@ class EnhancedResponseAnalyzer
     /**
      * Add success response with detailed schema analysis
      */
-    private function addSuccessResponse(string $statusCode, string $description, string $controller, string $method, ?string $contentType = 'application/json', ?array $additionalSchema = null, array $headers = []): void
+    private function addSuccessResponse(string $statusCode, string $description, string $controller, string $method, ?string $contentType = 'application/json', ?array $additionalSchema = null, array $headers = [], ?string $resourceClass = null): void
     {
         if (! isset($this->detectedResponses[$statusCode])) {
             // Use existing ResponseAnalyzer for detailed schema analysis
@@ -1294,13 +1363,20 @@ class EnhancedResponseAnalyzer
             // Generate MediaType-level example from schema property examples
             $responseExample = $this->generateResponseExampleFromSchema($detailedSchema);
 
-            $this->detectedResponses[$statusCode] = [
+            $response = [
                 'description' => $description,
                 'content_type' => $contentType,
                 'headers' => $headers,
                 'schema' => $detailedSchema,
                 'example' => $responseExample, // Add MediaType-level example
             ];
+
+            // Add resource class if specified (for tests and enhanced documentation)
+            if ($resourceClass) {
+                $response['resource'] = $resourceClass;
+            }
+
+            $this->detectedResponses[$statusCode] = $response;
         }
     }
 
