@@ -8,17 +8,17 @@ use JkBennemann\LaravelApiDocumentation\Attributes\QueryParameter;
 use JkBennemann\LaravelApiDocumentation\Attributes\RequestBody;
 use JkBennemann\LaravelApiDocumentation\Attributes\ResponseBody;
 use JkBennemann\LaravelApiDocumentation\Attributes\ResponseHeader;
-use JkBennemann\LaravelApiDocumentation\Tests\Stubs\DTOs\UserData;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\DTOs\CreateUserData;
+use JkBennemann\LaravelApiDocumentation\Tests\Stubs\DTOs\UserData;
 
 class EnhancedApiController
 {
     /**
      * Get users with enhanced parameter documentation
-     * 
-     * @param string $search Search query
-     * @param int $page Page number  
-     * @param int $per_page Items per page
+     *
+     * @param  string  $search  Search query
+     * @param  int  $page  Page number
+     * @param  int  $per_page  Items per page
      */
     #[QueryParameter('search', 'Search users by name or email', 'string', required: false)]
     #[QueryParameter('page', 'Page number for pagination', 'integer', required: false, example: 1)]

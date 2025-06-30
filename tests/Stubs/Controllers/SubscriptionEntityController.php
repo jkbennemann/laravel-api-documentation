@@ -7,10 +7,10 @@ namespace JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers;
 use JkBennemann\LaravelApiDocumentation\Attributes\AdditionalDocumentation;
 use JkBennemann\LaravelApiDocumentation\Attributes\Description;
 use JkBennemann\LaravelApiDocumentation\Attributes\Tag;
-use JkBennemann\LaravelApiDocumentation\Tests\Stubs\DTOs\HashId;
-use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Enums\AttachedSubscriptionEntityType;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\DTOs\AttachedSubscriptionEntity;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\DTOs\AttachSubscriptionEntitiesCommandResult;
+use JkBennemann\LaravelApiDocumentation\Tests\Stubs\DTOs\HashId;
+use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Enums\AttachedSubscriptionEntityType;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Requests\AttachSubscriptionEntitiesRequest;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Resources\AttachedSubscriptionEntityResource;
 
@@ -22,7 +22,8 @@ class SubscriptionEntityController
     public function __construct()
     {
         // Mock command bus for testing
-        $this->commandBus = new class {
+        $this->commandBus = new class
+        {
             public function dispatch($command)
             {
                 // Return mock result
@@ -36,7 +37,7 @@ class SubscriptionEntityController
                         new HashId('def456'),
                         AttachedSubscriptionEntityType::SERVICE,
                         'Test Service'
-                    )
+                    ),
                 ]);
             }
         };
@@ -85,8 +86,9 @@ class SubscriptionEntityController
 class AttachSubscriptionEntitiesCommand
 {
     public HashId $hashId;
+
     public array $entities;
-    
+
     public function __construct(HashId $hashId, AttachedSubscriptionEntity ...$entities)
     {
         $this->hashId = $hashId;
@@ -97,8 +99,9 @@ class AttachSubscriptionEntitiesCommand
 class DetachSubscriptionEntitiesCommand
 {
     public HashId $hashId;
+
     public array $entities;
-    
+
     public function __construct(HashId $hashId, AttachedSubscriptionEntity ...$entities)
     {
         $this->hashId = $hashId;

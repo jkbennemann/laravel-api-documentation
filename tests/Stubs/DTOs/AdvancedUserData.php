@@ -14,6 +14,5 @@ class AdvancedUserData extends Data
         public string $email,
         public string $role,
         public array $permissions,
-    ) {
-    }
+    ) {}
 }

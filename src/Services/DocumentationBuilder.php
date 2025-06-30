@@ -16,13 +16,11 @@ class DocumentationBuilder
     public function __construct(
         private RouteComposition $routeService,
         private OpenApi $openApiService
-    )
-    {
-    }
+    ) {}
 
     public function build(string $filename, ?string $name = null, ?string $docName = null): iterable
     {
-        if (!isset($name)) {
+        if (! isset($name)) {
             $name = $filename;
         }
 
@@ -30,14 +28,14 @@ class DocumentationBuilder
 
         $routesData = $this->routeService->process($docName);
 
-        yield count($routesData).' routes generated for ' . $name;
+        yield count($routesData).' routes generated for '.$name;
         try {
             $openApi = $this->openApiService->processRoutes($routesData)->get();
             $json = Writer::writeToJson($openApi);
             $path = $this->getPath($filename);
             $success = File::put($path, $json);
             if ($success === false) {
-                throw new DocumentationException("Could not write to file.");
+                throw new DocumentationException('Could not write to file.');
             }
 
             yield "Generation for {$name} completed.";
@@ -61,14 +59,14 @@ class DocumentationBuilder
     {
         // Only apply domain-specific config if docName is explicitly provided
         if ($docName) {
-            $prefix = 'api-documentation.domains.' . $docName;
+            $prefix = 'api-documentation.domains.'.$docName;
 
             if (config($prefix)) {
-                if (config($prefix . '.servers')) {
-                    $this->openApiService->get()->servers = config($prefix . '.servers');
+                if (config($prefix.'.servers')) {
+                    $this->openApiService->get()->servers = config($prefix.'.servers');
                 }
-                if (config($prefix . '.title')) {
-                    $this->openApiService->get()->info->title = config($prefix . '.title');
+                if (config($prefix.'.title')) {
+                    $this->openApiService->get()->info->title = config($prefix.'.title');
                 }
             }
         }

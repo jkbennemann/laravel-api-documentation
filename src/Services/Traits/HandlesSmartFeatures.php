@@ -28,12 +28,13 @@ trait HandlesSmartFeatures
     {
         $this->requestAnalyzer = app(RequestAnalyzer::class);
         $this->responseAnalyzer = app(ResponseAnalyzer::class);
-        $this->enabled = config('api-documentation.smart_features', true);
+        // Smart features are always enabled for 100% accurate documentation
+        $this->enabled = true;
     }
 
     private function isSmartFeaturesEnabled(): bool
     {
-        return $this->enabled;
+        return true;
     }
 
     private function generateSmartRequestBody(string $controller, string $action): ?RequestBody

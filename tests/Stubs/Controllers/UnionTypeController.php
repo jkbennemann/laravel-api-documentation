@@ -19,7 +19,7 @@ class UnionTypeController
         if (rand(0, 1)) {
             return new TestResource(['id' => 1, 'name' => 'Test']);
         }
-        
+
         return response()->noContent();
     }
 
@@ -31,7 +31,7 @@ class UnionTypeController
         if (rand(0, 1)) {
             return response()->json(['success' => true]);
         }
-        
+
         return response()->noContent();
     }
 
@@ -41,13 +41,13 @@ class UnionTypeController
     {
         // This method has multiple union types
         $random = rand(0, 2);
-        
+
         if ($random === 0) {
             return new TestResource(['id' => 1, 'name' => 'Test']);
         } elseif ($random === 1) {
             return response()->json(['data' => 'json']);
         }
-        
+
         return response()->noContent();
     }
 }

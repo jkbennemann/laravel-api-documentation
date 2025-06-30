@@ -22,18 +22,21 @@ class LaravelApiDocumentationCommand extends Command
             $docFiles = $this->getDocumentationFiles($this->option('file'));
         } catch (\InvalidArgumentException $e) {
             $this->error($e->getMessage());
+
             return self::FAILURE;
         }
 
         foreach ($docFiles as $docName => $file) {
-            if (!isset($file['process']) || !$file['process']) {
+            if (! isset($file['process']) || ! $file['process']) {
                 unset($docFiles[$docName]);
+
                 continue;
             }
 
-            if (!isset($file['filename'])) {
+            if (! isset($file['filename'])) {
                 // Skip files without filename to trigger fallback behavior
                 unset($docFiles[$docName]);
+
                 continue;
             }
 
@@ -48,6 +51,7 @@ class LaravelApiDocumentationCommand extends Command
                 if ($this->option('file')) {
                     return self::FAILURE;
                 }
+
                 continue;
             }
         }
@@ -58,7 +62,7 @@ class LaravelApiDocumentationCommand extends Command
             $filename = config('api-documentation.ui.storage.filename', 'api-documentation.json');
 
             try {
-                $this->info("Generating default documentation...");
+                $this->info('Generating default documentation...');
                 $this->info("Using filename: {$filename}");
                 $messages = iterator_to_array($builder->build($filename));
                 foreach ($messages as $message) {
@@ -66,11 +70,13 @@ class LaravelApiDocumentationCommand extends Command
                 }
                 $this->newLine();
             } catch (DocumentationException $e) {
-                $this->error("Error in fallback generation: " . $e->getMessage());
+                $this->error('Error in fallback generation: '.$e->getMessage());
+
                 return self::FAILURE;
             } catch (\Throwable $e) {
-                $this->error("Unexpected error in fallback generation: " . $e->getMessage());
-                $this->error("Stack trace: " . $e->getTraceAsString());
+                $this->error('Unexpected error in fallback generation: '.$e->getMessage());
+                $this->error('Stack trace: '.$e->getTraceAsString());
+
                 return self::FAILURE;
             }
         }
@@ -107,7 +113,7 @@ class LaravelApiDocumentationCommand extends Command
         $docFiles = config('api-documentation.ui.storage.files', []);
 
         if ($specificFile) {
-            if (!isset($docFiles[$specificFile])) {
+            if (! isset($docFiles[$specificFile])) {
                 $this->error("Documentation file '{$specificFile}' is not defined in config.");
                 throw new \InvalidArgumentException("Documentation file '{$specificFile}' is not defined in config.");
             }

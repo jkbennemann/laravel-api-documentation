@@ -1,14 +1,14 @@
 <?php
 
-use JkBennemann\LaravelApiDocumentation\Services\RouteComposition;
 use Illuminate\Support\Facades\Route;
+use JkBennemann\LaravelApiDocumentation\Services\RouteComposition;
 
 it('demonstrates RouteComposition now uses ResponseAnalyzer properly', function () {
     $routeComposition = app(RouteComposition::class);
 
     // Test the full route processing instead of internal method
     $route = new \Illuminate\Routing\Route(['GET'], '/test/{id}', [
-        'controller' => \JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\DynamicResponseController::class . '@attach'
+        'controller' => \JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\DynamicResponseController::class.'@attach',
     ]);
 
     // Mock Laravel router to return our test route
@@ -36,7 +36,7 @@ it('demonstrates RouteComposition now uses ResponseAnalyzer properly', function 
                 expect($response)->toHaveKey('enhanced_analysis');
                 expect($response['enhanced_analysis'])->toBeTrue('Should have enhanced_analysis flag');
                 expect($response)->toHaveKey('type');
-            } elseif (isset($response['properties']) && !empty($response['properties'])) {
+            } elseif (isset($response['properties']) && ! empty($response['properties'])) {
                 expect($response)->toHaveKey('properties');
             } else {
                 expect(true)->toBeTrue('Test completed - shows current state');

@@ -118,14 +118,14 @@ class QueryParameterExtractorTest extends TestCase
          * @return array
          */
         EOD;
-        
+
         // Rule: Keep the code clean and readable
         // Test the regex pattern directly with improved pattern to handle all formats
         preg_match_all('/@queryParam\s+(\w+)(?:\s+(?:{([\w|\\<>]+)}|([\w|\\<>]+)))?(?:\s+(.+?))?(?=\s+@|\s*\*\/|$)/s', $docblock, $matches, PREG_SET_ORDER);
-        
+
         // Also try to match the curly brace format when it comes before the parameter name
         preg_match_all('/@queryParam\s+{([\w|\\<>]+)}\s+(\w+)(?:\s+(.+?))?(?=\s+@|\s*\*\/|$)/s', $docblock, $curlyMatches, PREG_SET_ORDER);
-        
+
         // Convert curly matches to standard format and merge with regular matches
         foreach ($curlyMatches as $match) {
             $matches[] = [
@@ -136,43 +136,43 @@ class QueryParameterExtractorTest extends TestCase
                 4 => $match[3] ?? '', // Description
             ];
         }
-        
+
         // Debug the matches to see what we're getting
-        $paramNames = array_map(fn($m) => $m[1], $matches);
-        
+        $paramNames = array_map(fn ($m) => $m[1], $matches);
+
         // Verify we found all parameters - adjust count based on actual matches
         expect($paramNames)->toContain('page', 'per_page', 'search', 'status', 'sort_by', 'createdAt', 'userEmail');
-        
+
         // Verify the page parameter
-        $pageMatch = array_values(array_filter($matches, fn($m) => $m[1] === 'page'))[0];
+        $pageMatch = array_values(array_filter($matches, fn ($m) => $m[1] === 'page'))[0];
         expect($pageMatch[1])->toBe('page');
         expect($pageMatch[3])->toBe('int'); // Type is in position 3
         expect($pageMatch[4])->toContain('Page number for pagination');
-        
+
         // Verify the search parameter (curly brace format)
-        $searchMatch = array_values(array_filter($matches, fn($m) => $m[1] === 'search'))[0];
+        $searchMatch = array_values(array_filter($matches, fn ($m) => $m[1] === 'search'))[0];
         expect($searchMatch[1])->toBe('search');
         expect($searchMatch[2])->toBe('string'); // Type is in position 2 for curly brace format
         expect($searchMatch[4])->toContain('Search term to filter results');
-        
+
         // Verify the status parameter (optional)
-        $statusMatch = array_values(array_filter($matches, fn($m) => $m[1] === 'status'))[0];
+        $statusMatch = array_values(array_filter($matches, fn ($m) => $m[1] === 'status'))[0];
         expect($statusMatch[1])->toBe('status');
         expect($statusMatch[4])->toContain('optional');
-        
+
         // Verify the sort_by parameter (union type)
-        $sortByMatch = array_values(array_filter($matches, fn($m) => $m[1] === 'sort_by'))[0];
+        $sortByMatch = array_values(array_filter($matches, fn ($m) => $m[1] === 'sort_by'))[0];
         expect($sortByMatch[1])->toBe('sort_by');
         expect($sortByMatch[3])->toBe('string|array'); // Union type
 
         // Now test the format detection for the createdAt parameter
         $formatMethod = new \ReflectionMethod($this->extractor, 'getFormatForType');
         $formatMethod->setAccessible(true);
-        
+
         // Test date-time format for createdAt
         $format = $formatMethod->invoke($this->extractor, 'string', 'createdAt');
         expect($format)->toBe('date-time');
-        
+
         // Test email format for userEmail
         $format = $formatMethod->invoke($this->extractor, 'string', 'userEmail');
         expect($format)->toBe('email');
@@ -185,31 +185,31 @@ class QueryParameterExtractorTest extends TestCase
         // Test the format detection directly using the getFormatForType method
         $reflectionMethod = new \ReflectionMethod($this->extractor, 'getFormatForType');
         $reflectionMethod->setAccessible(true);
-        
+
         // Test int64 format for userId
         $format = $reflectionMethod->invoke($this->extractor, 'integer', 'userId');
         expect($format)->toBe('int64');
-        
+
         // Test URL format for apiUrl
         $format = $reflectionMethod->invoke($this->extractor, 'string', 'apiUrl');
         expect($format)->toBe('uri');
-        
+
         // Test date-time format for created_date
         $format = $reflectionMethod->invoke($this->extractor, 'string', 'created_date');
         expect($format)->toBe('date-time');
-        
+
         // Test password format
         $format = $reflectionMethod->invoke($this->extractor, 'string', 'password');
         expect($format)->toBe('password');
-        
+
         // Test email format
         $format = $reflectionMethod->invoke($this->extractor, 'string', 'userEmail');
         expect($format)->toBe('email');
-        
+
         // Test date format for properties with 'Date' in camelCase
         $format = $reflectionMethod->invoke($this->extractor, 'string', 'createdAt');
         expect($format)->toBe('date-time');
-        
+
         // Test float format
         $format = $reflectionMethod->invoke($this->extractor, 'float', 'price');
         expect($format)->toBe('float');

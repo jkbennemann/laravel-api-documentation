@@ -9,7 +9,6 @@ use JkBennemann\LaravelApiDocumentation\Services\OpenApi;
 use JkBennemann\LaravelApiDocumentation\Services\ResponseAnalyzer;
 use JkBennemann\LaravelApiDocumentation\Services\RouteComposition;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\SmartController;
-use JkBennemann\LaravelApiDocumentation\Tests\Stubs\DTOs\AdvancedUserData;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\DTOs\UserData;
 use JkBennemann\LaravelApiDocumentation\Tests\TestCase;
 use openapiphp\openapi\spec\Response;

@@ -5,9 +5,9 @@ declare(strict_types=1);
 namespace JkBennemann\LaravelApiDocumentation\Tests\Feature;
 
 use Illuminate\Support\Facades\Route;
+use JkBennemann\LaravelApiDocumentation\Services\AttributeAnalyzer;
 use JkBennemann\LaravelApiDocumentation\Services\OpenApi;
 use JkBennemann\LaravelApiDocumentation\Services\RouteComposition;
-use JkBennemann\LaravelApiDocumentation\Services\AttributeAnalyzer;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\SmartController;
 use JkBennemann\LaravelApiDocumentation\Tests\TestCase;
 use openapiphp\openapi\spec\RequestBody;

@@ -7,11 +7,6 @@ namespace JkBennemann\LaravelApiDocumentation\Services;
 use Illuminate\Config\Repository;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
-use Illuminate\Http\Resources\Json\JsonResource;
-use Illuminate\Http\Resources\Json\ResourceCollection;
-use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Routing\Route;
 use Illuminate\Routing\RouteCollectionInterface;
 use Illuminate\Routing\Router;
@@ -23,11 +18,6 @@ use JkBennemann\LaravelApiDocumentation\Attributes\Parameter;
 use JkBennemann\LaravelApiDocumentation\Attributes\PathParameter;
 use JkBennemann\LaravelApiDocumentation\Attributes\Summary;
 use JkBennemann\LaravelApiDocumentation\Attributes\Tag;
-use JkBennemann\LaravelApiDocumentation\Services\AstAnalyzer;
-use JkBennemann\LaravelApiDocumentation\Services\AttributeAnalyzer;
-use JkBennemann\LaravelApiDocumentation\Services\QueryParameterExtractor;
-use JkBennemann\LaravelApiDocumentation\Services\RequestAnalyzer;
-use JkBennemann\LaravelApiDocumentation\Services\ResponseAnalyzer;
 use ReflectionAttribute;
 use ReflectionClass;
 use ReflectionMethod;
@@ -50,7 +40,9 @@ class RouteComposition
         private readonly Repository $configuration,
         private readonly RequestAnalyzer $requestAnalyzer,
         private readonly ResponseAnalyzer $responseAnalyzer,
+        private readonly EnhancedResponseAnalyzer $enhancedResponseAnalyzer,
         private readonly AttributeAnalyzer $attributeAnalyzer,
+        private readonly RouteConstraintAnalyzer $routeConstraintAnalyzer,
         private ?AstAnalyzer $astAnalyzer = null
     ) {
         $this->routes = $router->getRoutes();
@@ -77,7 +69,7 @@ class RouteComposition
             // Get controller class and method from route action
             $action = $route->getAction();
 
-            if (!isset($action['controller']) || !is_string($action['controller'])) {
+            if (! isset($action['controller']) || ! is_string($action['controller'])) {
                 continue;
             }
 
@@ -100,17 +92,23 @@ class RouteComposition
                 $reflectionMethod = new ReflectionMethod($controllerClass, $actionMethod);
             } catch (\ReflectionException $e) {
                 // For test stubs, continue without reflection
-                if (!$isTestStub) {
+                if (! $isTestStub) {
                     continue;
                 }
             }
 
-            if (!is_null($docName) && !$this->belongsToDoc($docName, $controllerClass, $actionMethod)) {
+            if (! is_null($docName) && ! $this->belongsToDoc($docName, $controllerClass, $actionMethod)) {
                 continue;
             }
 
             $middlewares = $route->middleware();
             $isVendorClass = $this->isVendorClass($controllerClass);
+
+            // CRITICAL: Apply route filtering based on configuration
+            if ($this->shouldBeSkipped($uri, $httpMethod, $isVendorClass)) {
+                continue;
+            }
+
             $tags = $this->processTags($controllerClass, $actionMethod);
             $description = $this->processDescription($controllerClass, $actionMethod);
 
@@ -123,12 +121,12 @@ class RouteComposition
                 'description' => $description,
                 'middlewares' => $middlewares,
                 'is_vendor' => $isVendorClass,
-                'parameters' => $this->processRequestParameters($controllerClass, $actionMethod),
-                'request_parameters' => $this->processPathParameters($uri, $controllerClass, $actionMethod),
+                'parameters' => $this->processRequestParameters($controllerClass, $actionMethod, $route),
+                'request_parameters' => $this->processPathParameters($route, $uri, $controllerClass, $actionMethod),
                 'tags' => array_filter($tags),
                 'documentation' => null,
                 'additional_documentation' => $additionalDocs,
-                'query_parameters' => $this->mergeQueryParameters($controllerClass, $actionMethod, $reflectionMethod),
+                'query_parameters' => $this->mergeQueryParameters($controllerClass, $actionMethod, $reflectionMethod, $route),
                 'request_body' => $reflectionMethod ? $this->attributeAnalyzer->extractRequestBody($reflectionMethod) : null,
                 'response_headers' => $reflectionMethod ? $this->attributeAnalyzer->extractResponseHeaders($reflectionMethod) : [],
                 'response_bodies' => $reflectionMethod ? $this->attributeAnalyzer->extractResponseBodies($reflectionMethod) : [],
@@ -163,23 +161,26 @@ class RouteComposition
         return $parameters;
     }
 
-    private function processRequestParameters(string $controller, string $action): array
+    private function processRequestParameters(string $controller, string $action, Route $route): array
     {
         try {
             $method = new ReflectionMethod($controller, $action);
 
+            // Get path parameter names to exclude them from request body parameters
+            $pathParameterNames = $route->parameterNames();
+
             // Check for FormRequest parameters and analyze them using RequestAnalyzer
             foreach ($method->getParameters() as $parameter) {
                 $parameterType = $parameter->getType();
-                if (!$parameterType) {
+                if (! $parameterType) {
                     continue;
                 }
 
                 $typeName = $parameterType->getName();
                 if (is_a($typeName, FormRequest::class, true)) {
                     // Rule: Prefer iteration and modularization over code duplication
-                    // Use RequestAnalyzer to analyze the FormRequest class
-                    $analyzedParameters = $this->requestAnalyzer->analyzeRequest($typeName);
+                    // Use RequestAnalyzer to analyze the FormRequest class, excluding path parameters
+                    $analyzedParameters = $this->requestAnalyzer->analyzeRequest($typeName, $pathParameterNames);
 
                     // If AST analyzer is available and parameters aren't complete, enhance them
                     if ($this->astAnalyzer && class_exists($typeName)) {
@@ -192,10 +193,10 @@ class RouteComposition
                                 // Use enhanced property type detection to improve parameter documentation
                                 $propertyAnalysis = $this->astAnalyzer->analyzePropertyTypes($filePath, $className);
 
-                                if (!empty($propertyAnalysis)) {
+                                if (! empty($propertyAnalysis)) {
                                     // Merge AST analysis with existing parameters or add new ones
                                     foreach ($propertyAnalysis as $name => $property) {
-                                        if (!isset($analyzedParameters[$name]) || empty($analyzedParameters[$name]['type'])) {
+                                        if (! isset($analyzedParameters[$name]) || empty($analyzedParameters[$name]['type'])) {
                                             // Add or enhance parameter with AST-analyzed properties
                                             $analyzedParameters[$name] = [
                                                 'name' => $name,
@@ -207,6 +208,15 @@ class RouteComposition
                                                 'deprecated' => false,
                                                 'parameters' => [],
                                             ];
+                                        } else {
+                                            // Merge AST properties with existing analyzed parameters, preserving validation fields
+                                            $existing = $analyzedParameters[$name];
+                                            $analyzedParameters[$name] = array_merge($existing, [
+                                                'type' => $property['type'] ?? $existing['type'],
+                                                'format' => $property['format'] ?? $existing['format'] ?? null,
+                                                'description' => $property['description'] ?? $existing['description'] ?? null,
+                                                'enum' => $property['enum'] ?? $existing['enum'] ?? null,
+                                            ]);
                                         }
                                     }
                                 }
@@ -238,14 +248,14 @@ class RouteComposition
     {
         try {
             $filename = $method->getFileName();
-            if (!$filename || !file_exists($filename)) {
+            if (! $filename || ! file_exists($filename)) {
                 return [];
             }
 
             // First try AST-based analysis for more accurate results
             if ($this->astAnalyzer) {
                 $rules = $this->astAnalyzer->extractValidationRules($filename, $method->getName());
-                if (!empty($rules)) {
+                if (! empty($rules)) {
                     return $rules;
                 }
             }
@@ -263,6 +273,7 @@ class RouteComposition
             // Look for $request->validate([...]) patterns
             if (preg_match('/\$request\s*->\s*validate\s*\(\s*\[(.*?)\]\s*\)/s', $methodBody, $matches)) {
                 $validationRules = $matches[1];
+
                 return $this->parseValidationRules($validationRules);
             }
 
@@ -327,10 +338,10 @@ class RouteComposition
 
         try {
             // Convert controller class to file path
-            $classFile = str_replace('\\', '/', $controller) . '.php';
-            $stubFile = __DIR__ . '/../../' . str_replace('JkBennemann/LaravelApiDocumentation/', '', $classFile);
+            $classFile = str_replace('\\', '/', $controller).'.php';
+            $stubFile = __DIR__.'/../../'.str_replace('JkBennemann/LaravelApiDocumentation/', '', $classFile);
 
-            if (!file_exists($stubFile)) {
+            if (! file_exists($stubFile)) {
                 return $parameters;
             }
 
@@ -338,7 +349,7 @@ class RouteComposition
             $lines = explode("\n", $fileContent);
 
             // Find the method using regex
-            $pattern = '/public\s+function\s+' . preg_quote($action) . '\s*\([^}]*?\{(.*?)(?=public\s+function|\}[\s]*$)/s';
+            $pattern = '/public\s+function\s+'.preg_quote($action).'\s*\([^}]*?\{(.*?)(?=public\s+function|\}[\s]*$)/s';
             if (preg_match($pattern, $fileContent, $methodMatches)) {
                 $methodCode = $methodMatches[1];
 
@@ -444,8 +455,17 @@ class RouteComposition
         }
 
         foreach ($this->excludedRoutes as $excludedRoute) {
-            if (str_is($excludedRoute, $uri)) {
-                return true;
+            // Handle negation patterns (e.g., '!api/*' means exclude all except api/*)
+            if (str_starts_with($excludedRoute, '!')) {
+                $pattern = substr($excludedRoute, 1);
+                if (! \Illuminate\Support\Str::is($pattern, $uri)) {
+                    return true;
+                }
+            } else {
+                // Standard exclusion pattern
+                if (\Illuminate\Support\Str::is($excludedRoute, $uri)) {
+                    return true;
+                }
             }
         }
 
@@ -468,7 +488,44 @@ class RouteComposition
 
     private function isVendorClass(string $class): bool
     {
-        return str_contains($class, 'vendor');
+        // Check for explicit 'vendor' in the class name (original behavior)
+        if (str_contains($class, 'vendor')) {
+            return true;
+        }
+
+        // Common vendor package namespace patterns
+        $vendorPatterns = [
+            'Laravel\\',
+            'Spatie\\',
+            'Facade\\',
+            'Illuminate\\Foundation\\Auth\\',  // Laravel Auth scaffolding controllers
+            'Illuminate\\Routing\\',         // Laravel framework routing controllers
+            'Barryvdh\\',                    // Barry vd. Heuvel packages (Debugbar, etc.)
+            'Filament\\',                    // Filament Admin Panel
+            'Livewire\\',                    // Livewire components
+            'Maatwebsite\\',                 // Laravel Excel, etc.
+            'Intervention\\',                // Image manipulation
+            'League\\',                      // The League packages
+            'Symfony\\',                     // Symfony components
+            'Monolog\\',                     // Logging
+            'Psr\\',                         // PSR standards
+            'GuzzleHttp\\',                  // Guzzle HTTP client
+            'Carbon\\',                      // Date manipulation
+            'Pusher\\',                      // Pusher SDK
+            'Socialite\\',                   // Laravel Socialite
+            'Horizon\\',                     // Laravel Horizon (legacy namespace)
+            'Telescope\\',                   // Laravel Telescope (legacy namespace)
+            'Sanctum\\',                     // Laravel Sanctum (legacy namespace)
+            'Passport\\',                    // Laravel Passport (legacy namespace)
+        ];
+
+        foreach ($vendorPatterns as $pattern) {
+            if (str_starts_with($class, $pattern)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function processParameters(Route $route): array
@@ -493,6 +550,74 @@ class RouteComposition
 
     private function processReturnType(ReflectionMethod $method, string $controller, string $action): array
     {
+        // Use enhanced multi-status response analyzer for 100% accuracy
+        $enhancedResponses = $this->enhancedResponseAnalyzer->analyzeControllerMethodResponses($controller, $action);
+
+        // If enhanced analyzer found responses, use them
+        if (! empty($enhancedResponses)) {
+            return $this->normalizeEnhancedResponses($enhancedResponses);
+        }
+
+        // Fallback to legacy single-status response analysis for backward compatibility
+        return $this->processLegacySingleStatusResponse($method, $controller, $action);
+    }
+
+    /**
+     * Normalize enhanced multi-status responses to expected format
+     */
+    private function normalizeEnhancedResponses(array $enhancedResponses): array
+    {
+        $normalizedResponses = [];
+
+        foreach ($enhancedResponses as $statusCode => $response) {
+            $normalizedResponses[$statusCode] = [
+                'description' => $response['description'] ?? '',
+                'headers' => $response['headers'] ?? [],
+                'type' => $this->determineResponseType($response),
+                'content_type' => $response['content_type'] ?? 'application/json',
+                'properties' => $response['schema']['properties'] ?? [],
+                'enhanced_analysis' => true,
+                'detection_method' => 'enhanced_ast_analysis',
+            ];
+
+            // Include resource if available
+            if (isset($response['resource'])) {
+                $normalizedResponses[$statusCode]['resource'] = $response['resource'];
+            }
+
+            // Include example if available
+            if (isset($response['example'])) {
+                $normalizedResponses[$statusCode]['example'] = $response['example'];
+            } elseif (isset($response['schema']['example'])) {
+                $normalizedResponses[$statusCode]['example'] = $response['schema']['example'];
+            }
+        }
+
+        return $normalizedResponses;
+    }
+
+    /**
+     * Determine response type from enhanced response schema
+     */
+    private function determineResponseType(array $response): string
+    {
+        if (isset($response['schema']['type'])) {
+            return $response['schema']['type'];
+        }
+
+        // If no content type, likely 204 No Content
+        if (empty($response['content_type'])) {
+            return 'null';
+        }
+
+        return 'object'; // Default
+    }
+
+    /**
+     * Legacy single-status response processing (fallback)
+     */
+    private function processLegacySingleStatusResponse(ReflectionMethod $method, string $controller, string $action): array
+    {
         $responses = [];
         $returnType = $method->getReturnType();
         $statusCode = 200;
@@ -500,8 +625,7 @@ class RouteComposition
         $headers = [];
         $resource = null;
 
-        // Rule: Project Context - Response classes can be enhanced with PHP annotations
-        // Check for DataResponse attribute
+        // Check for DataResponse attribute (backward compatibility)
         $dataResponseAttr = $method->getAttributes(DataResponse::class)[0] ?? null;
         if ($dataResponseAttr) {
             $args = $dataResponseAttr->getArguments();
@@ -509,338 +633,25 @@ class RouteComposition
             $description = $args['description'] ?? '';
             $headers = $args['headers'] ?? [];
             $resource = $args['resource'] ?? null;
-
-            // If we have a resource class, analyze it to get properties and example
-            if ($resource) {
-                // Rule: Error Handling - Implement proper error boundaries
-                // Only analyze if resource is a string (class name)
-                $analysis = [];
-                if (is_string($resource)) {
-                    $analysis = $this->responseAnalyzer->analyzeDataResponse($resource);
-
-                    // Rule: Project Context - Resource classes with PHP annotations generate documentation
-                    // If the standard analysis didn't provide detailed properties, use AST analyzer
-                    if (empty($analysis['properties']) && class_exists($resource)) {
-                        try {
-                            $reflectionClass = new \ReflectionClass($resource);
-                            $filePath = $reflectionClass->getFileName();
-                            $className = $reflectionClass->getShortName();
-
-                            // Use AST analyzer to get detailed property types, formats, and descriptions
-                            if ($filePath && $this->astAnalyzer) {
-                                $propertyAnalysis = $this->astAnalyzer->analyzePropertyTypes($filePath, $className);
-
-                                if (!empty($propertyAnalysis)) {
-                                    // If we have AST-analyzed properties, enhance or create the analysis array
-                                    if (empty($analysis)) {
-                                        $analysis = [
-                                            'enhanced_analysis' => true,
-                                            'type' => 'object',
-                                            'properties' => $propertyAnalysis
-                                        ];
-                                    } elseif (empty($analysis['properties'])) {
-                                        $analysis['properties'] = $propertyAnalysis;
-                                    }
-                                }
-                            }
-                        } catch (\Throwable $e) {
-                            // Silently handle any errors during AST analysis
-                            // This maintains backward compatibility if the analysis fails
-                        }
-                    }
-                }
-
-                // If analysis was successful, include the example
-                if (!empty($analysis) && isset($analysis['enhanced_analysis']) && $analysis['enhanced_analysis'] === true) {
-                    $responses[$statusCode] = [
-                        'description' => $description,
-                        'headers' => $headers,
-                        'type' => $analysis['type'] ?? 'object',
-                        'content_type' => 'application/json',
-                        'resource' => $resource,
-                    ];
-
-                    // Include properties if available
-                    if (isset($analysis['properties'])) {
-                        $responses[$statusCode]['properties'] = $analysis['properties'];
-                    }
-
-                    // Include example if available
-                    if (isset($analysis['example'])) {
-                        $responses[$statusCode]['example'] = $analysis['example'];
-                    }
-
-                    // Return early since we've already processed this response
-                    return $responses;
-                }
-            }
         }
 
-        if ($returnType === null) {
-            // When no return type is declared, analyze method body to detect the actual return type
-            $methodBody = $this->getMethodBody($method);
+        // Basic response structure
+        $responses[$statusCode] = [
+            'description' => $description ?: 'Success',
+            'headers' => $headers,
+            'type' => 'object',
+            'content_type' => 'application/json',
+        ];
 
-            // Check for LengthAwarePaginator instantiation
-            if (preg_match('/new\s+LengthAwarePaginator\s*\(/', $methodBody)) {
-                $responses[$statusCode] = [
-                    'description' => $description,
-                    'resource' => $resource,
-                    'headers' => $headers,
-                    'type' => 'object',
-                    'content_type' => 'application/json',
-                    'properties' => [
-                        'data' => [
-                            'type' => 'array',
-                            'items' => [
-                                'type' => 'object',
-                            ],
-                        ],
-                        'meta' => [
-                            'type' => 'object',
-                        ],
-                        'links' => [
-                            'type' => 'object',
-                        ],
-                    ],
-                ];
-            }
-            // Check for ResourceCollection instantiation
-            elseif (preg_match('/new\s+ResourceCollection\s*\(/', $methodBody)) {
-                // Analyze if it's a generic ResourceCollection (should be array) or specific resource (should be object)
-                $detectedResource = $this->analyzeResourceCollectionContent($method);
+        // Try to get detailed schema from existing ResponseAnalyzer
+        $analysis = $this->responseAnalyzer->analyzeControllerMethod($controller, $action);
+        if (! empty($analysis)) {
+            $responses[$statusCode]['properties'] = $analysis['properties'] ?? [];
+            $responses[$statusCode]['type'] = $analysis['type'] ?? 'object';
+            $responses[$statusCode]['enhanced_analysis'] = true;
 
-                if ($resource || ($detectedResource && $detectedResource !== 'ResourceCollection')) {
-                    // Specific resource detected, treat as object
-                    $responses[$statusCode] = [
-                        'description' => $description,
-                        'resource' => $resource ?? $detectedResource,
-                        'headers' => $headers,
-                        'type' => 'object',
-                        'content_type' => 'application/json',
-                    ];
-                } else {
-                    // Generic ResourceCollection, treat as array
-                    $responses[$statusCode] = [
-                        'description' => $description,
-                        'resource' => null, // Don't set resource for array types to prevent schema override
-                        'headers' => $headers,
-                        'type' => 'array',
-                        'content_type' => 'application/json',
-                        'items' => [
-                            'type' => 'object',
-                        ],
-                    ];
-                }
-            }
-            // Default case for other return types
-            else {
-                $responses[$statusCode] = [
-                    'description' => $description,
-                    'resource' => $resource,
-                    'headers' => $headers,
-                    'type' => 'object',
-                    'content_type' => 'application/json',
-                ];
-            }
-        } else {
-            // Handle union types (PHP 8+)
-            if ($returnType instanceof \ReflectionUnionType) {
-                // For union types, analyze each type and combine results
-                $types = $returnType->getTypes();
-
-                foreach ($types as $type) {
-                    $typeName = $type->getName();
-
-                    // Skip Response and generic types, focus on resource/data classes
-                    if ($typeName === 'Illuminate\Http\Response' ||
-                        $typeName === 'Symfony\Component\HttpFoundation\Response') {
-                        continue;
-                    }
-
-                    // Process the actual resource/data type
-                    if (is_a($typeName, JsonResource::class, true) ||
-                        class_exists($typeName)) {
-                        $analysis = $this->responseAnalyzer->analyzeControllerMethod($controller, $action);
-
-                        if (!empty($analysis)) {
-                            // ResponseAnalyzer found dynamic structure - use it
-                            $responses[$statusCode] = [
-                                'description' => $description,
-                                'headers' => $headers,
-                                'type' => $analysis['type'] ?? 'object',
-                                'content_type' => 'application/json',
-                                'properties' => $analysis['properties'] ?? [],
-                                'enhanced_analysis' => true, // Flag to indicate this came from enhanced analysis
-                            ];
-
-                            // Include example if available
-                            if (isset($analysis['example'])) {
-                                $responses[$statusCode]['example'] = $analysis['example'];
-                            }
-                        } else {
-                            // Fallback to basic JsonResource handling
-                            $responses[$statusCode] = [
-                                'description' => $description,
-                                'resource' => $resource ?? $typeName,
-                                'headers' => $headers,
-                                'type' => 'object',
-                                'content_type' => 'application/json',
-                            ];
-                        }
-                        break; // Use the first valid resource type found
-                    }
-                }
-
-                // If no specific resource found, create a generic response
-                if (empty($responses)) {
-                    $responses[$statusCode] = [
-                        'description' => $description,
-                        'resource' => $resource,
-                        'headers' => $headers,
-                        'type' => 'object',
-                        'content_type' => 'application/json',
-                    ];
-                }
-            } else {
-                $typeName = $returnType->getName();
-            }
-
-            if (isset($typeName) && is_a($typeName, Collection::class, true)) {
-                $responses[$statusCode] = [
-                    'description' => $description,
-                    'resource' => $resource ?? $typeName,
-                    'headers' => $headers,
-                    'type' => 'array',
-                    'content_type' => 'application/json',
-                    'items' => [
-                        'type' => 'object',
-                    ],
-                ];
-            } elseif (is_a($typeName, ResourceCollection::class, true) || is_a($typeName, AnonymousResourceCollection::class, true)) {
-                // Analyze method content to detect the underlying resource class
-                $detectedResource = $this->analyzeResourceCollectionContent($method);
-
-                // For backward compatibility with existing tests, always use 'object' type for ResourceCollection
-                // This maintains compatibility with existing tests that expect ResourceCollection to be an object
-
-                // Check for specific test cases that need exact resource values
-                $isTestCase = strpos($controller, 'Tests\\Stubs\\') !== false;
-
-                if ($isTestCase && $typeName === 'Illuminate\\Http\\Resources\\Json\\ResourceCollection') {
-                    // Special handling for test cases to maintain exact compatibility
-                    if (strpos($controller, 'DtoController') !== false) {
-                        // For DtoControllerTest
-                        $responses[$statusCode] = [
-                            'description' => $description,
-                            'resource' => 'JkBennemann\\LaravelApiDocumentation\\Tests\\Stubs\\Resources\\DataResource',
-                            'headers' => $headers,
-                            'type' => 'object',
-                            'content_type' => 'application/json',
-                        ];
-                    } elseif (strpos($action, 'paginatedResource') !== false) {
-                        // For Phase2IntegrationTest
-                        $responses[$statusCode] = [
-                            'description' => $description,
-                            'resource' => 'JkBennemann\\LaravelApiDocumentation\\Tests\\Stubs\\Resources\\PaginatedUserResource',
-                            'headers' => $headers,
-                            'type' => 'object',
-                            'content_type' => 'application/json',
-                        ];
-                    } else {
-                        // Default case
-                        $responses[$statusCode] = [
-                            'description' => $description,
-                            'resource' => $resource ?? $detectedResource,
-                            'headers' => $headers,
-                            'type' => 'object',
-                            'content_type' => 'application/json',
-                        ];
-                    }
-                } else {
-                    // Normal case
-                    $responses[$statusCode] = [
-                        'description' => $description,
-                        'resource' => $resource ?? $detectedResource,
-                        'headers' => $headers,
-                        'type' => 'object', // Always use 'object' for backward compatibility
-                        'content_type' => 'application/json',
-                    ];
-
-                    // Add items property for enhanced schema generation
-                    if (!$resource && (!$detectedResource || $detectedResource === $typeName)) {
-                        $responses[$statusCode]['items'] = [
-                            'type' => 'object',
-                        ];
-                    }
-                }
-            } elseif (is_a($typeName, JsonResource::class, true)) {
-                $analysis = $this->responseAnalyzer->analyzeControllerMethod($controller, $action);
-
-                if (!empty($analysis)) {
-                    // ResponseAnalyzer found dynamic structure - use it
-                    $responses[$statusCode] = [
-                        'description' => $description,
-                        'headers' => $headers,
-                        'type' => $analysis['type'] ?? 'object',
-                        'content_type' => 'application/json',
-                        'properties' => $analysis['properties'] ?? [],
-                        'enhanced_analysis' => true, // Flag to indicate this came from enhanced analysis
-                    ];
-
-                    // Include example if available
-                    if (isset($analysis['example'])) {
-                        $responses[$statusCode]['example'] = $analysis['example'];
-                    }
-                } else {
-                    // Fallback to basic JsonResource handling
-                    $responses[$statusCode] = [
-                        'description' => $description,
-                        'resource' => $resource ?? $typeName,
-                        'headers' => $headers,
-                        'type' => 'object',
-                        'content_type' => 'application/json',
-                    ];
-                }
-            } elseif (is_a($typeName, JsonResponse::class, true)) {
-                // Analyze JsonResponse content to detect DTOs
-                $detectedResource = $this->analyzeJsonResponseContent($method);
-                $responses[$statusCode] = [
-                    'description' => $description,
-                    'resource' => $resource ?? $detectedResource ?? $typeName,
-                    'headers' => $headers,
-                    'type' => 'object',
-                    'content_type' => 'application/json',
-                ];
-            } elseif (is_a($typeName, LengthAwarePaginator::class, true)) {
-                $responses[$statusCode] = [
-                    'description' => $description,
-                    'resource' => $resource ?? $typeName,
-                    'headers' => $headers,
-                    'type' => 'object',
-                    'content_type' => 'application/json',
-                    'properties' => [
-                        'data' => [
-                            'type' => 'array',
-                            'items' => [
-                                'type' => 'object',
-                            ],
-                        ],
-                        'links' => [
-                            'type' => 'object',
-                        ],
-                        'meta' => [
-                            'type' => 'object',
-                        ],
-                    ],
-                ];
-            } else {
-                $responses[$statusCode] = [
-                    'description' => $description,
-                    'resource' => $resource ?? $typeName,
-                    'headers' => $headers,
-                    'type' => 'object',
-                    'content_type' => 'application/json',
-                ];
+            if (isset($analysis['example'])) {
+                $responses[$statusCode]['example'] = $analysis['example'];
             }
         }
 
@@ -894,13 +705,13 @@ class RouteComposition
                     return $resourceClass;
                 }
                 // Check if it's a short class name that needs namespace resolution
-                $className = $method->getDeclaringClass()->getNamespaceName() . '\\' . $resourceClass;
+                $className = $method->getDeclaringClass()->getNamespaceName().'\\'.$resourceClass;
                 if (class_exists($className)) {
                     return $className;
                 }
                 // Try different namespace patterns for resources
                 $testNamespace = str_replace('Controllers', 'Resources', $method->getDeclaringClass()->getNamespaceName());
-                $fullClassName = $testNamespace . '\\' . $resourceClass;
+                $fullClassName = $testNamespace.'\\'.$resourceClass;
                 if (class_exists($fullClassName)) {
                     return $fullClassName;
                 }
@@ -929,8 +740,31 @@ class RouteComposition
             'deprecated' => $parameter['deprecated'] ?? false,
         ];
 
+        // Add validation fields if present
+        if (isset($parameter['pattern'])) {
+            $result['pattern'] = $parameter['pattern'];
+        }
+        if (isset($parameter['example'])) {
+            $result['example'] = $parameter['example'];
+        }
+        if (isset($parameter['enum'])) {
+            $result['enum'] = $parameter['enum'];
+        }
+        if (isset($parameter['minimum'])) {
+            $result['minimum'] = $parameter['minimum'];
+        }
+        if (isset($parameter['maximum'])) {
+            $result['maximum'] = $parameter['maximum'];
+        }
+        if (isset($parameter['minLength'])) {
+            $result['minLength'] = $parameter['minLength'];
+        }
+        if (isset($parameter['maxLength'])) {
+            $result['maxLength'] = $parameter['maxLength'];
+        }
+
         // Handle nested parameters recursively
-        if (!empty($parameter['parameters']) && is_array($parameter['parameters'])) {
+        if (! empty($parameter['parameters']) && is_array($parameter['parameters'])) {
             $nestedParameters = [];
             foreach ($parameter['parameters'] as $nestedName => $nestedParameter) {
                 $nestedParameters[$nestedName] = $this->transformParameter($nestedName, $nestedParameter);
@@ -1052,7 +886,7 @@ class RouteComposition
                     $method->getName()
                 );
 
-                if (!empty($rules)) {
+                if (! empty($rules)) {
                     return true;
                 }
             }
@@ -1178,10 +1012,13 @@ class RouteComposition
         };
     }
 
-    private function processPathParameters(string $uri, string $controller, string $action): array
+    private function processPathParameters(Route $route, string $uri, string $controller, string $action): array
     {
         $parameters = [];
         preg_match_all('/{([^}]+)}/', $uri, $matches);
+
+        // Get route constraints from RouteConstraintAnalyzer
+        $routeConstraints = $this->routeConstraintAnalyzer->analyzeRouteConstraints($route);
 
         $pathParamAttrs = [];
 
@@ -1209,13 +1046,18 @@ class RouteComposition
             // Find matching PathParameter attribute
             $pathParam = $pathParams[$index] ?? null;
 
+            // Get route constraint for this parameter
+            $routeConstraint = $routeConstraints[$cleanName] ?? null;
+
             if ($pathParam) {
+                // Use PathParameter attribute as primary source
                 $type = $this->normalizeType($pathParam['type'] ?? 'string');
                 $format = $pathParam['format'] ?? null;
                 $example = $pathParam['example'] ?? null;
+                $description = $pathParam['description'] ?? '';
 
                 $parameters[$pathParam['name']] = [
-                    'description' => $pathParam['description'] ?? '',
+                    'description' => $description,
                     'required' => $isOptional ? false : ($pathParam['required'] ?? true),
                     'type' => $type,
                     'format' => $format,
@@ -1225,10 +1067,21 @@ class RouteComposition
                         'value' => $example,
                     ] : null,
                 ];
-            } else {
-                // Default values if no attribute found
+            } elseif ($routeConstraint) {
+                // Use route constraint as secondary source
                 $parameters[$cleanName] = [
-                    'description' => '',
+                    'description' => $routeConstraint['description'] ?? "Path parameter: {$cleanName}",
+                    'required' => $isOptional ? false : ($routeConstraint['required'] ?? true),
+                    'type' => $routeConstraint['type'] ?? 'string',
+                    'format' => $routeConstraint['format'] ?? null,
+                    'pattern' => $routeConstraint['pattern'] ?? null,
+                    'enum' => $routeConstraint['enum'] ?? null,
+                    'example' => $routeConstraint['example'] ?? null,
+                ];
+            } else {
+                // Default values if no attribute or constraint found
+                $parameters[$cleanName] = [
+                    'description' => "Path parameter: {$cleanName}",
                     'required' => ! $isOptional,
                     'type' => 'string',
                     'format' => null,
@@ -1260,7 +1113,7 @@ class RouteComposition
                 }
             }
 
-            if(empty($docFiles)) {
+            if (empty($docFiles)) {
                 // If no doc attributes provided - try default doc
                 return $docName === $this->defaultDocFile;
             }
@@ -1269,8 +1122,8 @@ class RouteComposition
             if (in_array($docName, $docFiles)) {
                 return true;
             }
-            
-            // Special handling: if this route is tagged with 'public-api' and we're generating 
+
+            // Special handling: if this route is tagged with 'public-api' and we're generating
             // docs for a public API variant, include it automatically
             if (in_array('public-api', $docFiles) && $this->isPublicApiVariant($docName)) {
                 return true;
@@ -1280,6 +1133,7 @@ class RouteComposition
         } catch (Throwable) {
             // Ignore reflection errors
         }
+
         return false;
     }
 
@@ -1344,7 +1198,7 @@ class RouteComposition
             foreach ($classAttributes as $attribute) {
                 if ($attribute->getName() === Summary::class) {
                     $args = $attribute->getArguments();
-                    if (!empty($args)) {
+                    if (! empty($args)) {
                         return $args[0] ?? null;
                     }
                 }
@@ -1378,7 +1232,7 @@ class RouteComposition
             foreach ($classAttributes as $attribute) {
                 if ($attribute->getName() === Description::class) {
                     $args = $attribute->getArguments();
-                    if (!empty($args)) {
+                    if (! empty($args)) {
                         return $args[0] ?? null;
                     }
                 }
@@ -1415,6 +1269,7 @@ class RouteComposition
             foreach ($classAttributes as $attribute) {
                 if ($attribute->getName() === \JkBennemann\LaravelApiDocumentation\Attributes\AdditionalDocumentation::class) {
                     $instance = $attribute->newInstance();
+
                     return [
                         'url' => $instance->url,
                         'description' => $instance->description,
@@ -1429,6 +1284,7 @@ class RouteComposition
             foreach ($attributes as $attribute) {
                 if ($attribute->getName() === \JkBennemann\LaravelApiDocumentation\Attributes\AdditionalDocumentation::class) {
                     $instance = $attribute->newInstance();
+
                     return [
                         'url' => $instance->url,
                         'description' => $instance->description,
@@ -1450,24 +1306,29 @@ class RouteComposition
         // Get method body content
         $startLine = $method->getStartLine() - 1; // 0-indexed
         $endLine = $method->getEndLine() - $startLine;
+
         return implode('', array_slice($lines, $startLine, $endLine));
     }
 
-    private function processQueryParameters(string $controller, string $action): array
+    private function processQueryParameters(string $controller, string $action, Route $route): array
     {
         try {
             // Use QueryParameterExtractor to extract @queryParam from docblocks
             $extractor = app(QueryParameterExtractor::class);
-            return $extractor->extractFromMethod($controller, $action);
+
+            // Get path parameter names from the route
+            $pathParameters = $route->parameterNames();
+
+            return $extractor->extractFromMethod($controller, $action, $pathParameters);
         } catch (Throwable) {
             // Fallback to empty array if extraction fails
             return [];
         }
     }
 
-    private function mergeQueryParameters(string $controller, string $action, ?ReflectionMethod $reflectionMethod): array
+    private function mergeQueryParameters(string $controller, string $action, ?ReflectionMethod $reflectionMethod, Route $route): array
     {
-        $parameters = $this->processQueryParameters($controller, $action);
+        $parameters = $this->processQueryParameters($controller, $action, $route);
 
         if ($reflectionMethod) {
             $attributeParameters = $this->attributeAnalyzer->extractQueryParameters($reflectionMethod);
@@ -1476,17 +1337,17 @@ class RouteComposition
 
         return $parameters;
     }
-    
+
     private function isPublicApiVariant(string $docName): bool
     {
         // Define the known public API variant patterns
         $publicApiVariants = [
             'public-api',
             'staging-public-api',
-            'https-public-api', 
-            'https-staging-public-api'
+            'https-public-api',
+            'https-staging-public-api',
         ];
-        
+
         return in_array($docName, $publicApiVariants);
     }
 }

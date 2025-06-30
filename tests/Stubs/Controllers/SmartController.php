@@ -68,8 +68,7 @@ class SmartController
     /**
      * Get a user with dynamic response type
      *
-     * @param int $userId
-     * @param string $format Response format (simple or advanced)
+     * @param  string  $format  Response format (simple or advanced)
      * @return UserData|AdvancedUserData
      */
     public function getUserWithDynamicType(int $userId, string $format = 'simple')

@@ -7,7 +7,6 @@ use JkBennemann\LaravelApiDocumentation\Services\RouteComposition;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\DtoResponseController;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers\SimpleController;
 use JkBennemann\LaravelApiDocumentation\Tests\Stubs\DTOs\SimpleAnnotated;
-use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Resources\SampleResource;
 
 it('can create an instance of the service', function () {
     expect(app(RouteComposition::class))
@@ -327,15 +326,15 @@ it('can generate route information for route with a data resource', function () 
             'properties',
             'headers',
         ]);
-        
+
     // Enhanced analysis may or may not be present depending on the response type
     if (isset($routeData[0]['responses'][200]['enhanced_analysis'])) {
         expect($routeData[0]['responses'][200]['enhanced_analysis'])->toBeTrue();
     }
-    
+
     expect($routeData[0]['responses'][200]['type'])
         ->toBe('object');
-        
+
     expect($routeData[0]['responses'][200]['description'])
         ->toBe('A sample description')
         ->and($routeData[0]['responses'][200]['headers'])

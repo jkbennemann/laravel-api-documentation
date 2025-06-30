@@ -34,8 +34,6 @@ use ReflectionProperty;
 use Spatie\LaravelData\Data;
 use Spatie\LaravelData\Mappers\SnakeCaseMapper;
 use Throwable;
-use JkBennemann\LaravelApiDocumentation\Services\AstAnalyzer;
-use JkBennemann\LaravelApiDocumentation\Services\AttributeAnalyzer;
 
 class OpenApi
 {
@@ -46,7 +44,7 @@ class OpenApi
     private Repository $repository;
 
     private ?AttributeAnalyzer $attributeAnalyzer;
-    
+
     private ?AstAnalyzer $astAnalyzer;
 
     private array $excludedRoutes;
@@ -90,6 +88,7 @@ class OpenApi
     {
         // Ensure we have the latest config values before returning
         $this->updateInfoFromConfig();
+
         return $this->openApi;
     }
 
@@ -148,7 +147,7 @@ class OpenApi
             $operation = $this->createOperation($route);
 
             // Add security if middleware contains auth
-            if (!empty($route['middlewares'])) {
+            if (! empty($route['middlewares'])) {
                 $this->processSecuritySchemes($route['middlewares'], $operation, $this->includedSecuritySchemes);
             }
 
@@ -243,7 +242,7 @@ class OpenApi
         $parameters = [];
 
         // Add path parameters from route data
-        if (!empty($route['request_parameters'])) {
+        if (! empty($route['request_parameters'])) {
             foreach ($route['request_parameters'] as $name => $param) {
                 $parameters[] = new Parameter([
                     'name' => $name,
@@ -259,18 +258,18 @@ class OpenApi
         }
 
         // Add query parameters from pre-processed route data (includes both attribute and smart detection)
-        if (!empty($route['query_parameters'])) {
+        if (! empty($route['query_parameters'])) {
             foreach ($route['query_parameters'] as $name => $param) {
                 $schema = new Schema([
                     'type' => $param['type'] ?? 'string',
                     'format' => $param['format'] ?? null,
                 ]);
-                
+
                 // Add enum values if present
-                if (!empty($param['enum'])) {
+                if (! empty($param['enum'])) {
                     $schema->enum = $param['enum'];
                 }
-                
+
                 $parameters[] = new Parameter([
                     'name' => $name,
                     'in' => 'query',
@@ -282,7 +281,31 @@ class OpenApi
             }
         }
 
-        if (!empty($parameters)) {
+        // For GET requests, treat validation parameters as query parameters instead of request body
+        if (strtoupper($route['method']) === 'GET' && ! empty($route['parameters'])) {
+            foreach ($route['parameters'] as $name => $param) {
+                $schema = new Schema([
+                    'type' => $param['type'] ?? 'string',
+                    'format' => $param['format'] ?? null,
+                ]);
+
+                // Add enum values if present
+                if (! empty($param['enum'])) {
+                    $schema->enum = $param['enum'];
+                }
+
+                $parameters[] = new Parameter([
+                    'name' => $name,
+                    'in' => 'query',
+                    'description' => $param['description'] ?? '',
+                    'required' => $param['required'] ?? false,
+                    'schema' => $schema,
+                    'example' => $param['example'] ?? null,
+                ]);
+            }
+        }
+
+        if (! empty($parameters)) {
             $operation->parameters = $parameters;
         }
     }
@@ -295,10 +318,10 @@ class OpenApi
         $requestBody = null;
 
         // Check for explicit request body from pre-processed route data (priority)
-        if (!empty($route['request_body'])) {
+        if (! empty($route['request_body'])) {
             $explicitRequestBody = $route['request_body'];
             $schema = null;
-            
+
             if ($explicitRequestBody['data_class']) {
                 // Use Spatie Data class for schema
                 $schemaData = $this->responseAnalyzer->analyzeSpatieDataObject($explicitRequestBody['data_class']);
@@ -320,15 +343,16 @@ class OpenApi
         }
 
         // Fall back to smart detection if no explicit definition
-        if (!$requestBody && !empty($route['parameters']) && $this->repository->get('api-documentation.smart_features', true)) {
+        // Only create request body for non-GET methods (GET requests should use query parameters)
+        if (! $requestBody && ! empty($route['parameters']) && strtoupper($route['method']) !== 'GET') {
             // Enhanced schema building with AST analysis if available
             $schema = $this->buildRequestBodySchema($route['parameters']);
-            
+
             // Add additional schema enhancements from AST analysis if method reflection is available
             if ($methodReflection && $this->astAnalyzer) {
                 $this->enhanceSchemaWithAstAnalysis($schema, $methodReflection);
             }
-            
+
             $requestBody = new RequestBody([
                 'required' => true,
                 'content' => [
@@ -352,13 +376,13 @@ class OpenApi
         $responses = [];
 
         // Check for explicit response body from pre-processed route data (priority)
-        if (!empty($route['response_bodies'])) {
+        if (! empty($route['response_bodies'])) {
             foreach ($route['response_bodies'] as $statusCode => $responseData) {
                 $schema = null;
-                
+
                 if ($responseData['data_class']) {
                     $schemaData = $this->responseAnalyzer->analyzeSpatieDataObject($responseData['data_class']);
-                    
+
                     if ($responseData['is_collection']) {
                         $schema = new Schema([
                             'type' => 'array',
@@ -373,7 +397,7 @@ class OpenApi
 
                 // Process response headers from pre-processed route data
                 $responseHeaders = [];
-                if (!empty($route['response_headers'])) {
+                if (! empty($route['response_headers'])) {
                     foreach ($route['response_headers'] as $headerName => $headerData) {
                         if (is_string($headerData)) {
                             $responseHeaders[$headerName] = new Header([
@@ -410,7 +434,7 @@ class OpenApi
         }
 
         // Process responses from RouteComposition (includes validation errors, etc.)
-        if (!empty($route['responses'])) {
+        if (! empty($route['responses'])) {
             foreach ($route['responses'] as $statusCode => $responseData) {
                 // Skip if already processed from response_bodies (higher priority)
                 if (isset($responses[$statusCode])) {
@@ -418,25 +442,85 @@ class OpenApi
                 }
 
                 $schema = null;
-                
+
                 // Handle responses with properties (like validation errors)
-                if (!empty($responseData['properties'])) {
+                if (! empty($responseData['properties'])) {
                     $properties = [];
                     foreach ($responseData['properties'] as $propName => $propData) {
                         // Rule: Keep the code clean and readable - Filter out Spatie internal fields
                         if ($propName === '_additional' || $propName === '_data_context') {
                             continue;
                         }
-                        
-                        $properties[$propName] = new Schema([
+
+                        $schemaData = [
                             'type' => $propData['type'] ?? 'string',
                             'description' => $propData['description'] ?? '',
-                        ]);
+                        ];
+
+                        // Add format if available
+                        if (! empty($propData['format'])) {
+                            $schemaData['format'] = $propData['format'];
+                        }
+
+                        // Enhance description for conditional fields
+                        if (! empty($propData['conditional'])) {
+                            $schemaData['description'] .= ' (conditional field)';
+                        }
+
+                        $properties[$propName] = new Schema($schemaData);
                     }
                     $schema = new Schema([
                         'type' => $responseData['type'] ?? 'object',
                         'properties' => $properties,
                     ]);
+                }
+                // CRITICAL: Handle array responses with items schema (collections)
+                elseif (($responseData['type'] ?? 'object') === 'array' && ! empty($responseData['items'])) {
+                    $itemsData = $responseData['items'];
+
+                    // Build items schema from the items data
+                    if (! empty($itemsData['properties'])) {
+                        $itemProperties = [];
+                        foreach ($itemsData['properties'] as $propName => $propData) {
+                            // Filter out Spatie internal fields
+                            if ($propName === '_additional' || $propName === '_data_context') {
+                                continue;
+                            }
+
+                            $itemSchemaData = [
+                                'type' => $propData['type'] ?? 'string',
+                                'description' => $propData['description'] ?? '',
+                            ];
+
+                            // Add format if available and not null
+                            if (! empty($propData['format'])) {
+                                $itemSchemaData['format'] = $propData['format'];
+                            }
+
+                            // Enhance description for conditional fields
+                            if (! empty($propData['conditional'])) {
+                                $itemSchemaData['description'] .= ' (conditional field)';
+                            }
+
+                            $itemProperties[$propName] = new Schema($itemSchemaData);
+                        }
+
+                        $schema = new Schema([
+                            'type' => 'array',
+                            'items' => new Schema([
+                                'type' => $itemsData['type'] ?? 'object',
+                                'properties' => $itemProperties,
+                            ]),
+                        ]);
+                    } else {
+                        // Array without detailed item properties
+                        $schema = new Schema([
+                            'type' => 'array',
+                            'items' => new Schema([
+                                'type' => $itemsData['type'] ?? 'object',
+                            ]),
+                        ]);
+                    }
                 } else {
                     $schema = new Schema([
                         'type' => $responseData['type'] ?? 'object',
@@ -444,7 +528,7 @@ class OpenApi
                 }
 
                 $responseHeaders = [];
-                if (!empty($responseData['headers'])) {
+                if (! empty($responseData['headers'])) {
                     foreach ($responseData['headers'] as $headerName => $headerData) {
                         if (is_string($headerData)) {
                             $responseHeaders[$headerName] = new Header([
@@ -471,12 +555,12 @@ class OpenApi
                 $mediaTypeConfig = [
                     'schema' => $schema,
                 ];
-                
+
                 // Add example if available
                 if (isset($responseData['example'])) {
                     $mediaTypeConfig['example'] = $this->filterSpatieInternalFields($responseData['example']);
                 }
-                
+
                 $responses[$statusCode] = new Response([
                     'description' => $responseData['description'] ?? '',
                     'headers' => $responseHeaders,
@@ -519,21 +603,43 @@ class OpenApi
             } else {
                 $schemaProps = [
                     'type' => $param['type'] ?? 'string',
-                    'format' => $param['format'] ?? null,
                     'description' => $param['description'] ?? '',
                 ];
-                
-                // Add enum values if present
-                if (!empty($param['enum'])) {
-                    $schemaProps['enum'] = $param['enum'];
+
+                // Only add format if it's not null
+                if ($param['format'] ?? null) {
+                    $schemaProps['format'] = $param['format'];
                 }
-                
-                // Add example if present
-                if (!empty($param['example'])) {
-                    $schemaProps['example'] = $this->filterSpatieInternalFields($param['example']);
+
+                $schema = new Schema($schemaProps);
+
+                // Set additional properties after construction
+                if (! empty($param['enum'])) {
+                    $schema->enum = $param['enum'];
                 }
-                
-                $properties[$name] = new Schema($schemaProps);
+
+                if (! empty($param['example'])) {
+                    $schema->example = $this->filterSpatieInternalFields($param['example']);
+                }
+
+                if (! empty($param['pattern'])) {
+                    $schema->pattern = $param['pattern'];
+                }
+
+                if (isset($param['minimum'])) {
+                    $schema->minimum = $param['minimum'];
+                }
+                if (isset($param['maximum'])) {
+                    $schema->maximum = $param['maximum'];
+                }
+                if (isset($param['minLength'])) {
+                    $schema->minLength = $param['minLength'];
+                }
+                if (isset($param['maxLength'])) {
+                    $schema->maxLength = $param['maxLength'];
+                }
+
+                $properties[$name] = $schema;
             }
 
             if ($param['required'] ?? false) {
@@ -547,7 +653,7 @@ class OpenApi
             'required' => $required,
         ]);
     }
-    
+
     /**
      * Check if route should be skipped
      */
@@ -567,7 +673,7 @@ class OpenApi
 
         return false;
     }
-    
+
     /**
      * Enhance a schema with additional information from AST analysis
      */
@@ -576,28 +682,28 @@ class OpenApi
         try {
             $filePath = $methodReflection->getFileName();
             $methodName = $methodReflection->getName();
-            
-            if (!$filePath || !file_exists($filePath)) {
+
+            if (! $filePath || ! file_exists($filePath)) {
                 return;
             }
-            
+
             // Analyze validation rules to enhance schema properties
             $rules = $this->astAnalyzer->extractValidationRules($filePath, $methodName);
-            
+
             if (empty($rules) || empty($schema->properties)) {
                 return;
             }
-            
+
             // Enhance existing properties with additional validation information
             foreach ($rules as $name => $ruleData) {
                 if (isset($schema->properties[$name])) {
                     // Add format if not already set
-                    if (!$schema->properties[$name]->format && !empty($ruleData['format'])) {
+                    if (! $schema->properties[$name]->format && ! empty($ruleData['format'])) {
                         $schema->properties[$name]->format = $ruleData['format'];
                     }
-                    
+
                     // Add description if not already set
-                    if (empty($schema->properties[$name]->description) && !empty($ruleData['description'])) {
+                    if (empty($schema->properties[$name]->description) && ! empty($ruleData['description'])) {
                         $schema->properties[$name]->description = $ruleData['description'];
                     }
                 }
@@ -1263,54 +1369,54 @@ class OpenApi
     private function processResponseHeaders(array $headers): array
     {
         $result = [];
-        
+
         foreach ($headers as $name => $header) {
             $schema = [];
-            
+
             if (isset($header['type'])) {
                 $schema['type'] = $header['type'];
             }
-            
+
             if (isset($header['format'])) {
                 $schema['format'] = $header['format'];
             }
-            
+
             $result[$name] = new Header([
                 'description' => $header['description'] ?? '',
                 'schema' => new Schema($schema),
                 'example' => isset($header['example']) ? $this->filterSpatieInternalFields($header['example']) : null,
             ]);
         }
-        
+
         return $result;
     }
-    
+
     /**
      * Filter out Spatie Data internal fields from examples
-     * 
+     *
      * Rule: Keep the code clean and readable
      */
     private function filterSpatieInternalFields($data)
     {
-        if (!is_array($data)) {
+        if (! is_array($data)) {
             return $data;
         }
-        
+
         $result = [];
-        
+
         foreach ($data as $key => $value) {
             // Skip Spatie internal fields
             if ($key === '_additional' || $key === '_data_context') {
                 continue;
             }
-            
+
             if (is_array($value)) {
                 $result[$key] = $this->filterSpatieInternalFields($value);
             } else {
                 $result[$key] = $value;
             }
         }
-        
+
         return $result;
     }
 
@@ -1320,13 +1426,13 @@ class OpenApi
     private function convertSpatieDataSchemaToOpenApi(array $spatieSchema): array
     {
         $openApiSchema = [
-            'type' => $spatieSchema['type'] ?? 'object'
+            'type' => $spatieSchema['type'] ?? 'object',
         ];
 
         // Convert properties
         if (isset($spatieSchema['properties'])) {
             $openApiSchema['properties'] = [];
-            
+
             // First pass - identify and remove any internal Spatie fields
             $filteredProperties = [];
             foreach ($spatieSchema['properties'] as $propertyName => $property) {
@@ -1336,31 +1442,31 @@ class OpenApi
                 }
                 $filteredProperties[$propertyName] = $property;
             }
-            
+
             // Second pass - convert the filtered properties to OpenAPI format
             foreach ($filteredProperties as $propertyName => $property) {
                 $openApiProperty = ['type' => $property['type']];
-                
+
                 // Add format if present
                 if (isset($property['format']) && $property['format']) {
                     $openApiProperty['format'] = $property['format'];
                 }
-                
+
                 // Add description if present
                 if (isset($property['description']) && $property['description']) {
                     $openApiProperty['description'] = $property['description'];
                 }
-                
+
                 // Handle nullable properties
                 if (isset($property['nullable']) && $property['nullable']) {
                     $openApiProperty['nullable'] = true;
                 }
-                
+
                 // Handle array items
                 if (isset($property['items'])) {
                     $openApiProperty['items'] = $property['items'];
                 }
-                
+
                 $openApiSchema['properties'][$propertyName] = $openApiProperty;
             }
         }

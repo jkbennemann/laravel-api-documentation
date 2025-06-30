@@ -4,10 +4,8 @@ namespace JkBennemann\LaravelApiDocumentation\Tests\Feature;
 
 use Illuminate\Config\Repository;
 use JkBennemann\LaravelApiDocumentation\Services\RequestAnalyzer;
-use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Requests\TestFormRequest;
 use JkBennemann\LaravelApiDocumentation\Tests\TestCase;
 use ReflectionClass;
-use ReflectionMethod;
 
 class RequestAnalyzerTest extends TestCase
 {
@@ -25,14 +23,14 @@ class RequestAnalyzerTest extends TestCase
     {
         // Rule: Write concise, technical PHP code with accurate examples
         $rules = ['required', 'string', 'max:255'];
-        
+
         // Use reflection to access the protected parseValidationRules method
         $reflection = new ReflectionClass($this->analyzer);
         $method = $reflection->getMethod('parseValidationRules');
         $method->setAccessible(true);
-        
+
         $result = $method->invoke($this->analyzer, $rules);
-        
+
         expect($result)
             ->toBeArray()
             ->toHaveKeys(['type', 'required', 'description', 'maxLength'])
@@ -49,13 +47,13 @@ class RequestAnalyzerTest extends TestCase
     {
         // Rule: Keep the code clean and readable
         $rules = ['required', 'integer', 'between:1,100'];
-        
+
         $reflection = new ReflectionClass($this->analyzer);
         $method = $reflection->getMethod('parseValidationRules');
         $method->setAccessible(true);
-        
+
         $result = $method->invoke($this->analyzer, $rules);
-        
+
         expect($result)
             ->toBeArray()
             ->toHaveKeys(['type', 'required', 'description', 'minimum', 'maximum'])
@@ -73,13 +71,13 @@ class RequestAnalyzerTest extends TestCase
     {
         // Rule: Stick to PHP best practices
         $rules = ['required', 'string', 'in:pending,approved,rejected'];
-        
+
         $reflection = new ReflectionClass($this->analyzer);
         $method = $reflection->getMethod('parseValidationRules');
         $method->setAccessible(true);
-        
+
         $result = $method->invoke($this->analyzer, $rules);
-        
+
         expect($result)
             ->toBeArray()
             ->toHaveKeys(['type', 'required', 'description', 'enum', 'example'])
@@ -95,13 +93,13 @@ class RequestAnalyzerTest extends TestCase
     {
         // Rule: Keep the code modular and easy to understand
         $rules = ['nullable', 'email'];
-        
+
         $reflection = new ReflectionClass($this->analyzer);
         $method = $reflection->getMethod('parseValidationRules');
         $method->setAccessible(true);
-        
+
         $result = $method->invoke($this->analyzer, $rules);
-        
+
         expect($result)
             ->toBeArray()
             ->toHaveKeys(['type', 'required', 'format', 'nullable', 'description', 'example'])
@@ -118,13 +116,13 @@ class RequestAnalyzerTest extends TestCase
     {
         // Rule: Write concise, technical PHP code with accurate examples
         $rules = ['required', 'array', 'min:1', 'max:10'];
-        
+
         $reflection = new ReflectionClass($this->analyzer);
         $method = $reflection->getMethod('parseValidationRules');
         $method->setAccessible(true);
-        
+
         $result = $method->invoke($this->analyzer, $rules);
-        
+
         expect($result)
             ->toBeArray()
             ->toHaveKeys(['type', 'required', 'description', 'items'])
@@ -143,20 +141,20 @@ class RequestAnalyzerTest extends TestCase
         // Rule: Keep the code clean and readable
         $dateRules = ['date'];
         $dateTimeRules = ['date_format:Y-m-d H:i:s'];
-        
+
         $reflection = new ReflectionClass($this->analyzer);
         $method = $reflection->getMethod('parseValidationRules');
         $method->setAccessible(true);
-        
+
         $dateResult = $method->invoke($this->analyzer, $dateRules);
         $dateTimeResult = $method->invoke($this->analyzer, $dateTimeRules);
-        
+
         expect($dateResult)
             ->toBeArray()
             ->toHaveKeys(['type', 'format'])
             ->and($dateResult['type'])->toBe('string')
             ->and($dateResult['format'])->toBe('date');
-            
+
         expect($dateTimeResult)
             ->toBeArray()
             ->toHaveKeys(['type', 'format', 'example'])

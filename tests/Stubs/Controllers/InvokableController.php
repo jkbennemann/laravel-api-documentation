@@ -4,10 +4,10 @@ namespace JkBennemann\LaravelApiDocumentation\Tests\Stubs\Controllers;
 
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use JkBennemann\LaravelApiDocumentation\Attributes\Tag;
-use JkBennemann\LaravelApiDocumentation\Attributes\Summary;
-use JkBennemann\LaravelApiDocumentation\Attributes\Description;
 use JkBennemann\LaravelApiDocumentation\Attributes\DataResponse;
+use JkBennemann\LaravelApiDocumentation\Attributes\Description;
+use JkBennemann\LaravelApiDocumentation\Attributes\Summary;
+use JkBennemann\LaravelApiDocumentation\Attributes\Tag;
 
 /**
  * Invokable controller for testing modern Laravel controller patterns
@@ -19,13 +19,11 @@ class InvokableController
 {
     /**
      * Handle the incoming request using __invoke method
-     * 
-     * @return JsonResponse
      */
     #[DataResponse(200, description: 'Application status retrieved successfully', resource: [
         'status' => 'string',
         'uptime' => 'integer',
-        'version' => 'string'
+        'version' => 'string',
     ])]
     public function __invoke(Request $request): JsonResponse
     {

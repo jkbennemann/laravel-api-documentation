@@ -9,7 +9,6 @@ use Attribute;
 #[Attribute]
 class DocumentationFile
 {
-
     public function __construct(
         string|array $value
     ) {}

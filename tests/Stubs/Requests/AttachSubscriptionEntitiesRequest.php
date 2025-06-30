@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace JkBennemann\LaravelApiDocumentation\Tests\Stubs\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
-use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Enums\AttachedSubscriptionEntityType;
 use Illuminate\Validation\Rules\Enum;
+use JkBennemann\LaravelApiDocumentation\Tests\Stubs\Enums\AttachedSubscriptionEntityType;
 
 class AttachSubscriptionEntitiesRequest extends FormRequest
 {

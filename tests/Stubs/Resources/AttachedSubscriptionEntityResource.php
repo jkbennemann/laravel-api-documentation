@@ -13,9 +13,9 @@ class AttachedSubscriptionEntityResource extends JsonResource
     {
         return array_map(
             static fn ($entity) => [
-                'id' => $entity->hashId->hashId, 
-                'type' => $entity->type->value, 
-                'title' => $entity->title
+                'id' => $entity->hashId->hashId,
+                'type' => $entity->type->value,
+                'title' => $entity->title,
             ],
             $this->resource
         );

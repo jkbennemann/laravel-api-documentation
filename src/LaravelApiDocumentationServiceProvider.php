@@ -10,6 +10,7 @@ use JkBennemann\LaravelApiDocumentation\Http\Controllers\RedocController;
 use JkBennemann\LaravelApiDocumentation\Http\Controllers\ScalarController;
 use JkBennemann\LaravelApiDocumentation\Http\Controllers\SwaggerController;
 use JkBennemann\LaravelApiDocumentation\Services\AttributeAnalyzer;
+use JkBennemann\LaravelApiDocumentation\Services\EnhancedResponseAnalyzer;
 use JkBennemann\LaravelApiDocumentation\Services\OpenApi;
 use JkBennemann\LaravelApiDocumentation\Services\RequestAnalyzer;
 use JkBennemann\LaravelApiDocumentation\Services\ResponseAnalyzer;
@@ -33,6 +34,14 @@ class LaravelApiDocumentationServiceProvider extends PackageServiceProvider
         $this->app->singleton(AttributeAnalyzer::class);
         $this->app->singleton(RequestAnalyzer::class);
         $this->app->singleton(ResponseAnalyzer::class);
+
+        // Register enhanced response analyzer with proper dependencies
+        $this->app->singleton(EnhancedResponseAnalyzer::class, function ($app) {
+            return new EnhancedResponseAnalyzer(
+                $app['config'],
+                $app->make(ResponseAnalyzer::class)
+            );
+        });
 
         // Register OpenApi service with proper dependency injection
         $this->app->singleton(OpenApi::class, function ($app) {

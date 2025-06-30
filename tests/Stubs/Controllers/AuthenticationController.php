@@ -27,13 +27,13 @@ class AuthenticationController
                 email: 'user@example.com',
                 trashboardId: 13804,
                 attributes: [
-                    ['name' => 'external_identifier', 'data' => null, 'value' => 'RB123456']
+                    ['name' => 'external_identifier', 'data' => null, 'value' => 'RB123456'],
                 ],
                 roles: [
-                    ['role' => 'SUPER_ADMIN', 'expires_at' => null]
+                    ['role' => 'SUPER_ADMIN', 'expires_at' => null],
                 ]
             );
-            
+
             // Return the response with headers
             return new Response(
                 $dto,

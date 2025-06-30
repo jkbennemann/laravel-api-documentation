@@ -22,9 +22,9 @@ class EnhancedApiDocumentationTest extends TestCase
     {
         $analyzer = app(AttributeAnalyzer::class);
         $reflection = new ReflectionMethod(EnhancedApiController::class, 'index');
-        
+
         $queryParams = $analyzer->extractQueryParameters($reflection);
-        
+
         expect($queryParams)
             ->toBeArray()
             ->toHaveCount(4)
@@ -43,9 +43,9 @@ class EnhancedApiDocumentationTest extends TestCase
     {
         $analyzer = app(AttributeAnalyzer::class);
         $reflection = new ReflectionMethod(EnhancedApiController::class, 'store');
-        
+
         $requestBody = $analyzer->extractRequestBody($reflection);
-        
+
         expect($requestBody)
             ->toBeArray()
             ->toHaveKeys(['description', 'content_type', 'required', 'data_class'])
@@ -59,9 +59,9 @@ class EnhancedApiDocumentationTest extends TestCase
     {
         $analyzer = app(AttributeAnalyzer::class);
         $reflection = new ReflectionMethod(EnhancedApiController::class, 'store');
-        
+
         $responses = $analyzer->extractResponseBodies($reflection);
-        
+
         expect($responses)
             ->toBeArray()
             ->toHaveCount(2)
@@ -76,9 +76,9 @@ class EnhancedApiDocumentationTest extends TestCase
     {
         $analyzer = app(AttributeAnalyzer::class);
         $reflection = new ReflectionMethod(EnhancedApiController::class, 'index');
-        
+
         $headers = $analyzer->extractResponseHeaders($reflection);
-        
+
         expect($headers)
             ->toBeArray()
             ->toHaveCount(2)
@@ -90,9 +90,9 @@ class EnhancedApiDocumentationTest extends TestCase
     public function test_enhanced_spatie_data_analysis(): void
     {
         $analyzer = app(ResponseAnalyzer::class);
-        
+
         $schema = $analyzer->analyzeSpatieDataObject(CreateUserData::class);
-        
+
         expect($schema)
             ->toBeArray()
             ->toHaveKeys(['type', 'properties', 'required'])
@@ -108,9 +108,9 @@ class EnhancedApiDocumentationTest extends TestCase
     public function test_spatie_data_request_analysis(): void
     {
         $analyzer = app(RequestAnalyzer::class);
-        
+
         $parameters = $analyzer->analyzeSpatieDataRequest(CreateUserData::class);
-        
+
         expect($parameters)
             ->toBeArray()
             ->toHaveKeys(['name', 'email', 'password', 'is_active', 'preferences'])
@@ -132,18 +132,18 @@ class EnhancedApiDocumentationTest extends TestCase
 
         $routeComposition = app(RouteComposition::class);
         $openApi = app(OpenApi::class);
-        
+
         $routes = $routeComposition->process();
         $spec = $openApi->processRoutes($routes)->get();
-        
+
         // Check that routes were processed
         expect($routes)
             ->toHaveCount(2);
-        
+
         // Check that OpenAPI spec has paths and they're accessible
         expect($spec->paths)
             ->not()->toBeNull();
-        
+
         // Check if paths have the users endpoint with expected operations
         $usersPath = $spec->paths['/users'] ?? null;
         expect($usersPath)
