@@ -51,11 +51,9 @@ class RequestAnalyzer
         try {
             $reflection = new ReflectionClass($requestClass);
 
-            // 1. First check for Parameter attributes on the class
-            $parameters = $this->extractParameterAttributes($reflection);
-            if (! empty($parameters)) {
-                return $parameters;
-            }
+            // 1. Extract Parameter attributes for later merging (don't return early)
+            $attributeParameters = $this->extractParameterAttributes($reflection);
+            $parameters = [];
 
             // 2. Then check for validation rules in the class
             if ($reflection->isSubclassOf(FormRequest::class)) {
@@ -68,6 +66,11 @@ class RequestAnalyzer
                 // Try rules() method first
                 $parameters = $this->analyzeRulesMethod($reflection);
 
+                // If no parameters from rules, try rules property
+                if (empty($parameters)) {
+                    $parameters = $this->analyzeValidationRulesProperty($reflection);
+                }
+
                 // Remove route parameters, path parameters, and ignored parameters from the body parameters
                 foreach ($routeParameters as $param) {
                     unset($parameters[$param]);
@@ -81,25 +84,8 @@ class RequestAnalyzer
                     unset($parameters[$param]);
                 }
 
-                if (! empty($parameters)) {
-                    return $parameters;
-                }
-
-                // Then try rules property
-                $parameters = $this->analyzeValidationRulesProperty($reflection);
-
-                // Remove route parameters, path parameters, and ignored parameters from the body parameters
-                foreach ($routeParameters as $param) {
-                    unset($parameters[$param]);
-                }
-
-                foreach ($excludePathParameters as $param) {
-                    unset($parameters[$param]);
-                }
-
-                foreach ($ignoredParameters as $param) {
-                    unset($parameters[$param]);
-                }
+                // Merge with Parameter attributes (Parameter attributes take precedence)
+                $parameters = $this->mergeParameterAttributes($parameters, $attributeParameters);
 
                 return $parameters;
             }
@@ -108,20 +94,55 @@ class RequestAnalyzer
             if ($requestClass === Request::class || $reflection->isSubclassOf(Request::class)) {
                 $method = $reflection->getMethod('validate');
                 $parameters = $this->extractValidationRulesFromMethod($method);
-                if (! empty($parameters)) {
-                    return $parameters;
-                }
+
+                // Merge with Parameter attributes
+                $parameters = $this->mergeParameterAttributes($parameters, $attributeParameters);
+
+                return $parameters;
             }
 
             // 4. Check if it's a Spatie Data request class
             if (class_exists($requestClass) && is_subclass_of($requestClass, \Spatie\LaravelData\Data::class)) {
-                return $this->analyzeSpatieDataRequest($requestClass);
+                $parameters = $this->analyzeSpatieDataRequest($requestClass);
+
+                // Merge with Parameter attributes
+                $parameters = $this->mergeParameterAttributes($parameters, $attributeParameters);
+
+                return $parameters;
             }
 
-            return [];
+            // 5. Return Parameter attributes if no other analysis worked
+            return $attributeParameters;
         } catch (Throwable) {
             return [];
         }
+    }
+
+    /**
+     * Merge Parameter attributes with existing parameters (Parameter attributes take precedence)
+     */
+    private function mergeParameterAttributes(array $existingParameters, array $attributeParameters): array
+    {
+        if (empty($attributeParameters)) {
+            return $existingParameters;
+        }
+
+        if (empty($existingParameters)) {
+            return $attributeParameters;
+        }
+
+        // Merge parameters, with Parameter attributes taking precedence
+        foreach ($attributeParameters as $name => $attributeParam) {
+            if (isset($existingParameters[$name])) {
+                // Merge with existing parameter, Parameter attribute values take precedence
+                $existingParameters[$name] = array_merge($existingParameters[$name], $attributeParam);
+            } else {
+                // Add new parameter from attribute
+                $existingParameters[$name] = $attributeParam;
+            }
+        }
+
+        return $existingParameters;
     }
 
     /**
@@ -185,9 +206,37 @@ class RequestAnalyzer
     }
 
     /**
-     * Analyze rules() method using PHP-Parser
+     * Analyze rules() method using PHP-Parser with inheritance support
      */
     private function analyzeRulesMethod(ReflectionClass $reflection): array
+    {
+        // Try to find rules method in the current class or any parent class
+        $currentClass = $reflection;
+        
+        while ($currentClass) {
+            $parameters = $this->analyzeRulesMethodInClass($currentClass);
+            
+            if (!empty($parameters)) {
+                return $parameters;
+            }
+            
+            // Move to parent class
+            $parentClass = $currentClass->getParentClass();
+            if ($parentClass && $parentClass->getName() !== FormRequest::class) {
+                $currentClass = $parentClass;
+            } else {
+                break;
+            }
+        }
+        
+        // If no rules method found in inheritance chain, try validation rules property
+        return $this->analyzeValidationRulesProperty($reflection);
+    }
+    
+    /**
+     * Analyze rules() method in a specific class using PHP-Parser
+     */
+    private function analyzeRulesMethodInClass(ReflectionClass $reflection): array
     {
         try {
             $fileName = $reflection->getFileName();
@@ -208,7 +257,7 @@ class RequestAnalyzer
             });
 
             if (! $rulesMethod) {
-                return $this->analyzeValidationRulesProperty($reflection);
+                return [];
             }
 
             // Find return statement in the method
