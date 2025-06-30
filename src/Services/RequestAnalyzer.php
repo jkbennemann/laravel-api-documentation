@@ -212,14 +212,14 @@ class RequestAnalyzer
     {
         // Try to find rules method in the current class or any parent class
         $currentClass = $reflection;
-        
+
         while ($currentClass) {
             $parameters = $this->analyzeRulesMethodInClass($currentClass);
-            
-            if (!empty($parameters)) {
+
+            if (! empty($parameters)) {
                 return $parameters;
             }
-            
+
             // Move to parent class
             $parentClass = $currentClass->getParentClass();
             if ($parentClass && $parentClass->getName() !== FormRequest::class) {
@@ -228,11 +228,11 @@ class RequestAnalyzer
                 break;
             }
         }
-        
+
         // If no rules method found in inheritance chain, try validation rules property
         return $this->analyzeValidationRulesProperty($reflection);
     }
-    
+
     /**
      * Analyze rules() method in a specific class using PHP-Parser
      */
