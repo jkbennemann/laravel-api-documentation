@@ -1423,6 +1423,10 @@ class EnhancedResponseAnalyzer
         ?string $method = null,
         array $validationRules = []
     ): void {
+        // Check if error response enhancement is enabled
+        $errorConfig = $this->configuration->get('api-documentation.error_responses', []);
+        $enhancementEnabled = $errorConfig['enabled'] ?? true;
+        
         $errorSchema = [
             'type' => 'object',
             'properties' => [
@@ -1434,45 +1438,69 @@ class EnhancedResponseAnalyzer
             ],
         ];
 
-        // Add enhanced validation error details for 422 responses
-        if ($statusCode === '422') {
-            if (! empty($validationRules) && $this->errorMessageGenerator) {
-                // Generate detailed validation error schema based on actual rules
-                $errorSchema['properties']['details'] = [
-                    'type' => 'object',
-                    'description' => 'Field-specific validation errors',
-                    'properties' => $this->generateValidationErrorSchema($validationRules),
+        // Add configured additional fields to schema
+        if ($enhancementEnabled) {
+            $additionalFields = $errorConfig['schema']['additional_fields'] ?? [];
+            foreach ($additionalFields as $fieldName => $fieldConfig) {
+                $errorSchema['properties'][$fieldName] = [
+                    'type' => $fieldConfig['type'] ?? 'string',
+                    'description' => $fieldConfig['description'] ?? '',
                 ];
-            } else {
-                // Fallback to generic validation error structure
-                $errorSchema['properties']['details'] = [
-                    'type' => 'object',
-                    'additionalProperties' => [
-                        'type' => 'array',
-                        'items' => [
-                            'type' => 'object',
-                            'properties' => [
-                                'i18n' => ['type' => 'string'],
-                                'message' => ['type' => 'string'],
+                
+                if (isset($fieldConfig['format'])) {
+                    $errorSchema['properties'][$fieldName]['format'] = $fieldConfig['format'];
+                }
+            }
+        }
+
+        // Add enhanced validation error details for 422 responses
+        if ($statusCode === '422' && $enhancementEnabled) {
+            $validationConfig = $errorConfig['schema']['validation_details'] ?? [];
+            $validationEnabled = $validationConfig['enabled'] ?? true;
+            $detailsFieldName = $validationConfig['field_name'] ?? 'details';
+            
+            if ($validationEnabled) {
+                if (! empty($validationRules) && $this->errorMessageGenerator) {
+                    // Generate detailed validation error schema based on actual rules
+                    $errorSchema['properties'][$detailsFieldName] = [
+                        'type' => 'object',
+                        'description' => 'Field-specific validation errors',
+                        'properties' => $this->generateValidationErrorSchema($validationRules),
+                    ];
+                } else {
+                    // Fallback to generic validation error structure
+                    $errorSchema['properties'][$detailsFieldName] = [
+                        'type' => 'object',
+                        'additionalProperties' => [
+                            'type' => 'array',
+                            'items' => [
+                                'type' => 'object',
+                                'properties' => [
+                                    'i18n' => ['type' => 'string'],
+                                    'message' => ['type' => 'string'],
+                                ],
                             ],
                         ],
-                    ],
-                ];
+                    ];
+                }
             }
         }
 
         // Generate enhanced example if available
         $example = null;
-        if ($this->errorMessageGenerator && $controller && $method) {
-            [$domain, $context] = $this->errorMessageGenerator->detectDomainContext($controller, $method);
-            $path = $this->generatePathForExample($controller, $method);
-            $example = $this->errorMessageGenerator->generateErrorResponseExample(
-                $statusCode,
-                $path,
-                $domain,
-                $context,
-                $validationRules
-            );
+        if ($enhancementEnabled && $this->errorMessageGenerator && $controller && $method) {
+            $examplesConfig = $errorConfig['examples'] ?? [];
+            if ($examplesConfig['enabled'] ?? true) {
+                [$domain, $context] = $this->errorMessageGenerator->detectDomainContext($controller, $method);
+                $path = $this->generatePathForExample($controller, $method, $errorConfig);
+                $example = $this->errorMessageGenerator->generateErrorResponseExample(
+                    $statusCode,
+                    $path,
+                    $domain,
+                    $context,
+                    $validationRules
+                );
+            }
         }
 
         $this->addResponseWithExample($statusCode, $description, 'application/json', $errorSchema, $example);
@@ -1511,12 +1539,16 @@ class EnhancedResponseAnalyzer
     /**
      * Generate example path for error response
      */
-    private function generatePathForExample(string $controller, string $method): string
+    private function generatePathForExample(string $controller, string $method, array $errorConfig = []): string
     {
+        // Use configured path pattern if available
+        $pathPattern = $errorConfig['defaults']['path_pattern'] ?? '/api/v1/{controller}';
+        
         // Simple path generation based on controller and method
         $controllerName = class_basename($controller);
         $controllerName = str_replace('Controller', '', $controllerName);
-        $path = '/api/v1/'.strtolower($controllerName);
+        
+        $path = str_replace('{controller}', strtolower($controllerName), $pathPattern);
 
         // Add method-specific path segments
         if (str_contains($method, 'show') || str_contains($method, 'update') || str_contains($method, 'destroy')) {

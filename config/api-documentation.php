@@ -172,6 +172,173 @@ return [
             'digits_between' => ['type' => 'string'],
         ],
     ],
+    
+    // Error response enhancement configuration
+    'error_responses' => [
+        // Enable/disable enhanced error response generation
+        'enabled' => true,
+        
+        // Default error message settings
+        'defaults' => [
+            // Default application name used in i18n keys
+            'app_name' => env('APP_NAME', 'app'),
+            
+            // Default path generation pattern
+            'path_pattern' => '/api/v1/{controller}',
+            
+            // Request ID generation pattern (use {random} for random characters)
+            'request_id_pattern' => 'req_{random}',
+            
+            // Default error messages for status codes
+            'status_messages' => [
+                '400' => 'The request could not be processed due to invalid syntax.',
+                '401' => 'Authentication credentials are required.',
+                '403' => 'You do not have permission to access this resource.',
+                '404' => 'The requested resource was not found.',
+                '422' => 'The request contains invalid data.',
+                '429' => 'Too many requests. Please try again later.',
+                '500' => 'An internal server error occurred. Please try again later.',
+                '503' => 'The service is temporarily unavailable. Please try again later.',
+            ],
+        ],
+        
+        // Custom domain-specific error message templates
+        'domains' => [
+            // You can override or add new domain templates
+            // Example:
+            // 'custom_domain' => [
+            //     'custom_context' => [
+            //         '422' => [
+            //             'field_name' => 'Custom error message for this field',
+            //         ],
+            //         '401' => 'Custom unauthorized message for this domain',
+            //     ],
+            // ],
+        ],
+        
+        // Custom validation rule message overrides
+        'validation_messages' => [
+            // Override default validation messages
+            // Example:
+            // 'required' => 'The :attribute field is mandatory.',
+            // 'email' => 'Please provide a valid :attribute.',
+        ],
+        
+        // Custom validation message templates from files
+        'template_files' => [
+            // Load validation message templates from files
+            // 'validation_rules' => resource_path('api-docs/validation-messages.php'),
+            // 'domain_templates' => resource_path('api-docs/domain-templates.php'),
+            // 'field_labels' => resource_path('api-docs/field-labels.php'),
+        ],
+        
+        // Custom field label mappings
+        'field_labels' => [
+            // Override default field labels
+            // Example:
+            // 'user_id' => 'user identifier',
+            // 'subscription_id' => 'subscription identifier',
+        ],
+        
+        // Domain detection configuration
+        'domain_detection' => [
+            // Custom patterns for domain detection based on controller names
+            'patterns' => [
+                // Pattern => [domain, context]
+                // Example:
+                // '*Auth*' => ['authentication', 'default'],
+                // '*Payment*' => ['billing', 'payment'],
+            ],
+        ],
+        
+        // Error response schema customization
+        'schema' => [
+            // Include additional fields in error response schema
+            'additional_fields' => [
+                // Example:
+                // 'correlation_id' => ['type' => 'string', 'description' => 'Request correlation identifier'],
+            ],
+            
+            // Customize validation error details structure
+            'validation_details' => [
+                'enabled' => true,
+                'field_name' => 'details', // Field name for validation errors
+                'include_rules' => true,    // Include validation rule information
+            ],
+        ],
+        
+        // Custom error example generation
+        'examples' => [
+            // Enable example generation for error responses
+            'enabled' => true,
+            
+            // Include validation details in examples
+            'include_validation_details' => true,
+            
+            // Use realistic timestamps (false = use placeholder)
+            'realistic_timestamps' => true,
+            
+            // Use realistic request IDs (false = use placeholder)
+            'realistic_request_ids' => true,
+        ],
+        
+        // Localization configuration for error messages
+        'localization' => [
+            // Default locale for error message generation
+            'default_locale' => env('APP_LOCALE', 'en'),
+            
+            // Available locales for error message generation
+            'available_locales' => ['en', 'es', 'fr', 'de', 'pt', 'ja', 'zh'],
+            
+            // Enable Laravel translation integration
+            'use_laravel_translations' => true,
+            
+            // Locale-specific validation message overrides
+            'validation_messages' => [
+                // Example for Spanish
+                // 'es' => [
+                //     'required' => 'El campo :attribute es obligatorio.',
+                //     'email' => 'El :attribute debe ser una dirección de correo válida.',
+                // ],
+                // Example for French  
+                // 'fr' => [
+                //     'required' => 'Le champ :attribute est requis.',
+                //     'email' => 'Le :attribute doit être une adresse e-mail valide.',
+                // ],
+            ],
+            
+            // Locale-specific field label overrides
+            'field_labels' => [
+                // Example for Spanish
+                // 'es' => [
+                //     'email' => 'correo electrónico',
+                //     'password' => 'contraseña',
+                // ],
+                // Example for French
+                // 'fr' => [
+                //     'email' => 'adresse e-mail',
+                //     'password' => 'mot de passe',
+                // ],
+            ],
+            
+            // Locale-specific domain templates
+            'domains' => [
+                // Example for Spanish
+                // 'es' => [
+                //     'authentication' => [
+                //         'login' => [
+                //             '401' => 'Credenciales inválidas proporcionadas.',
+                //             '422' => [
+                //                 'email' => 'Por favor proporcione una dirección de correo válida.',
+                //                 'password' => 'La contraseña es requerida.',
+                //             ],
+                //         ],
+                //     ],
+                // ],
+            ],
+        ],
+    ],
+    
     'app' => [
         'port' => env('APP_PORT'),
     ],

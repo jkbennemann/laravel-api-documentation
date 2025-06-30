@@ -15,6 +15,7 @@ use JkBennemann\LaravelApiDocumentation\Services\ErrorMessageGenerator;
 use JkBennemann\LaravelApiDocumentation\Services\OpenApi;
 use JkBennemann\LaravelApiDocumentation\Services\RequestAnalyzer;
 use JkBennemann\LaravelApiDocumentation\Services\ResponseAnalyzer;
+use JkBennemann\LaravelApiDocumentation\Services\TemplateManager;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
 
@@ -35,7 +36,16 @@ class LaravelApiDocumentationServiceProvider extends PackageServiceProvider
         $this->app->singleton(AttributeAnalyzer::class);
         $this->app->singleton(RequestAnalyzer::class);
         $this->app->singleton(ResponseAnalyzer::class);
-        $this->app->singleton(ErrorMessageGenerator::class);
+        $this->app->singleton(TemplateManager::class);
+        
+        // Register ErrorMessageGenerator with all dependencies
+        $this->app->singleton(ErrorMessageGenerator::class, function ($app) {
+            return new ErrorMessageGenerator(
+                $app['config'],
+                $app->make(TemplateManager::class),
+                $app->bound('translator') ? $app->make('translator') : null
+            );
+        });
 
         // Register enhanced response analyzer with proper dependencies
         $this->app->singleton(EnhancedResponseAnalyzer::class, function ($app) {
