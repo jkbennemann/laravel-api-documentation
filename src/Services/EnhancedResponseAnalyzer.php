@@ -46,7 +46,9 @@ class EnhancedResponseAnalyzer
 
     public function __construct(
         private readonly Repository $configuration,
-        private readonly ResponseAnalyzer $responseAnalyzer
+        private readonly ResponseAnalyzer $responseAnalyzer,
+        private readonly ?RequestAnalyzer $requestAnalyzer = null,
+        private readonly ?ErrorMessageGenerator $errorMessageGenerator = null
     ) {
         $this->parser = (new ParserFactory)->createForNewestSupportedVersion();
         $this->nodeFinder = new NodeFinder;
@@ -155,12 +157,12 @@ class EnhancedResponseAnalyzer
 
                 // Detect abort() function calls
                 if ($node instanceof FuncCall && $this->isAbortCall($node)) {
-                    $this->analyzer->analyzeAbortCall($node);
+                    $this->analyzer->analyzeAbortCall($node, $this->controller, $this->method);
                 }
 
                 // Detect throw statements
                 if ($node instanceof Throw_) {
-                    $this->analyzer->analyzeThrowStatement($node);
+                    $this->analyzer->analyzeThrowStatement($node, $this->controller, $this->method);
                 }
 
                 // Detect custom helper method calls
@@ -419,7 +421,7 @@ class EnhancedResponseAnalyzer
     /**
      * Analyze abort() function calls
      */
-    public function analyzeAbortCall(FuncCall $node): void
+    public function analyzeAbortCall(FuncCall $node, string $controller = '', string $method = ''): void
     {
         if (empty($node->args)) {
             return;
@@ -440,7 +442,7 @@ class EnhancedResponseAnalyzer
             $message = $node->args[1]->value->value;
         }
 
-        $this->addErrorResponse($statusCode, $message);
+        $this->addErrorResponse($statusCode, $message, $controller, $method);
     }
 
     /**
@@ -479,7 +481,7 @@ class EnhancedResponseAnalyzer
     /**
      * Analyze throw statements to detect exception-based responses
      */
-    public function analyzeThrowStatement(Throw_ $node): void
+    public function analyzeThrowStatement(Throw_ $node, string $controller = '', string $method = ''): void
     {
         if (! $node->expr instanceof New_) {
             return;
@@ -488,7 +490,7 @@ class EnhancedResponseAnalyzer
         $exceptionClass = $this->getExceptionClassName($node->expr);
         if ($exceptionClass && isset($this->errorStatusMappings[$exceptionClass])) {
             $statusCode = (string) $this->errorStatusMappings[$exceptionClass];
-            $this->addErrorResponse($statusCode, $this->getStatusDescription($statusCode));
+            $this->addErrorResponse($statusCode, $this->getStatusDescription($statusCode), $controller, $method);
         }
     }
 
@@ -1297,6 +1299,9 @@ class EnhancedResponseAnalyzer
      */
     private function detectValidationResponses(ReflectionMethod $method): void
     {
+        $controller = $method->getDeclaringClass()->getName();
+        $methodName = $method->getName();
+
         // Check if method has FormRequest parameters
         foreach ($method->getParameters() as $parameter) {
             $type = $parameter->getType();
@@ -1305,7 +1310,13 @@ class EnhancedResponseAnalyzer
                 if (class_exists($typeName) &&
                     is_subclass_of($typeName, 'Illuminate\\Foundation\\Http\\FormRequest')) {
 
-                    $this->addErrorResponse('422', 'Validation error');
+                    // Extract validation rules if RequestAnalyzer is available
+                    $validationRules = [];
+                    if ($this->requestAnalyzer) {
+                        $validationRules = $this->requestAnalyzer->extractValidationRules($typeName);
+                    }
+
+                    $this->addErrorResponse('422', 'Validation error', $controller, $methodName, $validationRules);
                     break;
                 }
             }
@@ -1405,8 +1416,13 @@ class EnhancedResponseAnalyzer
     /**
      * Add error response with standard error schema
      */
-    private function addErrorResponse(string $statusCode, string $description): void
-    {
+    private function addErrorResponse(
+        string $statusCode,
+        string $description,
+        ?string $controller = null,
+        ?string $method = null,
+        array $validationRules = []
+    ): void {
         $errorSchema = [
             'type' => 'object',
             'properties' => [
@@ -1418,18 +1434,122 @@ class EnhancedResponseAnalyzer
             ],
         ];
 
-        // Add validation errors for 422 responses
+        // Add enhanced validation error details for 422 responses
         if ($statusCode === '422') {
-            $errorSchema['properties']['errors'] = [
-                'type' => 'object',
-                'additionalProperties' => [
-                    'type' => 'array',
-                    'items' => ['type' => 'string'],
+            if (! empty($validationRules) && $this->errorMessageGenerator) {
+                // Generate detailed validation error schema based on actual rules
+                $errorSchema['properties']['details'] = [
+                    'type' => 'object',
+                    'description' => 'Field-specific validation errors',
+                    'properties' => $this->generateValidationErrorSchema($validationRules),
+                ];
+            } else {
+                // Fallback to generic validation error structure
+                $errorSchema['properties']['details'] = [
+                    'type' => 'object',
+                    'additionalProperties' => [
+                        'type' => 'array',
+                        'items' => [
+                            'type' => 'object',
+                            'properties' => [
+                                'i18n' => ['type' => 'string'],
+                                'message' => ['type' => 'string'],
+                            ],
+                        ],
+                    ],
+                ];
+            }
+        }
+
+        // Generate enhanced example if available
+        $example = null;
+        if ($this->errorMessageGenerator && $controller && $method) {
+            [$domain, $context] = $this->errorMessageGenerator->detectDomainContext($controller, $method);
+            $path = $this->generatePathForExample($controller, $method);
+            $example = $this->errorMessageGenerator->generateErrorResponseExample(
+                $statusCode,
+                $path,
+                $domain,
+                $context,
+                $validationRules
+            );
+        }
+
+        $this->addResponseWithExample($statusCode, $description, 'application/json', $errorSchema, $example);
+    }
+
+    /**
+     * Generate validation error schema based on actual validation rules
+     */
+    private function generateValidationErrorSchema(array $validationRules): array
+    {
+        $properties = [];
+
+        foreach ($validationRules as $field => $rules) {
+            $properties[$field] = [
+                'type' => 'array',
+                'description' => "Validation errors for {$field} field",
+                'items' => [
+                    'type' => 'object',
+                    'properties' => [
+                        'i18n' => [
+                            'type' => 'string',
+                            'description' => 'Internationalization key for the error',
+                        ],
+                        'message' => [
+                            'type' => 'string',
+                            'description' => 'Human readable error message',
+                        ],
+                    ],
                 ],
             ];
         }
 
-        $this->addResponse($statusCode, $description, 'application/json', $errorSchema);
+        return $properties;
+    }
+
+    /**
+     * Generate example path for error response
+     */
+    private function generatePathForExample(string $controller, string $method): string
+    {
+        // Simple path generation based on controller and method
+        $controllerName = class_basename($controller);
+        $controllerName = str_replace('Controller', '', $controllerName);
+        $path = '/api/v1/'.strtolower($controllerName);
+
+        // Add method-specific path segments
+        if (str_contains($method, 'show') || str_contains($method, 'update') || str_contains($method, 'destroy')) {
+            $path .= '/{id}';
+        } elseif (str_contains($method, '2fa') || str_contains($method, 'TwoFactor')) {
+            $path .= '/{userId}/2fa';
+        }
+
+        return $path;
+    }
+
+    /**
+     * Add response with example support
+     */
+    private function addResponseWithExample(
+        string $statusCode,
+        string $description,
+        string $contentType,
+        array $schema,
+        ?array $example = null
+    ): void {
+        $responseData = [
+            'description' => $description,
+            'content_type' => $contentType,
+            'headers' => [],
+            'schema' => $schema,
+        ];
+
+        if ($example) {
+            $responseData['example'] = $example;
+        }
+
+        $this->detectedResponses[$statusCode] = $responseData;
     }
 
     /**
@@ -1454,7 +1574,7 @@ class EnhancedResponseAnalyzer
     /**
      * Add common error responses that Laravel applications typically have
      */
-    private function addCommonErrorResponses(): void
+    private function addCommonErrorResponses(string $controller = '', string $method = ''): void
     {
         // Add common error responses based on typical Laravel application patterns
         $commonErrors = [
@@ -1468,7 +1588,7 @@ class EnhancedResponseAnalyzer
 
         foreach ($commonErrors as $status => $description) {
             if (! isset($this->detectedResponses[$status])) {
-                $this->addErrorResponse($status, $description);
+                $this->addErrorResponse($status, $description, $controller, $method);
             }
         }
     }
@@ -1668,18 +1788,18 @@ class EnhancedResponseAnalyzer
         if (! isset($this->detectedResponses['422'])) {
             // Check if this looks like it could have validation
             if ($this->methodLikelyHasValidation($reflection)) {
-                $this->addErrorResponse('422', 'Validation error');
+                $this->addErrorResponse('422', 'Validation error', $reflection->getDeclaringClass()->getName(), $reflection->getName());
             }
         }
 
         // 401 Unauthorized - for methods that likely require authentication
         if (! isset($this->detectedResponses['401']) && $this->methodLikelyRequiresAuth($reflection)) {
-            $this->addErrorResponse('401', 'Unauthorized');
+            $this->addErrorResponse('401', 'Unauthorized', $reflection->getDeclaringClass()->getName(), $reflection->getName());
         }
 
         // 500 Internal Server Error - all endpoints can potentially return this
         if (! isset($this->detectedResponses['500'])) {
-            $this->addErrorResponse('500', 'Internal server error');
+            $this->addErrorResponse('500', 'Internal server error', $reflection->getDeclaringClass()->getName(), $reflection->getName());
         }
     }
 
@@ -1690,17 +1810,17 @@ class EnhancedResponseAnalyzer
     {
         // 403 Forbidden - for methods with authorization middleware
         if (! isset($this->detectedResponses['403']) && $this->methodHasAuthorizationMiddleware($controller)) {
-            $this->addErrorResponse('403', 'Forbidden');
+            $this->addErrorResponse('403', 'Forbidden', $controller, $method);
         }
 
         // 404 Not Found - for methods that work with models/resources
         if (! isset($this->detectedResponses['404']) && $this->methodWorksWithModels($reflection)) {
-            $this->addErrorResponse('404', 'Not found');
+            $this->addErrorResponse('404', 'Not found', $reflection->getDeclaringClass()->getName(), $reflection->getName());
         }
 
         // 429 Too Many Requests - for methods with rate limiting
         if (! isset($this->detectedResponses['429']) && $this->methodHasRateLimiting($controller)) {
-            $this->addErrorResponse('429', 'Too many requests');
+            $this->addErrorResponse('429', 'Too many requests', $controller, $method);
         }
     }
 

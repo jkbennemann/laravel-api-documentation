@@ -40,6 +40,28 @@ class RequestAnalyzer
     }
 
     /**
+     * Extract raw validation rules from FormRequest class for error response generation
+     */
+    public function extractValidationRules(?string $requestClass): array
+    {
+        if (! $this->enabled || ! $requestClass || ! class_exists($requestClass)) {
+            return [];
+        }
+
+        try {
+            $reflection = new ReflectionClass($requestClass);
+
+            if ($reflection->isSubclassOf(FormRequest::class)) {
+                return $this->extractRawRulesFromFormRequest($reflection);
+            }
+        } catch (Throwable $e) {
+            // Return empty array if analysis fails
+        }
+
+        return [];
+    }
+
+    /**
      * Analyze a request class to determine its parameter structure
      */
     public function analyzeRequest(?string $requestClass, array $excludePathParameters = []): array
@@ -116,6 +138,135 @@ class RequestAnalyzer
         } catch (Throwable) {
             return [];
         }
+    }
+
+    /**
+     * Extract raw validation rules from FormRequest reflection
+     */
+    private function extractRawRulesFromFormRequest(ReflectionClass $reflection): array
+    {
+        // Try to extract rules from rules() method first
+        $rules = $this->extractRawRulesFromMethod($reflection);
+
+        if (empty($rules)) {
+            // Fallback to rules property
+            $rules = $this->extractRawRulesFromProperty($reflection);
+        }
+
+        return $rules;
+    }
+
+    /**
+     * Extract raw rules from rules() method using AST parsing
+     */
+    private function extractRawRulesFromMethod(ReflectionClass $reflection): array
+    {
+        try {
+            $fileName = $reflection->getFileName();
+            if (! $fileName || ! file_exists($fileName)) {
+                return [];
+            }
+
+            $parser = (new ParserFactory)->createForNewestSupportedVersion();
+            $ast = $parser->parse(file_get_contents($fileName));
+
+            $nodeFinder = new NodeFinder;
+
+            // Find the rules method
+            $rulesMethod = $nodeFinder->findFirst($ast, function ($node) {
+                return $node instanceof \PhpParser\Node\Stmt\ClassMethod
+                    && $node->name->toString() === 'rules';
+            });
+
+            if (! $rulesMethod) {
+                return [];
+            }
+
+            // Find return statements in the rules method
+            $returnStatements = $nodeFinder->find($rulesMethod, function ($node) {
+                return $node instanceof \PhpParser\Node\Stmt\Return_;
+            });
+
+            foreach ($returnStatements as $returnStatement) {
+                if ($returnStatement->expr instanceof Array_) {
+                    return $this->parseRawRulesFromArrayNode($returnStatement->expr);
+                }
+            }
+        } catch (Throwable $e) {
+            // Silent fail and try other methods
+        }
+
+        return [];
+    }
+
+    /**
+     * Parse raw validation rules from Array AST node
+     */
+    private function parseRawRulesFromArrayNode(Array_ $arrayNode): array
+    {
+        $rules = [];
+
+        foreach ($arrayNode->items as $item) {
+            if (! $item || ! $item->key || ! $item->value) {
+                continue;
+            }
+
+            // Get field name
+            $fieldName = null;
+            if ($item->key instanceof String_) {
+                $fieldName = $item->key->value;
+            }
+
+            if (! $fieldName) {
+                continue;
+            }
+
+            // Extract rules for this field
+            $fieldRules = [];
+
+            if ($item->value instanceof Array_) {
+                // Array of rules: ['required', 'string', 'max:255']
+                foreach ($item->value->items as $ruleItem) {
+                    if ($ruleItem && $ruleItem->value instanceof String_) {
+                        $fieldRules[] = $ruleItem->value->value;
+                    }
+                }
+            } elseif ($item->value instanceof String_) {
+                // String rules: 'required|string|max:255'
+                $fieldRules = explode('|', $item->value->value);
+            }
+
+            if (! empty($fieldRules)) {
+                $rules[$fieldName] = $fieldRules;
+            }
+        }
+
+        return $rules;
+    }
+
+    /**
+     * Extract raw rules from rules property
+     */
+    private function extractRawRulesFromProperty(ReflectionClass $reflection): array
+    {
+        try {
+            if ($reflection->hasProperty('rules')) {
+                $rulesProperty = $reflection->getProperty('rules');
+                $rulesProperty->setAccessible(true);
+
+                // Create instance to get property value
+                $instance = $reflection->newInstanceWithoutConstructor();
+                $rules = $rulesProperty->getValue($instance);
+
+                if (is_array($rules)) {
+                    return $rules;
+                }
+            }
+        } catch (Throwable $e) {
+            // Silent fail
+        }
+
+        return [];
     }
 
     /**
