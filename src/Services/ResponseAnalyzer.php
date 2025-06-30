@@ -2810,16 +2810,17 @@ class ResponseAnalyzer
                         $properties = $this->generateResourceDefaults($resourceClass);
                     }
 
+                    // Apply Laravel Resource wrapping for collections
+                    $wrappedSchema = $this->applyResourceCollectionWrapper($fullResourceClass, $properties);
+
                     return [
-                        'type' => 'array',
-                        'items' => [
-                            'type' => 'object',
-                            'properties' => $properties,
-                        ],
-                        'example' => [$this->generateExampleFromProperties($properties)],
+                        'type' => 'object',
+                        'properties' => $wrappedSchema['properties'],
+                        'example' => $wrappedSchema['example'],
                         'enhanced_analysis' => true,
                         'detected_resource' => $fullResourceClass,
                         'detection_method' => 'comprehensive_pattern_analysis',
+                        'wrapper_applied' => $wrappedSchema['wrapper_name'],
                     ];
                 } else {
                     // Return array schema with defaults even if class isn't found
@@ -2851,13 +2852,17 @@ class ResponseAnalyzer
                         $properties = $this->generateResourceDefaults($resourceClass);
                     }
 
+                    // Apply Laravel Resource wrapping
+                    $wrappedSchema = $this->applyResourceWrapper($fullResourceClass, $properties);
+
                     return [
                         'type' => 'object',
-                        'properties' => $properties,
-                        'example' => $this->generateExampleFromProperties($properties),
+                        'properties' => $wrappedSchema['properties'],
+                        'example' => $wrappedSchema['example'],
                         'enhanced_analysis' => true,
                         'detected_resource' => $fullResourceClass,
                         'detection_method' => 'resource_make_pattern_analysis',
+                        'wrapper_applied' => $wrappedSchema['wrapper_name'],
                     ];
                 } else {
                     // Return object schema with defaults even if class isn't found
@@ -3505,5 +3510,174 @@ class ResponseAnalyzer
             'description' => 'JSON object response',
             'detection_method' => 'json_response_object',
         ];
+    }
+
+    /**
+     * Apply Laravel Resource wrapper to schema based on Resource class configuration
+     */
+    private function applyResourceWrapper(string $resourceClass, array $properties): array
+    {
+        try {
+            $reflection = new ReflectionClass($resourceClass);
+            
+            // Get the wrapper name from the Resource class
+            $wrapperName = $this->getResourceWrapperName($reflection);
+            
+            // Generate example from original properties
+            $originalExample = $this->generateExampleFromProperties($properties);
+            
+            // Apply wrapper to both schema and example
+            if ($wrapperName) {
+                return [
+                    'properties' => [
+                        $wrapperName => [
+                            'type' => 'object',
+                            'properties' => $properties,
+                            'description' => 'Resource data wrapped in ' . $wrapperName,
+                        ],
+                    ],
+                    'example' => [
+                        $wrapperName => $originalExample,
+                    ],
+                    'wrapper_name' => $wrapperName,
+                ];
+            }
+            
+            // No wrapper - return as is
+            return [
+                'properties' => $properties,
+                'example' => $originalExample,
+                'wrapper_name' => null,
+            ];
+            
+        } catch (Throwable) {
+            // Fallback: assume default Laravel "data" wrapper
+            $originalExample = $this->generateExampleFromProperties($properties);
+            
+            return [
+                'properties' => [
+                    'data' => [
+                        'type' => 'object',
+                        'properties' => $properties,
+                        'description' => 'Resource data wrapped in default Laravel data wrapper',
+                    ],
+                ],
+                'example' => [
+                    'data' => $originalExample,
+                ],
+                'wrapper_name' => 'data',
+            ];
+        }
+    }
+
+    /**
+     * Apply Laravel Resource wrapper to collection schema
+     */
+    private function applyResourceCollectionWrapper(string $resourceClass, array $itemProperties): array
+    {
+        try {
+            $reflection = new ReflectionClass($resourceClass);
+            
+            // Get the wrapper name from the Resource class
+            $wrapperName = $this->getResourceWrapperName($reflection);
+            
+            // Generate example item from properties
+            $itemExample = $this->generateExampleFromProperties($itemProperties);
+            
+            // Apply wrapper to collection
+            if ($wrapperName) {
+                return [
+                    'properties' => [
+                        $wrapperName => [
+                            'type' => 'array',
+                            'items' => [
+                                'type' => 'object',
+                                'properties' => $itemProperties,
+                            ],
+                            'description' => 'Collection of resources wrapped in ' . $wrapperName,
+                        ],
+                    ],
+                    'example' => [
+                        $wrapperName => [$itemExample],
+                    ],
+                    'wrapper_name' => $wrapperName,
+                ];
+            }
+            
+            // No wrapper - return unwrapped collection
+            return [
+                'properties' => $itemProperties,
+                'example' => [$itemExample],
+                'wrapper_name' => null,
+            ];
+            
+        } catch (Throwable) {
+            // Fallback: assume default Laravel "data" wrapper for collections
+            $itemExample = $this->generateExampleFromProperties($itemProperties);
+            
+            return [
+                'properties' => [
+                    'data' => [
+                        'type' => 'array',
+                        'items' => [
+                            'type' => 'object',
+                            'properties' => $itemProperties,
+                        ],
+                        'description' => 'Collection of resources wrapped in default Laravel data wrapper',
+                    ],
+                ],
+                'example' => [
+                    'data' => [$itemExample],
+                ],
+                'wrapper_name' => 'data',
+            ];
+        }
+    }
+
+    /**
+     * Get the wrapper name for a Laravel Resource class
+     */
+    private function getResourceWrapperName(ReflectionClass $resourceReflection): ?string
+    {
+        // Check if the resource has a custom $wrap property
+        if ($resourceReflection->hasProperty('wrap')) {
+            $wrapProperty = $resourceReflection->getProperty('wrap');
+            
+            // Check if the property is accessible (public or has getter)
+            if ($wrapProperty->isPublic() || $wrapProperty->isProtected()) {
+                $wrapProperty->setAccessible(true);
+                
+                // Get default value from property
+                $defaultProps = $resourceReflection->getDefaultProperties();
+                if (isset($defaultProps['wrap'])) {
+                    return $defaultProps['wrap'];
+                }
+            }
+        }
+        
+        // Check parent classes for global wrapping configuration
+        $currentClass = $resourceReflection;
+        while ($currentClass = $currentClass->getParentClass()) {
+            // If we reach JsonResource class, check if wrapping is disabled globally
+            if ($currentClass->getName() === 'Illuminate\Http\Resources\Json\JsonResource') {
+                // TODO: Check if JsonResource::withoutWrapping() has been called globally
+                // For now, assume default Laravel behavior: use "data" wrapper
+                return 'data';
+            }
+            
+            // Check parent class for $wrap property
+            if ($currentClass->hasProperty('wrap')) {
+                $wrapProperty = $currentClass->getProperty('wrap');
+                $wrapProperty->setAccessible(true);
+                
+                $defaultProps = $currentClass->getDefaultProperties();
+                if (isset($defaultProps['wrap'])) {
+                    return $defaultProps['wrap'];
+                }
+            }
+        }
+        
+        // Default Laravel behavior: use "data" wrapper
+        return 'data';
     }
 }
