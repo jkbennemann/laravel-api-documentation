@@ -2,7 +2,7 @@
 
 All notable changes to `laravel-api-documentation` will be documented in this file.
 
-## [Unreleased] - 2025-10-21
+## 2025-10-21
 
 ### Added
 
@@ -324,8 +324,3 @@ None.
 - [ ] Integration with API testing tools
 
 ---
-
-**Full Documentation**: See implementation plan documents in `/docs/affiliate-system/` for detailed usage examples.
-
-**Contributors**: Jakob Bennemann, Claude Code
-**Date**: October 21, 2025
