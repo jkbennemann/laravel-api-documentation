@@ -53,6 +53,8 @@ class OpenApi
 
     private array $includedSecuritySchemes = [];
 
+    private bool $domainConfigApplied = false;
+
     public function __construct(
         Repository $repository,
         ?AttributeAnalyzer $attributeAnalyzer = null,
@@ -86,8 +88,10 @@ class OpenApi
 
     public function get(): \openapiphp\openapi\spec\OpenApi
     {
-        // Ensure we have the latest config values before returning
-        $this->updateInfoFromConfig();
+        // Only update from default config if domain-specific config hasn't been applied
+        if (!$this->domainConfigApplied) {
+            $this->updateInfoFromConfig();
+        }
 
         return $this->openApi;
     }
@@ -96,6 +100,63 @@ class OpenApi
     {
         $this->openApi->info->title = $this->repository->get('api-documentation.title', 'API Documentation');
         $this->openApi->info->version = $this->repository->get('api-documentation.version', '1.0.0');
+    }
+
+    public function setDomainConfigApplied(bool $applied = true): void
+    {
+        $this->domainConfigApplied = $applied;
+    }
+
+    /**
+     * Create a Schema object with only non-null values (OpenAPI compliance)
+     */
+    private function createSchema(array $schemaData): Schema
+    {
+        $cleanData = ['type' => $schemaData['type'] ?? 'string'];
+
+        // Only include format if it's not null (OpenAPI requires format to be string if present)
+        if (isset($schemaData['format']) && $schemaData['format'] !== null) {
+            $cleanData['format'] = $schemaData['format'];
+        }
+
+        $schema = new Schema($cleanData);
+
+        // Add optional fields only if they have values
+        if (isset($schemaData['enum']) && !empty($schemaData['enum'])) {
+            $schema->enum = $schemaData['enum'];
+        }
+        if (isset($schemaData['minimum'])) {
+            $schema->minimum = $schemaData['minimum'];
+        }
+        if (isset($schemaData['maximum'])) {
+            $schema->maximum = $schemaData['maximum'];
+        }
+        if (isset($schemaData['items'])) {
+            $schema->items = $schemaData['items'];
+        }
+
+        return $schema;
+    }
+
+    /**
+     * Create a Parameter object with only non-null values (OpenAPI compliance)
+     */
+    private function createParameter(array $paramData): Parameter
+    {
+        $cleanData = [
+            'name' => $paramData['name'],
+            'in' => $paramData['in'],
+            'description' => $paramData['description'] ?? '',
+            'required' => $paramData['required'] ?? false,
+            'schema' => $paramData['schema'],
+        ];
+
+        // Only include example if it's not null
+        if (isset($paramData['example']) && $paramData['example'] !== null) {
+            $cleanData['example'] = $paramData['example'];
+        }
+
+        return new Parameter($cleanData);
     }
 
     private function setSecuritySchemes(): void
@@ -244,15 +305,19 @@ class OpenApi
         // Add path parameters from route data
         if (! empty($route['request_parameters'])) {
             foreach ($route['request_parameters'] as $name => $param) {
-                $parameters[] = new Parameter([
+                $schema = $this->createSchema([
+                    'type' => $param['type'] ?? 'string',
+                    'format' => $param['format'] ?? null,
+                    'enum' => $param['enum'] ?? null,
+                ]);
+
+                $parameters[] = $this->createParameter([
                     'name' => $name,
                     'in' => 'path',
-                    'description' => $param['description'] ?? '',
+                    'description' => $param['description'] ?? 'Path parameter: ' . $name,
                     'required' => $param['required'] ?? true,
-                    'schema' => new Schema([
-                        'type' => $param['type'] ?? 'string',
-                        'format' => $param['format'] ?? null,
-                    ]),
+                    'schema' => $schema,
+                    'example' => $param['example'] ?? null,
                 ]);
             }
         }
@@ -260,17 +325,13 @@ class OpenApi
         // Add query parameters from pre-processed route data (includes both attribute and smart detection)
         if (! empty($route['query_parameters'])) {
             foreach ($route['query_parameters'] as $name => $param) {
-                $schema = new Schema([
+                $schema = $this->createSchema([
                     'type' => $param['type'] ?? 'string',
                     'format' => $param['format'] ?? null,
+                    'enum' => $param['enum'] ?? null,
                 ]);
 
-                // Add enum values if present
-                if (! empty($param['enum'])) {
-                    $schema->enum = $param['enum'];
-                }
-
-                $parameters[] = new Parameter([
+                $parameters[] = $this->createParameter([
                     'name' => $name,
                     'in' => 'query',
                     'description' => $param['description'] ?? '',
@@ -284,24 +345,64 @@ class OpenApi
         // For GET requests, treat validation parameters as query parameters instead of request body
         if (strtoupper($route['method']) === 'GET' && ! empty($route['parameters'])) {
             foreach ($route['parameters'] as $name => $param) {
-                $schema = new Schema([
-                    'type' => $param['type'] ?? 'string',
-                    'format' => $param['format'] ?? null,
-                ]);
+                // Handle nested query parameters (objects with properties like filter.service)
+                if (($param['type'] ?? null) === 'object' && ! empty($param['properties']) && is_array($param['properties'])) {
+                    // Expand nested properties into individual query parameters using array notation
+                    // e.g., filter.service becomes filter[service]
+                    foreach ($param['properties'] as $propName => $propSchema) {
+                        $schema = $this->createSchema([
+                            'type' => $propSchema['type'] ?? 'string',
+                            'format' => $propSchema['format'] ?? null,
+                            'enum' => $propSchema['enum'] ?? null,
+                            'minimum' => $propSchema['minimum'] ?? null,
+                            'maximum' => $propSchema['maximum'] ?? null,
+                        ]);
 
-                // Add enum values if present
-                if (! empty($param['enum'])) {
-                    $schema->enum = $param['enum'];
+                        $parameters[] = $this->createParameter([
+                            'name' => "{$name}[{$propName}]", // Use array notation for nested query params
+                            'in' => 'query',
+                            'description' => $propSchema['description'] ?? '',
+                            'required' => $propSchema['required'] ?? false,
+                            'schema' => $schema,
+                            'example' => $propSchema['example'] ?? null,
+                        ]);
+                    }
+                } else {
+                    // Regular simple query parameter
+                    $schemaData = [
+                        'type' => $param['type'] ?? 'string',
+                        'format' => $param['format'] ?? null,
+                        'enum' => $param['enum'] ?? null,
+                    ];
+
+                    // For array types, ensure items schema is present
+                    if ($schemaData['type'] === 'array') {
+                        $itemsData = $param['items'] ?? ['type' => 'string'];
+                        // Clean up items schema (remove null values)
+                        $cleanItems = ['type' => $itemsData['type'] ?? 'string'];
+                        if (isset($itemsData['format']) && $itemsData['format'] !== null) {
+                            $cleanItems['format'] = $itemsData['format'];
+                        }
+                        if (isset($itemsData['description'])) {
+                            $cleanItems['description'] = $itemsData['description'];
+                        }
+                        if (isset($itemsData['enum']) && !empty($itemsData['enum'])) {
+                            $cleanItems['enum'] = $itemsData['enum'];
+                        }
+                        $schemaData['items'] = $cleanItems;
+                    }
+
+                    $schema = $this->createSchema($schemaData);
+
+                    $parameters[] = $this->createParameter([
+                        'name' => $name,
+                        'in' => 'query',
+                        'description' => $param['description'] ?? '',
+                        'required' => $param['required'] ?? false,
+                        'schema' => $schema,
+                        'example' => $param['example'] ?? null,
+                    ]);
                 }
-
-                $parameters[] = new Parameter([
-                    'name' => $name,
-                    'in' => 'query',
-                    'description' => $param['description'] ?? '',
-                    'required' => $param['required'] ?? false,
-                    'schema' => $schema,
-                    'example' => $param['example'] ?? null,
-                ]);
             }
         }
 
@@ -343,8 +444,9 @@ class OpenApi
         }
 
         // Fall back to smart detection if no explicit definition
-        // Only create request body for non-GET methods (GET requests should use query parameters)
-        if (! $requestBody && ! empty($route['parameters']) && strtoupper($route['method']) !== 'GET') {
+        // Only create request body for non-GET/DELETE methods
+        // (GET requests should use query parameters, DELETE shouldn't have request bodies per OpenAPI spec)
+        if (! $requestBody && ! empty($route['parameters']) && !in_array(strtoupper($route['method']), ['GET', 'DELETE'])) {
             // Enhanced schema building with AST analysis if available
             $schema = $this->buildRequestBodySchema($route['parameters']);
 
@@ -454,82 +556,11 @@ class OpenApi
 
                 // Handle responses with properties (like validation errors)
                 if (! empty($responseData['properties'])) {
-                    $properties = [];
-                    foreach ($responseData['properties'] as $propName => $propData) {
-                        // Rule: Keep the code clean and readable - Filter out Spatie internal fields
-                        if ($propName === '_additional' || $propName === '_data_context') {
-                            continue;
-                        }
-
-                        $schemaData = [
-                            'type' => $propData['type'] ?? 'string',
-                            'description' => $propData['description'] ?? '',
-                        ];
-
-                        // Add format if available
-                        if (! empty($propData['format'])) {
-                            $schemaData['format'] = $propData['format'];
-                        }
-
-                        // Enhance description for conditional fields
-                        if (! empty($propData['conditional'])) {
-                            $schemaData['description'] .= ' (conditional field)';
-                        }
-
-                        $properties[$propName] = new Schema($schemaData);
-                    }
-                    $schema = new Schema([
-                        'type' => $responseData['type'] ?? 'object',
-                        'properties' => $properties,
-                    ]);
+                    $schema = $this->buildResponseSchema($responseData);
                 }
                 // CRITICAL: Handle array responses with items schema (collections)
                 elseif (($responseData['type'] ?? 'object') === 'array' && ! empty($responseData['items'])) {
-                    $itemsData = $responseData['items'];
-
-                    // Build items schema from the items data
-                    if (! empty($itemsData['properties'])) {
-                        $itemProperties = [];
-                        foreach ($itemsData['properties'] as $propName => $propData) {
-                            // Filter out Spatie internal fields
-                            if ($propName === '_additional' || $propName === '_data_context') {
-                                continue;
-                            }
-
-                            $itemSchemaData = [
-                                'type' => $propData['type'] ?? 'string',
-                                'description' => $propData['description'] ?? '',
-                            ];
-
-                            // Add format if available and not null
-                            if (! empty($propData['format'])) {
-                                $itemSchemaData['format'] = $propData['format'];
-                            }
-
-                            // Enhance description for conditional fields
-                            if (! empty($propData['conditional'])) {
-                                $itemSchemaData['description'] .= ' (conditional field)';
-                            }
-
-                            $itemProperties[$propName] = new Schema($itemSchemaData);
-                        }
-
-                        $schema = new Schema([
-                            'type' => 'array',
-                            'items' => new Schema([
-                                'type' => $itemsData['type'] ?? 'object',
-                                'properties' => $itemProperties,
-                            ]),
-                        ]);
-                    } else {
-                        // Array without detailed item properties
-                        $schema = new Schema([
-                            'type' => 'array',
-                            'items' => new Schema([
-                                'type' => $itemsData['type'] ?? 'object',
-                            ]),
-                        ]);
-                    }
+                    $schema = $this->buildResponseSchema($responseData);
                 } else {
                     $schema = new Schema([
                         'type' => $responseData['type'] ?? 'object',
@@ -604,60 +635,135 @@ class OpenApi
         $operation->responses = $responses;
     }
 
+    /**
+     * Recursively build response schema from captured data
+     */
+    private function buildResponseSchema(array $schemaData): Schema
+    {
+        $schema = [];
+        $schema['type'] = $schemaData['type'] ?? 'object';
+
+        // Add description if available
+        if (isset($schemaData['description']) && $schemaData['description'] !== '') {
+            $schema['description'] = $schemaData['description'];
+        }
+
+        // Add format if available
+        if (!empty($schemaData['format'])) {
+            $schema['format'] = $schemaData['format'];
+        }
+
+        // Add nullable if specified
+        if (!empty($schemaData['nullable'])) {
+            $schema['nullable'] = $schemaData['nullable'];
+        }
+
+        // Handle properties (for objects)
+        if (!empty($schemaData['properties'])) {
+            $properties = [];
+            foreach ($schemaData['properties'] as $propName => $propData) {
+                // Filter out Spatie internal fields
+                if ($propName === '_additional' || $propName === '_data_context') {
+                    continue;
+                }
+
+                // If propData is a string (simple type), convert to array format
+                if (is_string($propData)) {
+                    $propData = ['type' => $propData];
+                }
+
+                // Recursively build nested properties
+                $properties[$propName] = $this->buildResponseSchema($propData);
+            }
+            $schema['properties'] = $properties;
+        }
+
+        // Handle items (for arrays)
+        if (!empty($schemaData['items'])) {
+            // If items is a string (simple type), convert to array format
+            if (is_string($schemaData['items'])) {
+                $schemaData['items'] = ['type' => $schemaData['items']];
+            }
+            $schema['items'] = $this->buildResponseSchema($schemaData['items']);
+        }
+
+        // Add required fields if specified
+        if (!empty($schemaData['required'])) {
+            $schema['required'] = $schemaData['required'];
+        }
+
+        // Add enum if specified
+        if (!empty($schemaData['enum'])) {
+            $schema['enum'] = $schemaData['enum'];
+        }
+
+        return new Schema($schema);
+    }
+
     private function buildRequestBodySchema(array $parameters): Schema
     {
         $properties = [];
         $required = [];
 
         foreach ($parameters as $name => $param) {
-            if (! empty($param['parameters'])) {
-                // Handle nested parameters
-                $nestedSchema = $this->buildRequestBodySchema($param['parameters']);
-                $properties[$name] = new Schema([
+            // Handle nested objects with 'properties' key (new structure)
+            if (! empty($param['properties'])) {
+                $nestedSchema = $this->buildRequestBodySchema($param['properties']);
+                $nestedSchemaData = [
                     'type' => 'object',
                     'properties' => $nestedSchema->properties,
-                    'required' => $nestedSchema->required,
-                ]);
-            } else {
-                $schemaProps = [
-                    'type' => $param['type'] ?? 'string',
-                    'description' => $param['description'] ?? '',
+                ];
+                // Only include required if it has items
+                if (!empty($nestedSchema->required)) {
+                    $nestedSchemaData['required'] = $nestedSchema->required;
+                }
+                $properties[$name] = new Schema($nestedSchemaData);
+            }
+            // Handle nested objects with 'parameters' key (legacy structure)
+            elseif (! empty($param['parameters'])) {
+                $nestedSchema = $this->buildRequestBodySchema($param['parameters']);
+                $nestedSchemaData = [
+                    'type' => 'object',
+                    'properties' => $nestedSchema->properties,
+                ];
+                // Only include required if it has items
+                if (!empty($nestedSchema->required)) {
+                    $nestedSchemaData['required'] = $nestedSchema->required;
+                }
+                $properties[$name] = new Schema($nestedSchemaData);
+            }
+            // Handle arrays with 'items' key
+            elseif (! empty($param['items'])) {
+                // Build items schema data as ARRAY (the Schema constructor will convert it)
+                $itemsSchemaData = [
+                    'type' => $param['items']['type'] ?? 'string',
                 ];
 
-                // Only add format if it's not null
-                if ($param['format'] ?? null) {
-                    $schemaProps['format'] = $param['format'];
+                if (isset($param['items']['description'])) {
+                    $itemsSchemaData['description'] = $param['items']['description'];
+                }
+                // Only add format if it's not null (OpenAPI compliance)
+                if (isset($param['items']['format']) && $param['items']['format'] !== null) {
+                    $itemsSchemaData['format'] = $param['items']['format'];
+                }
+                if (!empty($param['items']['enum'])) {
+                    $itemsSchemaData['enum'] = $param['items']['enum'];
+                }
+                if (!empty($param['items']['example'])) {
+                    $itemsSchemaData['example'] = $param['items']['example'];
                 }
 
-                $schema = new Schema($schemaProps);
-
-                // Set additional properties after construction
-                if (! empty($param['enum'])) {
-                    $schema->enum = $param['enum'];
-                }
-
-                if (! empty($param['example'])) {
-                    $schema->example = $this->filterSpatieInternalFields($param['example']);
-                }
-
-                if (! empty($param['pattern'])) {
-                    $schema->pattern = $param['pattern'];
-                }
-
-                if (isset($param['minimum'])) {
-                    $schema->minimum = $param['minimum'];
-                }
-                if (isset($param['maximum'])) {
-                    $schema->maximum = $param['maximum'];
-                }
-                if (isset($param['minLength'])) {
-                    $schema->minLength = $param['minLength'];
-                }
-                if (isset($param['maxLength'])) {
-                    $schema->maxLength = $param['maxLength'];
-                }
-
-                $properties[$name] = $schema;
+                // CRITICAL: Pass items as ARRAY in constructor, NOT as Schema object
+                // The Schema constructor will automatically convert it to a Schema object
+                $properties[$name] = new Schema([
+                    'type' => 'array',
+                    'description' => $param['description'] ?? '',
+                    'items' => $itemsSchemaData,  // Pass as array, not Schema object
+                ]);
+            }
+            // Handle simple properties
+            else {
+                $properties[$name] = $this->buildSchemaFromParam($param);
             }
 
             if ($param['required'] ?? false) {
@@ -665,11 +771,63 @@ class OpenApi
             }
         }
 
-        return new Schema([
+        $schemaData = [
             'type' => 'object',
             'properties' => $properties,
-            'required' => $required,
-        ]);
+        ];
+
+        // Only include required array if it has items (OpenAPI spec requires at least 1 item)
+        if (!empty($required)) {
+            $schemaData['required'] = $required;
+        }
+
+        return new Schema($schemaData);
+    }
+
+    /**
+     * Build a schema object from parameter definition
+     */
+    private function buildSchemaFromParam(array $param): Schema
+    {
+        $schemaProps = [
+            'type' => $param['type'] ?? 'string',
+            'description' => $param['description'] ?? '',
+        ];
+
+        // Only add format if it's not null
+        if ($param['format'] ?? null) {
+            $schemaProps['format'] = $param['format'];
+        }
+
+        $schema = new Schema($schemaProps);
+
+        // Set additional properties after construction
+        if (! empty($param['enum'])) {
+            $schema->enum = $param['enum'];
+        }
+
+        if (! empty($param['example'])) {
+            $schema->example = $this->filterSpatieInternalFields($param['example']);
+        }
+
+        if (! empty($param['pattern'])) {
+            $schema->pattern = $param['pattern'];
+        }
+
+        if (isset($param['minimum'])) {
+            $schema->minimum = $param['minimum'];
+        }
+        if (isset($param['maximum'])) {
+            $schema->maximum = $param['maximum'];
+        }
+        if (isset($param['minLength'])) {
+            $schema->minLength = $param['minLength'];
+        }
+        if (isset($param['maxLength'])) {
+            $schema->maxLength = $param['maxLength'];
+        }
+
+        return $schema;
     }
 
     /**

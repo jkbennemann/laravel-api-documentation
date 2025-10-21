@@ -5,11 +5,16 @@ declare(strict_types=1);
 namespace JkBennemann\LaravelApiDocumentation;
 
 use Illuminate\Support\Facades\Route;
+use JkBennemann\LaravelApiDocumentation\Commands\CaptureResponsesCommand;
 use JkBennemann\LaravelApiDocumentation\Commands\LaravelApiDocumentationCommand;
+use JkBennemann\LaravelApiDocumentation\Commands\ValidateDocumentationCommand;
+use JkBennemann\LaravelApiDocumentation\Http\Controllers\DefaultDocumentationController;
 use JkBennemann\LaravelApiDocumentation\Http\Controllers\RedocController;
 use JkBennemann\LaravelApiDocumentation\Http\Controllers\ScalarController;
 use JkBennemann\LaravelApiDocumentation\Http\Controllers\SwaggerController;
 use JkBennemann\LaravelApiDocumentation\Services\AttributeAnalyzer;
+use JkBennemann\LaravelApiDocumentation\Services\CapturedResponseRepository;
+use JkBennemann\LaravelApiDocumentation\Services\DocumentationValidator;
 use JkBennemann\LaravelApiDocumentation\Services\EnhancedResponseAnalyzer;
 use JkBennemann\LaravelApiDocumentation\Services\ErrorMessageGenerator;
 use JkBennemann\LaravelApiDocumentation\Services\OpenApi;
@@ -27,7 +32,9 @@ class LaravelApiDocumentationServiceProvider extends PackageServiceProvider
             ->name('laravel-api-documentation')
             ->hasConfigFile()
             ->hasViews()
-            ->hasCommand(LaravelApiDocumentationCommand::class);
+            ->hasCommand(LaravelApiDocumentationCommand::class)
+            ->hasCommand(CaptureResponsesCommand::class)
+            ->hasCommand(ValidateDocumentationCommand::class);
     }
 
     public function packageRegistered(): void
@@ -37,6 +44,10 @@ class LaravelApiDocumentationServiceProvider extends PackageServiceProvider
         $this->app->singleton(RequestAnalyzer::class);
         $this->app->singleton(ResponseAnalyzer::class);
         $this->app->singleton(TemplateManager::class);
+
+        // Register capture-related services
+        $this->app->singleton(CapturedResponseRepository::class);
+        $this->app->singleton(DocumentationValidator::class);
 
         // Register ErrorMessageGenerator with all dependencies
         $this->app->singleton(ErrorMessageGenerator::class, function ($app) {
@@ -105,35 +116,23 @@ class LaravelApiDocumentationServiceProvider extends PackageServiceProvider
             config('api-documentation.ui.redoc.enabled', false) ||
             config('api-documentation.ui.scalar.enabled', false)
         ) {
-            if (config('api-documentation.ui.default', false) === 'redoc') {
-                Route::get(
-                    '/documentation',
-                    [
-                        RedocController::class,
-                        'index',
-                    ]
-                )
-                    ->middleware(config('api-documentation.ui.redoc.middleware', []));
-            } elseif (config('api-documentation.ui.default', false) === 'scalar') {
-                Route::get(
-                    '/documentation',
-                    [
-                        ScalarController::class,
-                        'index',
-                    ]
-                )
-                    ->middleware(config('api-documentation.ui.scalar.middleware', []));
-            } else {
-                Route::get(
-                    '/documentation',
-                    [
-                        SwaggerController::class,
-                        'index',
-                    ]
-                )
-                    ->middleware(config('api-documentation.ui.swagger.middleware', []));
-            }
+            // Use DefaultDocumentationController to determine UI based on domain
+            // Apply all possible middlewares (controller will handle routing to correct UI)
+            $middlewares = array_unique(array_merge(
+                config('api-documentation.ui.swagger.middleware', []),
+                config('api-documentation.ui.redoc.middleware', []),
+                config('api-documentation.ui.scalar.middleware', [])
+            ));
 
+            Route::get(
+                '/documentation',
+                [
+                    DefaultDocumentationController::class,
+                    'index',
+                ]
+            )
+                ->middleware($middlewares)
+                ->name('api-documentation.default');
         }
     }
 

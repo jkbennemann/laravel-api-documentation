@@ -10,7 +10,7 @@ use JkBennemann\LaravelApiDocumentation\Services\DocumentationBuilder;
 
 class LaravelApiDocumentationCommand extends Command
 {
-    public $signature = 'documentation:generate {--file= : Optional file key from config to generate only one specific documentation file}';
+    public $signature = 'documentation:generate {--file= : Optional file key from config to generate only one specific documentation file} {--dev : Include development servers in the generated documentation}';
 
     public $description = 'Documentation generator for Laravel API';
 
@@ -42,7 +42,7 @@ class LaravelApiDocumentationCommand extends Command
 
             try {
                 $this->info("Generating documentation for '{$docName}'...");
-                foreach ($builder->build($file['filename'], $file['name'] ?? null, $docName) as $message) {
+                foreach ($builder->build($file['filename'], $file['name'] ?? null, $docName, $this->option('dev')) as $message) {
                     $this->info("  - {$message}");
                 }
                 $this->newLine();
@@ -64,7 +64,7 @@ class LaravelApiDocumentationCommand extends Command
             try {
                 $this->info('Generating default documentation...');
                 $this->info("Using filename: {$filename}");
-                $messages = iterator_to_array($builder->build($filename));
+                $messages = iterator_to_array($builder->build($filename, null, null, $this->option('dev')));
                 foreach ($messages as $message) {
                     $this->info("  - {$message}");
                 }

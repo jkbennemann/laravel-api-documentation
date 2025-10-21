@@ -763,8 +763,22 @@ class RouteComposition
             $result['maxLength'] = $parameter['maxLength'];
         }
 
-        // Handle nested parameters recursively
-        if (! empty($parameter['parameters']) && is_array($parameter['parameters'])) {
+        // Handle array items schema (for array fields like items.*)
+        if (! empty($parameter['items']) && is_array($parameter['items'])) {
+            // Preserve the items schema for arrays
+            $result['items'] = $parameter['items'];
+            // Don't set parameters for arrays with items
+        }
+        // Handle nested properties (new structure from RequestAnalyzer for objects)
+        elseif (! empty($parameter['properties']) && is_array($parameter['properties'])) {
+            $nestedProperties = [];
+            foreach ($parameter['properties'] as $nestedName => $nestedProperty) {
+                $nestedProperties[$nestedName] = $this->transformParameter($nestedName, $nestedProperty);
+            }
+            $result['properties'] = $nestedProperties;
+        }
+        // Handle nested parameters recursively (legacy structure for objects)
+        elseif (! empty($parameter['parameters']) && is_array($parameter['parameters'])) {
             $nestedParameters = [];
             foreach ($parameter['parameters'] as $nestedName => $nestedParameter) {
                 $nestedParameters[$nestedName] = $this->transformParameter($nestedName, $nestedParameter);

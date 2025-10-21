@@ -398,6 +398,9 @@ class RequestAnalyzer
             $parser = (new ParserFactory)->createForNewestSupportedVersion();
             $ast = $parser->parse(file_get_contents($fileName));
 
+            // Store AST for class name resolution
+            $this->currentFileAst = $ast;
+
             $nodeFinder = new NodeFinder;
             $parameters = [];
 
@@ -408,6 +411,7 @@ class RequestAnalyzer
             });
 
             if (! $rulesMethod) {
+                $this->currentFileAst = null; // Clean up
                 return [];
             }
 
@@ -417,6 +421,7 @@ class RequestAnalyzer
             });
 
             if (! $returnNode || ! $returnNode->expr instanceof Array_) {
+                $this->currentFileAst = null; // Clean up
                 return [];
             }
 
@@ -432,12 +437,16 @@ class RequestAnalyzer
                 $parameters[$fieldName] = $this->enhancedAnalyzer->parseValidationRules($rules);
             }
 
+            // Clean up AST after processing
+            $this->currentFileAst = null;
+
             // Transform flat nested parameters into proper nested structure
             $transformedParameters = $this->transformNestedParameters($parameters);
 
             // Apply nested array validation analysis
             return $this->nestedArrayAnalyzer->analyzeNestedArrayValidation($transformedParameters);
         } catch (Throwable) {
+            $this->currentFileAst = null; // Ensure cleanup on error
             return [];
         }
     }
@@ -461,7 +470,15 @@ class RequestAnalyzer
                     $rules[] = 'in'; // Simplified handling for now
                 } elseif ($ruleItem->value instanceof \PhpParser\Node\Expr\StaticCall) {
                     // Handle static calls like Rule::in(['value1', 'value2'])
-                    $rules[] = $this->extractRuleFromStaticCall($ruleItem->value);
+                    $extractedRule = $this->extractRuleFromStaticCall($ruleItem->value);
+
+                    // extractRuleFromStaticCall can return either a string or an array with enum values
+                    if (is_array($extractedRule) && isset($extractedRule['rule'], $extractedRule['values'])) {
+                        // Convert to string format with values: 'in:value1,value2,value3'
+                        $rules[] = $extractedRule['rule'] . ':' . implode(',', $extractedRule['values']);
+                    } else {
+                        $rules[] = $extractedRule;
+                    }
                 } elseif ($ruleItem->value instanceof \PhpParser\Node\Expr\New_) {
                     // Handle new instances like new Enum(MyEnum::class)
                     $rules[] = $this->extractRuleFromNewInstance($ruleItem->value);
@@ -479,8 +496,9 @@ class RequestAnalyzer
 
     /**
      * Extract rule information from static method calls (e.g., Rule::in(...))
+     * Returns either a string rule name or an array with rule name and values for enum extraction
      */
-    private function extractRuleFromStaticCall(\PhpParser\Node\Expr\StaticCall $staticCall): string
+    private function extractRuleFromStaticCall(\PhpParser\Node\Expr\StaticCall $staticCall): string|array
     {
         try {
             // Get the class name and method name
@@ -489,6 +507,14 @@ class RequestAnalyzer
 
             // Handle Laravel Rule class
             if ($className === 'Rule' || str_ends_with($className, '\\Rule')) {
+                // Special handling for Rule::in() to extract enum values
+                if ($methodName === 'in' && isset($staticCall->args[0])) {
+                    $enumValues = $this->extractEnumValuesFromRuleInArgument($staticCall->args[0]->value);
+                    if (!empty($enumValues)) {
+                        return ['rule' => 'in', 'values' => $enumValues];
+                    }
+                }
+
                 return match ($methodName) {
                     'in' => 'in',
                     'notIn' => 'not_in',
@@ -508,6 +534,182 @@ class RequestAnalyzer
             return 'custom_rule';
         }
     }
+
+    /**
+     * Extract enum values from Rule::in() argument
+     * Handles: Rule::in(['a', 'b']), Rule::in(MyEnum::values()), Rule::in(MyEnum::cases())
+     */
+    private function extractEnumValuesFromRuleInArgument($argumentNode): array
+    {
+        try {
+            // Case 1: Direct array - Rule::in(['value1', 'value2'])
+            if ($argumentNode instanceof \PhpParser\Node\Expr\Array_) {
+                $values = [];
+                foreach ($argumentNode->items as $item) {
+                    if ($item && $item->value instanceof \PhpParser\Node\Scalar\String_) {
+                        $values[] = $item->value->value;
+                    } elseif ($item && $item->value instanceof \PhpParser\Node\Scalar\LNumber) {
+                        $values[] = $item->value->value;
+                    }
+                }
+                return $values;
+            }
+
+            // Case 2: Static method call - Rule::in(MyEnum::values()) or Rule::in(MyEnum::cases())
+            if ($argumentNode instanceof \PhpParser\Node\Expr\StaticCall) {
+                $enumClassName = $argumentNode->class->toString() ?? '';
+                $enumMethod = $argumentNode->name->toString() ?? '';
+
+                // Try to resolve the fully qualified class name
+                $resolvedClassName = $this->resolveClassName($enumClassName);
+
+                if ($resolvedClassName && class_exists($resolvedClassName)) {
+                    // Handle PHP 8.1+ enums with cases() method
+                    if ($enumMethod === 'cases' && enum_exists($resolvedClassName)) {
+                        return $this->extractValuesFromPhpEnum($resolvedClassName);
+                    }
+
+                    // Handle custom enum classes with values() method
+                    if ($enumMethod === 'values' && method_exists($resolvedClassName, 'values')) {
+                        return $this->extractValuesFromCustomEnum($resolvedClassName);
+                    }
+                }
+            }
+
+            // Case 3: Class constant fetch - Rule::in(MyEnum::ALL_VALUES)
+            if ($argumentNode instanceof \PhpParser\Node\Expr\ClassConstFetch) {
+                $className = $argumentNode->class->toString() ?? '';
+                $constantName = $argumentNode->name->toString() ?? '';
+
+                $resolvedClassName = $this->resolveClassName($className);
+
+                if ($resolvedClassName && class_exists($resolvedClassName)) {
+                    $reflection = new ReflectionClass($resolvedClassName);
+                    if ($reflection->hasConstant($constantName)) {
+                        $constantValue = $reflection->getConstant($constantName);
+                        if (is_array($constantValue)) {
+                            return array_values($constantValue);
+                        }
+                    }
+                }
+            }
+        } catch (Throwable) {
+            // Silent fail - return empty array
+        }
+
+        return [];
+    }
+
+    /**
+     * Extract values from PHP 8.1+ backed enum
+     */
+    private function extractValuesFromPhpEnum(string $enumClass): array
+    {
+        try {
+            if (!enum_exists($enumClass)) {
+                return [];
+            }
+
+            $cases = $enumClass::cases();
+            $values = [];
+
+            foreach ($cases as $case) {
+                // For backed enums, use the value; for pure enums, use the name
+                if (property_exists($case, 'value')) {
+                    $values[] = $case->value;
+                } else {
+                    $values[] = $case->name;
+                }
+            }
+
+            return $values;
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
+    /**
+     * Extract values from custom enum class with values() method
+     */
+    private function extractValuesFromCustomEnum(string $enumClass): array
+    {
+        try {
+            if (!method_exists($enumClass, 'values')) {
+                return [];
+            }
+
+            $values = $enumClass::values();
+
+            if (is_array($values)) {
+                return array_values($values);
+            }
+
+            return [];
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
+    /**
+     * Resolve a short class name to fully qualified class name
+     * Uses the current file's use statements
+     */
+    private function resolveClassName(string $className, ?\PhpParser\Node\Stmt\ClassMethod $rulesMethod = null): ?string
+    {
+        // Already fully qualified
+        if (str_starts_with($className, '\\')) {
+            return ltrim($className, '\\');
+        }
+
+        // Try as-is first (might be autoloaded)
+        if (class_exists($className) || enum_exists($className)) {
+            return $className;
+        }
+
+        // Try to find use statements from the AST context
+        if ($this->currentFileAst !== null) {
+            $useStatements = $this->extractUseStatementsFromAst($this->currentFileAst);
+
+            // Check if we have a use statement for this class
+            if (isset($useStatements[$className])) {
+                $resolvedName = $useStatements[$className];
+                if (class_exists($resolvedName) || enum_exists($resolvedName)) {
+                    return $resolvedName;
+                }
+            }
+        }
+
+        // Fallback: return as-is and hope it resolves
+        return $className;
+    }
+
+    /**
+     * Extract use statements from AST
+     * Returns array mapping short names to fully qualified names
+     */
+    private function extractUseStatementsFromAst(array $ast): array
+    {
+        $useStatements = [];
+        $nodeFinder = new NodeFinder;
+
+        $useNodes = $nodeFinder->findInstanceOf($ast, \PhpParser\Node\Stmt\Use_::class);
+
+        foreach ($useNodes as $useNode) {
+            foreach ($useNode->uses as $use) {
+                $fullName = $use->name->toString();
+                $alias = $use->alias ? $use->alias->toString() : $use->name->getLast();
+
+                $useStatements[$alias] = $fullName;
+            }
+        }
+
+        return $useStatements;
+    }
+
+    /**
+     * Store current file's AST for class name resolution
+     */
+    private ?array $currentFileAst = null;
 
     /**
      * Extract rule information from new instance calls (e.g., new Enum(...))
@@ -866,6 +1068,7 @@ class RequestAnalyzer
 
     /**
      * Transform flat nested parameters into proper nested structure
+     * Handles wildcards (*) to create array schemas
      */
     private function transformNestedParameters(array $parameters): array
     {
@@ -878,29 +1081,144 @@ class RequestAnalyzer
                 $parentKey = $parts[0];
                 $childKey = $parts[1];
 
+                // Check if child is a wildcard (simple array pattern like "items.*")
+                if ($childKey === '*') {
+                    // This is a simple array pattern: items.*
+                    // Update existing entry or create new one
+                    if (isset($nestedGroups[$parentKey])) {
+                        // Update existing array entry with items schema
+                        $nestedGroups[$parentKey]['items'] = [
+                            'type' => $value['type'] ?? 'string',
+                            'format' => $value['format'] ?? null,
+                            'description' => $value['description'] ?? null,
+                        ];
+
+                        // Remove 'parameters' or 'properties' since this is an array, not an object
+                        unset($nestedGroups[$parentKey]['parameters']);
+                        unset($nestedGroups[$parentKey]['properties']);
+
+                        // Copy over enum, example, and other special properties
+                        if (isset($value['enum'])) {
+                            $nestedGroups[$parentKey]['items']['enum'] = $value['enum'];
+                        }
+                        if (isset($value['example'])) {
+                            $nestedGroups[$parentKey]['items']['example'] = $value['example'];
+                        }
+                        if (isset($value['minimum'])) {
+                            $nestedGroups[$parentKey]['items']['minimum'] = $value['minimum'];
+                        }
+                        if (isset($value['maximum'])) {
+                            $nestedGroups[$parentKey]['items']['maximum'] = $value['maximum'];
+                        }
+                    } else {
+                        // Create new array entry
+                        $nestedGroups[$parentKey] = [
+                            'name' => $parentKey,
+                            'description' => $parameters[$parentKey]['description'] ?? null,
+                            'type' => 'array',
+                            'format' => null,
+                            'required' => $parameters[$parentKey]['required'] ?? false,
+                            'deprecated' => false,
+                            'items' => [
+                                'type' => $value['type'] ?? 'string',
+                                'format' => $value['format'] ?? null,
+                                'description' => $value['description'] ?? null,
+                            ],
+                        ];
+
+                        // Copy over enum, example, and other special properties
+                        if (isset($value['enum'])) {
+                            $nestedGroups[$parentKey]['items']['enum'] = $value['enum'];
+                        }
+                        if (isset($value['example'])) {
+                            $nestedGroups[$parentKey]['items']['example'] = $value['example'];
+                        }
+                        if (isset($value['minimum'])) {
+                            $nestedGroups[$parentKey]['items']['minimum'] = $value['minimum'];
+                        }
+                        if (isset($value['maximum'])) {
+                            $nestedGroups[$parentKey]['items']['maximum'] = $value['maximum'];
+                        }
+                    }
+                    continue; // Skip adding to parameters
+                }
+
+                // Check if child contains wildcard (array of objects pattern like "items.*.field")
+                if (strpos($childKey, '*') !== false) {
+                    // This is an array of objects pattern: items.*.field
+                    if (! isset($nestedGroups[$parentKey])) {
+                        $nestedGroups[$parentKey] = [
+                            'name' => $parentKey,
+                            'description' => $parameters[$parentKey]['description'] ?? null,
+                            'type' => 'array',
+                            'format' => null,
+                            'required' => $parameters[$parentKey]['required'] ?? false,
+                            'deprecated' => false,
+                            'items' => [
+                                'type' => 'object',
+                                'properties' => [],
+                            ],
+                        ];
+                    }
+
+                    // Parse the remaining path after the wildcard
+                    $remainingPath = substr($childKey, 2); // Remove "*."
+                    if (! empty($remainingPath)) {
+                        $nestedGroups[$parentKey]['items']['properties'][$remainingPath] = [
+                            'type' => $value['type'] ?? 'string',
+                            'format' => $value['format'] ?? null,
+                            'description' => $value['description'] ?? null,
+                            'required' => $value['required'] ?? false,
+                        ];
+
+                        // Copy over special properties
+                        if (isset($value['enum'])) {
+                            $nestedGroups[$parentKey]['items']['properties'][$remainingPath]['enum'] = $value['enum'];
+                        }
+                        if (isset($value['example'])) {
+                            $nestedGroups[$parentKey]['items']['properties'][$remainingPath]['example'] = $value['example'];
+                        }
+                    }
+                    continue;
+                }
+
+                // Regular nested property (no wildcards)
                 // Initialize the parent parameter if it doesn't exist
                 if (! isset($nestedGroups[$parentKey])) {
                     $nestedGroups[$parentKey] = [
                         'name' => $parentKey,
                         'description' => null,
-                        'type' => 'array',
+                        'type' => 'object', // Changed from 'array' to 'object' for nested objects
                         'format' => null,
                         'required' => false,
                         'deprecated' => false,
-                        'parameters' => [],
+                        'properties' => [], // Changed from 'parameters' to 'properties'
                     ];
                 }
 
-                // Add the child parameter to the parent's parameters
-                $nestedGroups[$parentKey]['parameters'][$childKey] = [
+                // Add the child parameter to the parent's properties
+                $nestedGroups[$parentKey]['properties'][$childKey] = [
                     'name' => $childKey,
                     'description' => $value['description'] ?? null,
                     'type' => $value['type'] ?? 'string',
                     'format' => $value['format'] ?? null,
                     'required' => $value['required'] ?? false,
                     'deprecated' => $value['deprecated'] ?? false,
-                    'parameters' => $value['parameters'] ?? [],
                 ];
+
+                // Copy over special properties
+                if (isset($value['enum'])) {
+                    $nestedGroups[$parentKey]['properties'][$childKey]['enum'] = $value['enum'];
+                }
+                if (isset($value['example'])) {
+                    $nestedGroups[$parentKey]['properties'][$childKey]['example'] = $value['example'];
+                }
+                if (isset($value['minimum'])) {
+                    $nestedGroups[$parentKey]['properties'][$childKey]['minimum'] = $value['minimum'];
+                }
+                if (isset($value['maximum'])) {
+                    $nestedGroups[$parentKey]['properties'][$childKey]['maximum'] = $value['maximum'];
+                }
             } else {
                 // Check if this key is a parent of nested parameters
                 $hasNestedChildren = false;
@@ -913,16 +1231,27 @@ class RequestAnalyzer
 
                 if ($hasNestedChildren) {
                     // This will be handled when processing the nested children
+                    // Check if the children are wildcards (array pattern)
+                    $hasWildcardChild = false;
+                    foreach (array_keys($parameters) as $otherKey) {
+                        if ($otherKey === $key.'.*' || strpos($otherKey, $key.'.*.') === 0) {
+                            $hasWildcardChild = true;
+                            break;
+                        }
+                    }
+
                     if (! isset($nestedGroups[$key])) {
                         $nestedGroups[$key] = [
                             'name' => $key,
                             'description' => $value['description'] ?? null,
-                            'type' => 'array',
+                            'type' => $hasWildcardChild ? 'array' : 'object', // Force object for non-wildcard nested
                             'format' => $value['format'] ?? null,
                             'required' => $value['required'] ?? false,
                             'deprecated' => $value['deprecated'] ?? false,
-                            'parameters' => [],
                         ];
+
+                        // Will be filled by nested children processing
+                        // Don't pre-create properties/items here - let the wildcard handling do it
                     }
                 } else {
                     // Regular non-nested parameter

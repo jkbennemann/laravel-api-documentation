@@ -1461,8 +1461,16 @@ class ResponseAnalyzer
             $endLine = $method->getEndLine() - 1;
             $methodBody = implode("\n", array_slice($lines, $startLine, $endLine - $startLine + 1));
 
+            // Try to extract DTO class from PHPDoc in method body
+            $dtoClass = $this->extractDtoClassFromMethodBody($methodBody);
+
+            // If we found a DTO class, resolve it to FQN using use statements
+            if ($dtoClass && !str_contains($dtoClass, '\\')) {
+                $dtoClass = $this->resolveClassNameWithUseStatements($fileContent, $dtoClass, $reflection->getNamespaceName());
+            }
+
             // Extract array structures from method body
-            return $this->extractArrayStructureFromMethodBody($methodBody);
+            return $this->extractArrayStructureFromMethodBody($methodBody, $dtoClass);
 
         } catch (Throwable) {
             return [];
@@ -1470,9 +1478,44 @@ class ResponseAnalyzer
     }
 
     /**
+     * Extract DTO class from PHPDoc in method body
+     */
+    private function extractDtoClassFromMethodBody(string $methodBody): ?string
+    {
+        // Look for @var PHPDoc pattern: @var ClassName $variable
+        if (preg_match('/@var\s+([^\s]+)\s+\$/', $methodBody, $matches)) {
+            $className = $matches[1];
+            // Remove leading backslash if present
+            $className = ltrim($className, '\\');
+            return $className;
+        }
+
+        return null;
+    }
+
+    /**
+     * Resolve class name using use statements from file content
+     */
+    private function resolveClassNameWithUseStatements(string $fileContent, string $className, string $namespace): ?string
+    {
+        // Look for use statement for this class
+        $pattern = '/use\s+([^\s;]+\\\\' . preg_quote($className, '/') . ');/';
+        if (preg_match($pattern, $fileContent, $matches)) {
+            return $matches[1];
+        }
+
+        // If no use statement found, assume it's in the same namespace
+        if ($namespace) {
+            return $namespace . '\\' . $className;
+        }
+
+        return null;
+    }
+
+    /**
      * Extract array structure from method body text
      */
-    private function extractArrayStructureFromMethodBody(string $methodBody): array
+    private function extractArrayStructureFromMethodBody(string $methodBody, ?string $dtoClass = null): array
     {
         $properties = [];
 
@@ -1483,7 +1526,7 @@ class ResponseAnalyzer
         // Matches both static fn and function styles
         if (preg_match('/array_map\s*\(\s*(static\s+fn|function)\s*\(\$?[^)]*\)\s*=>\s*\[([^\]]+)\]/', $cleanedBody, $matches)) {
             $arrayContent = $matches[2];
-            $properties = $this->parseInlineArrayStructure($arrayContent);
+            $properties = $this->parseInlineArrayStructure($arrayContent, $dtoClass);
         }
         // Try alternative pattern for array_map with different formatting
         elseif (preg_match('/array_map\s*\(\s*([^,]+),\s*([^\)]+)\)/', $cleanedBody, $matches)) {
@@ -1491,14 +1534,14 @@ class ResponseAnalyzer
             $closure = $matches[1];
             if (preg_match('/\[([^\]]+)\]/', $closure, $arrayMatches)) {
                 $arrayContent = $arrayMatches[1];
-                $properties = $this->parseInlineArrayStructure($arrayContent);
+                $properties = $this->parseInlineArrayStructure($arrayContent, $dtoClass);
             }
         }
         // Pattern for direct array return
         // Matches: return ['key' => $value, 'key2' => $value2];
         elseif (preg_match('/return\s*\[([^\]]+)\]/', $cleanedBody, $matches)) {
             $arrayContent = $matches[1];
-            $properties = $this->parseInlineArrayStructure($arrayContent);
+            $properties = $this->parseInlineArrayStructure($arrayContent, $dtoClass);
         }
 
         // If array_map is detected, wrap in array type
@@ -1521,7 +1564,7 @@ class ResponseAnalyzer
     /**
      * Parse inline array structure like ['id' => $value, 'type' => $value2]
      */
-    private function parseInlineArrayStructure(string $arrayContent): array
+    private function parseInlineArrayStructure(string $arrayContent, ?string $dtoClass = null): array
     {
         $properties = [];
 
@@ -1533,13 +1576,18 @@ class ResponseAnalyzer
                 $key = $matches[1];
                 $value = trim($matches[2]);
 
-                // Determine type based on the value pattern
-                $type = $this->determineTypeFromValue($value);
+                // Determine type based on the value pattern, with DTO context if available
+                $type = $this->determineTypeFromValue($value, $dtoClass);
 
                 $properties[$key] = [
                     'type' => $type,
                     'description' => "The {$key} field",
                 ];
+
+                // For array types, add items schema
+                if ($type === 'array') {
+                    $properties[$key]['items'] = ['type' => 'object'];
+                }
             }
         }
 
@@ -1594,7 +1642,7 @@ class ResponseAnalyzer
     /**
      * Determine OpenAPI type from PHP value pattern
      */
-    private function determineTypeFromValue(string $value): string
+    private function determineTypeFromValue(string $value, ?string $dtoClass = null): string
     {
         // Remove whitespace
         $value = trim($value);
@@ -1626,7 +1674,16 @@ class ResponseAnalyzer
             return 'integer'; // Count method
         }
 
-        if (preg_match('/\$[^->]+->(\w+)$/', $value, $matches)) {
+        // Try to determine type from DTO class if available
+        if ($dtoClass && preg_match('/\$[^->]+->(\w+)/', $value, $matches)) {
+            $propertyName = $matches[1];
+            $dtoType = $this->getPropertyTypeFromDto($dtoClass, $propertyName);
+            if ($dtoType) {
+                return $dtoType;
+            }
+        }
+
+        if (preg_match('/\$[^->]+->(\w+)/', $value, $matches)) {
             $propertyName = $matches[1];
 
             // Common property name patterns
@@ -1641,10 +1698,53 @@ class ResponseAnalyzer
             if (in_array($propertyName, ['title', 'name', 'description', 'email'])) {
                 return 'string';
             }
+
+            // Common array property names
+            if (in_array($propertyName, ['meta', 'items', 'data', 'attributes', 'properties', 'tags', 'categories'])) {
+                return 'array';
+            }
         }
 
         // Default to string for unknown patterns
         return 'string';
+    }
+
+    /**
+     * Get property type from DTO class using reflection
+     */
+    private function getPropertyTypeFromDto(string $dtoClass, string $propertyName): ?string
+    {
+        try {
+            if (!class_exists($dtoClass)) {
+                return null;
+            }
+
+            $reflection = new \ReflectionClass($dtoClass);
+            if (!$reflection->hasProperty($propertyName)) {
+                return null;
+            }
+
+            $property = $reflection->getProperty($propertyName);
+            $type = $property->getType();
+
+            if (!$type || !($type instanceof \ReflectionNamedType)) {
+                return null;
+            }
+
+            $typeName = $type->getName();
+
+            // Map PHP types to OpenAPI types
+            return match ($typeName) {
+                'int' => 'integer',
+                'float' => 'number',
+                'bool' => 'boolean',
+                'string' => 'string',
+                'array' => 'array',
+                default => 'object'
+            };
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**

@@ -71,9 +71,35 @@ return [
             ],
         ],
     ],
+    /*
+    |--------------------------------------------------------------------------
+    | Domain Configuration
+    |--------------------------------------------------------------------------
+    |
+    | Configure multiple documentation files for different domains/audiences.
+    | Each domain can have its own:
+    |   - Title, description, terms of service, and contact information
+    |   - Default UI viewer (swagger, redoc, or scalar)
+    |   - Server URLs (with production/development separation)
+    |   - Alternative UI viewer links in the description
+    |
+    | Domain Routing:
+    |   The system automatically detects which domain is being accessed based on
+    |   the request host and serves the appropriate documentation file.
+    |
+    | Example Use Cases:
+    |   - Public API (api.example.com) → Modern Scalar UI, customer-friendly
+    |   - Internal API (gateway.example.com) → Swagger UI, developer-focused
+    |
+    */
     'domains' => [
         'default' => [
             'title' => Str::title(env('APP_NAME', 'Service')).' API Documentation',
+            'description' => null, // Optional: Add a description/summary for the API (supports HTML)
+            'termsOfService' => null, // Optional: URL to terms of service
+            'contact' => null, // Optional: ['name' => 'Support', 'email' => 'support@example.com', 'url' => 'https://example.com/support']
+            'default_ui' => null, // Optional: Default UI viewer for this domain ('swagger', 'redoc', or 'scalar'). Overrides global default.
+            'append_alternative_uis' => false, // Optional: Append links to alternative UI viewers in the description
             'main' => env('APP_URL', 'http://localhost'),
             'servers' => [
                 [
@@ -82,6 +108,34 @@ return [
                 ],
             ],
         ],
+
+        // Example: Add additional domains for different API documentation files
+        // 'public-api' => [
+        //     'title' => 'Public API',
+        //     'description' => 'Public-facing API for customers. Access resources through a RESTful interface.',
+        //     'termsOfService' => 'https://example.com/terms',
+        //     'contact' => [
+        //         'name' => 'API Support',
+        //         'email' => 'api-support@example.com',
+        //         'url' => 'https://example.com/support',
+        //     ],
+        //     'default_ui' => 'scalar', // Use Scalar UI as default for this domain
+        //     'append_alternative_uis' => true, // Show links to other UI viewers
+        //     'main' => env('PUBLIC_API_URL', 'http://api.test'),
+        //     'servers' => [
+        //         // Production server (always included)
+        //         [
+        //             'url' => 'https://api.example.com',
+        //             'description' => 'Production',
+        //         ],
+        //         // Development server (only when using --dev flag)
+        //         [
+        //             'url' => env('PUBLIC_API_URL', 'http://api.test'),
+        //             'description' => 'Local Development',
+        //             'development' => true, // Marker for development-only server
+        //         ],
+        //     ],
+        // ],
     ],
 
     /*
@@ -341,5 +395,95 @@ return [
 
     'app' => [
         'port' => env('APP_PORT'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Runtime Response Capture Configuration
+    |--------------------------------------------------------------------------
+    |
+    | Capture actual API responses during testing for 95%+ accurate documentation.
+    | IMPORTANT: Never enable capture in production!
+    |
+    */
+    'capture' => [
+        // Only enable in local/testing environments
+        'enabled' => env('DOC_CAPTURE_MODE', false),
+
+        // Where to store captured responses (commit to version control)
+        'storage_path' => base_path('.schemas/responses'),
+
+        // What to capture
+        'capture' => [
+            'responses' => true,
+            'headers' => true,
+            'examples' => true,
+        ],
+
+        // Sanitization rules for sensitive data
+        'sanitize' => [
+            'enabled' => true,
+            'sensitive_keys' => [
+                'password',
+                'token',
+                'secret',
+                'api_key',
+                'apiKey',
+                'access_token',
+                'refresh_token',
+                'private_key',
+                'authorization',
+                'x-api-key',
+                'bearer',
+            ],
+            'redacted_value' => '***REDACTED***',
+        ],
+
+        // Capture rules
+        'rules' => [
+            // Include error responses in capture
+            'include_errors' => true,
+
+            // Maximum response size to capture (bytes)
+            'max_size' => 1024 * 100, // 100KB
+
+            // Routes to exclude from capture
+            'exclude_routes' => [
+                'telescope/*',
+                'horizon/*',
+                '_debugbar/*',
+                'sanctum/*',
+            ],
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Documentation Generation Configuration
+    |--------------------------------------------------------------------------
+    |
+    | Configure how documentation is generated from static analysis + captured data
+    |
+    | Development Servers:
+    |   Use the --dev flag to include development servers in generated documentation:
+    |   php artisan documentation:generate --dev
+    |
+    |   Without the flag, only production servers are included.
+    |   Servers with 'development' => true are filtered out by default.
+    |
+    */
+    'generation' => [
+        // Use captured response data when available
+        'use_captured' => true,
+
+        // Priority: 'captured_priority' (recommended) or 'static_priority'
+        'merge_strategy' => 'captured_priority',
+
+        // Fallback to static analysis when no captured data
+        'fallback_to_static' => true,
+
+        // Warnings
+        'warn_missing_captures' => false,
+        'warn_low_accuracy' => true,
     ],
 ];

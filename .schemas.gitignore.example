@@ -1,0 +1,17 @@
+# Example .gitignore for .schemas directory
+#
+# Copy this file to your project root as part of your main .gitignore
+# or place it in the .schemas/ directory as .gitignore
+#
+# IMPORTANT: DO commit captured response schemas!
+# They represent your API's "ground truth" and should be version controlled.
+
+# Option 1: Commit everything in .schemas (RECOMMENDED)
+# (No rules needed - just commit the directory)
+
+# Option 2: Commit only response captures, ignore temp files
+# .schemas/temp/
+# .schemas/cache/
+
+# DO NOT ignore these:
+# !.schemas/responses/*.json  ← These are your captured API responses!

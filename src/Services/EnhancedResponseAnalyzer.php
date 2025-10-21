@@ -817,10 +817,17 @@ class EnhancedResponseAnalyzer
                 // Get property attributes for additional schema information
                 $parameterAttrs = $property->getAttributes(\JkBennemann\LaravelApiDocumentation\Attributes\Parameter::class);
 
+                $mappedType = $this->mapPhpTypeToOpenApi($propertyType);
+
                 $schemaProperty = [
-                    'type' => $this->mapPhpTypeToOpenApi($propertyType),
+                    'type' => $mappedType,
                     'description' => $this->getPropertyDescription($property, $parameterAttrs),
                 ];
+
+                // For array types, add items schema
+                if ($mappedType === 'array') {
+                    $schemaProperty['items'] = ['type' => 'object'];
+                }
 
                 // Add format information if available
                 if ($format = $this->getPropertyFormat($property, $parameterAttrs)) {
@@ -1280,10 +1287,16 @@ class EnhancedResponseAnalyzer
 
         foreach ($structure as $key => $value) {
             if (is_array($value)) {
-                $properties[$key] = [
-                    'type' => 'object',
-                    'properties' => $this->convertArrayToOpenApiProperties($value),
-                ];
+                // Check if this is a shorthand positional array format: [type, nullable, description, example]
+                if ($this->isShorthandPropertyDefinition($value)) {
+                    $properties[$key] = $this->parseShorthandPropertyDefinition($value);
+                } else {
+                    // Recursive nested object
+                    $properties[$key] = [
+                        'type' => 'object',
+                        'properties' => $this->convertArrayToOpenApiProperties($value),
+                    ];
+                }
             } else {
                 $properties[$key] = [
                     'type' => is_string($value) ? 'string' : (is_int($value) ? 'integer' : 'mixed'),
@@ -1292,6 +1305,53 @@ class EnhancedResponseAnalyzer
         }
 
         return $properties;
+    }
+
+    /**
+     * Check if array is a shorthand property definition: [type, nullable, description, example]
+     */
+    private function isShorthandPropertyDefinition(array $value): bool
+    {
+        // Must have numeric keys only
+        if (array_keys($value) !== range(0, count($value) - 1)) {
+            return false;
+        }
+
+        // First element should be a type string
+        if (!isset($value[0]) || !is_string($value[0])) {
+            return false;
+        }
+
+        // Valid type strings
+        $validTypes = ['string', 'integer', 'number', 'boolean', 'array', 'object', 'mixed'];
+        return in_array($value[0], $validTypes, true);
+    }
+
+    /**
+     * Parse shorthand property definition: [type, nullable, description, example]
+     */
+    private function parseShorthandPropertyDefinition(array $value): array
+    {
+        $property = [
+            'type' => $value[0] ?? 'string',
+        ];
+
+        // Index 1: nullable (bool or null)
+        if (isset($value[1]) && $value[1] === null || $value[1] === true) {
+            $property['nullable'] = true;
+        }
+
+        // Index 2: description (string)
+        if (isset($value[2]) && is_string($value[2]) && $value[2] !== '') {
+            $property['description'] = $value[2];
+        }
+
+        // Index 3: example (mixed)
+        if (isset($value[3])) {
+            $property['example'] = $value[3];
+        }
+
+        return $property;
     }
 
     /**
