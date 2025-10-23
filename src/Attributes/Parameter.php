@@ -17,5 +17,6 @@ class Parameter
         public string $description = '',
         public bool $deprecated = false,
         public mixed $example = null,
+        public mixed $parameters = null,
     ) {}
 }

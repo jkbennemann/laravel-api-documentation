@@ -6,9 +6,6 @@ namespace JkBennemann\LaravelApiDocumentation\Services;
 
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
-use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Resources\Json\JsonResource;
-use Illuminate\Http\Response;
 use Illuminate\Validation\ValidationException;
 use JkBennemann\LaravelApiDocumentation\Attributes\DataResponse;
 use JkBennemann\LaravelApiDocumentation\Attributes\Parameter;
@@ -1092,7 +1089,19 @@ class EnhancedResponseAnalyzer
                     if ($enhancement->deprecated) {
                         $property['deprecated'] = true;
                     }
+
+                    unset($parameterEnhancements[$propertyName]);
                 }
+            }
+
+            foreach ($parameterEnhancements as $parameterEnhancement) {
+                $schema['properties'][$parameterEnhancement->name] = [
+                    'type' => $parameterEnhancement->type ? $this->mapParameterTypeToOpenApi($parameterEnhancement->type) : 'string',
+                    'format' => $parameterEnhancement->format,
+                    'description' => $parameterEnhancement->description,
+                    'example' => $parameterEnhancement->example,
+                    'deprecated' => $parameterEnhancement->deprecated,
+                ];
             }
 
             return $schema;

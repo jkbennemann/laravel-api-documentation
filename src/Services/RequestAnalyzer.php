@@ -324,6 +324,10 @@ class RequestAnalyzer
             if ($parameter->example !== null) {
                 $parameters[$parameter->name]['example'] = $parameter->example;
             }
+
+            if ($parameter->parameters !== null) {
+                $parameters[$parameter->name]['parameters'] = $parameter->parameters;
+            }
         }
 
         // Then check for attributes on the rules() method if it exists
