@@ -2,6 +2,75 @@
 
 All notable changes to `laravel-api-documentation` will be documented in this file.
 
+## 2025-10-24
+
+### Added
+
+#### Request Example Capture from Test Suite
+
+- **Automatic Request Body and Query Parameter Capture**: The capture middleware now captures request data alongside responses
+  - **Location**: `src/Middleware/CaptureApiResponseMiddleware.php`
+  - **Captured data includes:**
+    - **POST/PUT/PATCH requests**: Request body (JSON or form data)
+    - **GET/HEAD requests**: Query parameters
+    - **All requests**: Request headers (Content-Type, Accept, etc.)
+  - **Smart method detection:**
+    - GET/HEAD: Captures query parameters only
+    - POST/PUT/PATCH: Captures request body + optional query params
+    - DELETE: Captures request body (if any) + query params
+  - **Automatic schema inference**: Generates OpenAPI schemas from captured request data
+  - **Sanitization**: Sensitive data (passwords, tokens, secrets) automatically redacted
+
+- **OpenAPI Integration for Request Examples**: Request examples from tests are automatically added to generated documentation
+  - **Location**: `src/Services/OpenApi.php`
+  - **Features:**
+    - `enhanceRequestBodyWithCapturedExamples()`: Adds captured request bodies as examples for POST/PUT/PATCH endpoints
+    - `enhanceQueryParametersWithCapturedExamples()`: Adds captured query param values as examples for GET endpoints
+    - `findQueryParamValue()`: Smart matching for array notation (e.g., `filter[service]` → `filter.service`)
+  - **Example output:**
+    ```json
+    {
+      "requestBody": {
+        "content": {
+          "application/json": {
+            "schema": { "type": "object", "properties": {...} },
+            "examples": {
+              "captured_201": {
+                "summary": "Example from test suite (status 201)",
+                "value": {
+                  "service": "managed",
+                  "plan": "pro",
+                  "billing_interval": "monthly",
+                  "addons": ["ssl", "backup"]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    ```
+
+- **Configuration**: Added `requests` capture option
+  - **Location**: `config/api-documentation.php`
+  - **Config structure:**
+    ```php
+    'capture' => [
+        'requests' => true,   // NEW: Capture request bodies and query parameters
+        'responses' => true,  // Capture response bodies
+        'headers' => true,    // Capture request/response headers
+        'examples' => true,   // Generate examples from captured data
+    ],
+    ```
+
+### Benefits
+
+- **Zero maintenance**: Request examples evolve automatically as your test suite evolves
+- **Always accurate**: Examples are exactly what your tests actually send
+- **Multiple scenarios**: Captures success cases, validation errors, and edge cases
+- **Test-driven documentation**: Better tests = better documentation
+- **Comprehensive coverage**: Both GET (query params) and POST/PUT/PATCH (request bodies) supported
+
 ## 2025-10-21
 
 ### Added

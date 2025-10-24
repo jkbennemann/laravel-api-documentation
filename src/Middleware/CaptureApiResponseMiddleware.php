@@ -133,6 +133,11 @@ class CaptureApiResponseMiddleware
             'captured_at' => now()->toIso8601String(),
         ];
 
+        // Add request data if enabled
+        if (config('api-documentation.capture.capture.requests', true)) {
+            $capture['request'] = $this->captureRequestData($request);
+        }
+
         // Add headers if enabled
         if (config('api-documentation.capture.capture.headers', true)) {
             $capture['headers'] = $this->cleanHeaders($response->headers->all());
@@ -153,6 +158,99 @@ class CaptureApiResponseMiddleware
 
         // Store the capture
         $this->storeCapture($route, $capture);
+    }
+
+    /**
+     * Capture request data (query params for GET, body for POST/PUT/PATCH/DELETE)
+     */
+    private function captureRequestData(Request $request): array
+    {
+        $method = strtoupper($request->method());
+        $requestData = [];
+
+        // For GET/HEAD/DELETE requests, capture query parameters
+        if (in_array($method, ['GET', 'HEAD'])) {
+            $queryParams = $request->query->all();
+
+            if (!empty($queryParams)) {
+                $requestData['query_parameters'] = $this->sanitizeExample($queryParams);
+                $requestData['query_schema'] = $this->inferSchema($queryParams);
+            }
+        }
+
+        // For POST/PUT/PATCH/DELETE requests, capture request body
+        if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'])) {
+            $bodyData = $this->getRequestBody($request);
+
+            if ($bodyData !== null) {
+                $requestData['body'] = $this->sanitizeExample($bodyData);
+                $requestData['body_schema'] = $this->inferSchema($bodyData);
+            }
+
+            // Also capture query params if they exist (e.g., DELETE /resource?force=true)
+            $queryParams = $request->query->all();
+            if (!empty($queryParams)) {
+                $requestData['query_parameters'] = $this->sanitizeExample($queryParams);
+                $requestData['query_schema'] = $this->inferSchema($queryParams);
+            }
+        }
+
+        // Capture request headers (content-type, accept, etc.)
+        $requestData['headers'] = $this->cleanRequestHeaders($request->headers->all());
+
+        return $requestData;
+    }
+
+    /**
+     * Get request body as array
+     */
+    private function getRequestBody(Request $request): mixed
+    {
+        $content = $request->getContent();
+
+        // Check if empty
+        if (empty($content)) {
+            return null;
+        }
+
+        // Try to decode JSON
+        $decoded = json_decode($content, true);
+        if (json_last_error() === JSON_ERROR_NONE) {
+            return $decoded;
+        }
+
+        // Fall back to request input (for form data)
+        $input = $request->all();
+        if (!empty($input)) {
+            return $input;
+        }
+
+        return null;
+    }
+
+    /**
+     * Clean request headers for documentation
+     */
+    private function cleanRequestHeaders(array $headers): array
+    {
+        $cleaned = [];
+
+        // Headers to include in documentation
+        $includedHeaders = [
+            'content-type',
+            'accept',
+            'accept-language',
+            'x-requested-with',
+        ];
+
+        foreach ($headers as $name => $values) {
+            $lowerName = strtolower($name);
+            if (in_array($lowerName, $includedHeaders)) {
+                $cleaned[$name] = is_array($values) ? $values[0] : $values;
+            }
+        }
+
+        return $cleaned;
     }
 
     /**

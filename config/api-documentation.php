@@ -415,9 +415,10 @@ return [
 
         // What to capture
         'capture' => [
-            'responses' => true,
-            'headers' => true,
-            'examples' => true,
+            'requests' => true,   // Capture request bodies and query parameters
+            'responses' => true,  // Capture response bodies
+            'headers' => true,    // Capture request/response headers
+            'examples' => true,   // Generate examples from captured data
         ],
 
         // Sanitization rules for sensitive data

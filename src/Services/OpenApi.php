@@ -408,7 +408,74 @@ class OpenApi
 
         if (! empty($parameters)) {
             $operation->parameters = $parameters;
+
+            // Enhance query parameters with captured examples
+            $this->enhanceQueryParametersWithCapturedExamples($operation, $route);
         }
+    }
+
+    /**
+     * Enhance query parameters with captured examples from test suite
+     */
+    private function enhanceQueryParametersWithCapturedExamples(Operation $operation, array $route): void
+    {
+        if (!config('api-documentation.generation.use_captured', true)) {
+            return;
+        }
+
+        $captured = $this->getCapturedDataForRoute($route);
+        if (!$captured) {
+            return;
+        }
+
+        // Find a successful capture with query parameters
+        foreach ($captured as $statusCode => $capture) {
+            if ($statusCode < 200 || $statusCode >= 300) {
+                continue;
+            }
+
+            if (isset($capture['request']['query_parameters']) && !empty($capture['request']['query_parameters'])) {
+                $queryParams = $capture['request']['query_parameters'];
+
+                // Enhance each parameter with example values
+                foreach ($operation->parameters as $parameter) {
+                    if ($parameter->in === 'query') {
+                        // Try to find a matching value in captured data
+                        $value = $this->findQueryParamValue($parameter->name, $queryParams);
+
+                        if ($value !== null && !isset($parameter->example)) {
+                            $parameter->example = $value;
+                        }
+                    }
+                }
+
+                // Only use the first successful example
+                break;
+            }
+        }
+    }
+
+    /**
+     * Find query parameter value from captured data (handles array notation)
+     */
+    private function findQueryParamValue(string $paramName, array $queryParams): mixed
+    {
+        // Direct match
+        if (isset($queryParams[$paramName])) {
+            return $queryParams[$paramName];
+        }
+
+        // Handle array notation like filter[service] -> filter.service
+        if (preg_match('/^(.+)\[(.+)\]$/', $paramName, $matches)) {
+            $baseName = $matches[1];
+            $subKey = $matches[2];
+
+            if (isset($queryParams[$baseName][$subKey])) {
+                return $queryParams[$baseName][$subKey];
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -467,7 +534,64 @@ class OpenApi
 
         if ($requestBody) {
             $operation->requestBody = $requestBody;
+
+            // Enhance with captured request examples if available
+            $this->enhanceRequestBodyWithCapturedExamples($requestBody, $route);
         }
+    }
+
+    /**
+     * Enhance request body with captured examples from test suite
+     */
+    private function enhanceRequestBodyWithCapturedExamples(RequestBody $requestBody, array $route): void
+    {
+        if (!config('api-documentation.generation.use_captured', true)) {
+            return;
+        }
+
+        $captured = $this->getCapturedDataForRoute($route);
+        if (!$captured) {
+            return;
+        }
+
+        foreach ($captured as $statusCode => $capture) {
+            // Only use successful requests (2xx status codes) for examples
+            if ($statusCode < 200 || $statusCode >= 300) {
+                continue;
+            }
+
+            if (isset($capture['request']['body']) && !empty($capture['request']['body'])) {
+                // Add the captured request body as an example
+                foreach ($requestBody->content as $mediaType) {
+                    if (!isset($mediaType->examples)) {
+                        $mediaType->examples = [];
+                    }
+
+                    // Create example name from status code
+                    $exampleName = 'captured_' . $statusCode;
+
+                    $mediaType->examples[$exampleName] = new \openapiphp\openapi\spec\Example([
+                        'summary' => 'Example from test suite (status ' . $statusCode . ')',
+                        'value' => $capture['request']['body'],
+                    ]);
+                }
+
+                // Only use the first successful example
+                break;
+            }
+        }
+    }
+
+    /**
+     * Get captured data for a route
+     */
+    private function getCapturedDataForRoute(array $route): ?array
+    {
+        if (!isset($this->capturedResponses)) {
+            return null;
+        }
+
+        return $this->capturedResponses->getForRoute($route['uri'], $route['method']);
     }
 
     /**
