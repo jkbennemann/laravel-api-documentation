@@ -738,7 +738,7 @@ class ResponseAnalyzer
      * Rule: Keep the code modular and easy to understand
      * Rule: Write concise, technical PHP code with accurate examples
      */
-    private function analyzeJsonResourceResponse(string $resourceClass): array
+    public function analyzeJsonResourceResponse(string $resourceClass): array
     {
         try {
             // Rule: Project Context - Laravel API Documentation is a PHP package that provides the ability to automatically generate API documentation
