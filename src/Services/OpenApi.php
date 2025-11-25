@@ -879,11 +879,17 @@ class OpenApi
 
                 // CRITICAL: Pass items as ARRAY in constructor, NOT as Schema object
                 // The Schema constructor will automatically convert it to a Schema object
-                $properties[$name] = new Schema([
+                $arraySchemaData = [
                     'type' => 'array',
                     'description' => $param['description'] ?? '',
                     'items' => $itemsSchemaData,  // Pass as array, not Schema object
-                ]);
+                ];
+
+                if (!empty($param['example'])) {
+                    $arraySchemaData['example'] = $param['example'];
+                }
+
+                $properties[$name] = new Schema($arraySchemaData);
             }
             // Handle simple properties
             else {
