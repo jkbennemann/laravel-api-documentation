@@ -114,6 +114,16 @@ class RouteComposition
 
             $additionalDocs = $this->processAdditionalDocumentation($controllerClass, $actionMethod);
 
+            $requestParameters = $this->processRequestParameters($controllerClass, $actionMethod, $route);
+            $bodyParameters = [];
+            $queryParametersFromRequest = [];
+
+            if (in_array(strtoupper($httpMethod), ['GET', 'HEAD'], true)) {
+                $queryParametersFromRequest = $requestParameters;
+            } else {
+                $bodyParameters = $requestParameters;
+            }
+
             $routes[] = [
                 'method' => $httpMethod,
                 'uri' => $uri,
@@ -121,12 +131,12 @@ class RouteComposition
                 'description' => $description,
                 'middlewares' => $middlewares,
                 'is_vendor' => $isVendorClass,
-                'parameters' => $this->processRequestParameters($controllerClass, $actionMethod, $route),
+                'parameters' => $bodyParameters,
                 'request_parameters' => $this->processPathParameters($route, $uri, $controllerClass, $actionMethod),
                 'tags' => array_filter($tags),
                 'documentation' => null,
                 'additional_documentation' => $additionalDocs,
-                'query_parameters' => $this->mergeQueryParameters($controllerClass, $actionMethod, $reflectionMethod, $route),
+                'query_parameters' => array_merge($this->mergeQueryParameters($controllerClass, $actionMethod, $reflectionMethod, $route), $queryParametersFromRequest),
                 'request_body' => $reflectionMethod ? $this->attributeAnalyzer->extractRequestBody($reflectionMethod) : null,
                 'response_headers' => $reflectionMethod ? $this->attributeAnalyzer->extractResponseHeaders($reflectionMethod) : [],
                 'response_bodies' => $reflectionMethod ? $this->attributeAnalyzer->extractResponseBodies($reflectionMethod) : [],

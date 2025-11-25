@@ -470,7 +470,7 @@ class OpenApi
             $baseName = $matches[1];
             $subKey = $matches[2];
 
-            if (isset($queryParams[$baseName][$subKey])) {
+            if (isset($queryParams[$baseName]) && is_array($queryParams[$baseName]) && isset($queryParams[$baseName][$subKey])) {
                 return $queryParams[$baseName][$subKey];
             }
         }
@@ -510,10 +510,8 @@ class OpenApi
             ]);
         }
 
-        // Fall back to smart detection if no explicit definition
-        // Only create request body for non-GET/DELETE methods
-        // (GET requests should use query parameters, DELETE shouldn't have request bodies per OpenAPI spec)
-        if (! $requestBody && ! empty($route['parameters']) && !in_array(strtoupper($route['method']), ['GET', 'DELETE'])) {
+        $methodsWithBody = ['POST', 'PUT', 'PATCH', 'DELETE'];
+        if (! $requestBody && ! empty($route['parameters']) && in_array(strtoupper($route['method']), $methodsWithBody, true)) {
             // Enhanced schema building with AST analysis if available
             $schema = $this->buildRequestBodySchema($route['parameters']);
 
@@ -840,6 +838,12 @@ class OpenApi
                 // Only include required if it has items
                 if (!empty($nestedSchema->required)) {
                     $nestedSchemaData['required'] = $nestedSchema->required;
+                }
+                if (!empty($param['example'])) {
+                    $nestedSchemaData['example'] = $param['example'];
+                }
+                if (!empty($param['description'])) {
+                    $nestedSchemaData['description'] = $param['description'];
                 }
                 $properties[$name] = new Schema($nestedSchemaData);
             }
