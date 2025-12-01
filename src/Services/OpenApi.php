@@ -325,11 +325,30 @@ class OpenApi
         // Add query parameters from pre-processed route data (includes both attribute and smart detection)
         if (! empty($route['query_parameters'])) {
             foreach ($route['query_parameters'] as $name => $param) {
-                $schema = $this->createSchema([
+                $schemaData = [
                     'type' => $param['type'] ?? 'string',
                     'format' => $param['format'] ?? null,
                     'enum' => $param['enum'] ?? null,
-                ]);
+                ];
+
+                // For array types, ensure items schema is present
+                if ($schemaData['type'] === 'array') {
+                    $itemsData = $param['items'] ?? ['type' => 'string'];
+                    // Clean up items schema (remove null values)
+                    $cleanItems = ['type' => $itemsData['type'] ?? 'string'];
+                    if (isset($itemsData['format']) && $itemsData['format'] !== null) {
+                        $cleanItems['format'] = $itemsData['format'];
+                    }
+                    if (isset($itemsData['description'])) {
+                        $cleanItems['description'] = $itemsData['description'];
+                    }
+                    if (isset($itemsData['enum']) && !empty($itemsData['enum'])) {
+                        $cleanItems['enum'] = $itemsData['enum'];
+                    }
+                    $schemaData['items'] = $cleanItems;
+                }
+
+                $schema = $this->createSchema($schemaData);
 
                 $parameters[] = $this->createParameter([
                     'name' => $name,
