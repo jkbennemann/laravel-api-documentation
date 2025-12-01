@@ -878,7 +878,8 @@ class EnhancedResponseAnalyzer
 
                 // For array types, add items schema
                 if ($mappedType === 'array') {
-                    $schemaProperty['items'] = ['type' => 'object'];
+                    $itemsType = $this->getPropertyItems($parameterAttrs);
+                    $schemaProperty['items'] = ['type' => $itemsType ?? 'object'];
                 }
 
                 // Add format information if available
@@ -894,6 +895,16 @@ class EnhancedResponseAnalyzer
                 // Add example if available
                 if ($example = $this->getPropertyExample($parameterAttrs)) {
                     $schemaProperty['example'] = $example;
+                }
+
+                // Add minLength if available
+                if ($minLength = $this->getPropertyMinLength($parameterAttrs)) {
+                    $schemaProperty['minLength'] = $minLength;
+                }
+
+                // Add maxLength if available
+                if ($maxLength = $this->getPropertyMaxLength($parameterAttrs)) {
+                    $schemaProperty['maxLength'] = $maxLength;
                 }
 
                 // Use the JSON property name (with case mapping applied)
@@ -1067,6 +1078,48 @@ class EnhancedResponseAnalyzer
     }
 
     /**
+     * Get property minLength from Parameter attributes
+     */
+    private function getPropertyMinLength(array $parameterAttrs): ?int
+    {
+        if (! empty($parameterAttrs)) {
+            $instance = $parameterAttrs[0]->newInstance();
+
+            return $instance->minLength ?? null;
+        }
+
+        return null;
+    }
+
+    /**
+     * Get property maxLength from Parameter attributes
+     */
+    private function getPropertyMaxLength(array $parameterAttrs): ?int
+    {
+        if (! empty($parameterAttrs)) {
+            $instance = $parameterAttrs[0]->newInstance();
+
+            return $instance->maxLength ?? null;
+        }
+
+        return null;
+    }
+
+    /**
+     * Get property items type from Parameter attributes for array types
+     */
+    private function getPropertyItems(array $parameterAttrs): ?string
+    {
+        if (! empty($parameterAttrs)) {
+            $instance = $parameterAttrs[0]->newInstance();
+
+            return $instance->items ?? null;
+        }
+
+        return null;
+    }
+
+    /**
      * Apply Parameter attributes to enhance response schema
      */
     private function applyParameterAttributesToSchema(?array $schema, string $controller, string $method): ?array
@@ -1145,18 +1198,56 @@ class EnhancedResponseAnalyzer
                         $property['deprecated'] = true;
                     }
 
+                    // Add minLength if specified
+                    if ($enhancement->minLength !== null) {
+                        $property['minLength'] = $enhancement->minLength;
+                    }
+
+                    // Add maxLength if specified
+                    if ($enhancement->maxLength !== null) {
+                        $property['maxLength'] = $enhancement->maxLength;
+                    }
+
+                    // Add items for array types if specified
+                    if ($enhancement->items !== null) {
+                        $property['items'] = ['type' => $enhancement->items];
+                    }
+
                     unset($parameterEnhancements[$propertyName]);
                 }
             }
 
             foreach ($parameterEnhancements as $parameterEnhancement) {
-                $schema['properties'][$parameterEnhancement->name] = [
+                $propertySchema = [
                     'type' => $parameterEnhancement->type ? $this->mapParameterTypeToOpenApi($parameterEnhancement->type) : 'string',
-                    'format' => $parameterEnhancement->format,
                     'description' => $parameterEnhancement->description,
-                    'example' => $parameterEnhancement->example,
-                    'deprecated' => $parameterEnhancement->deprecated,
                 ];
+
+                if ($parameterEnhancement->format) {
+                    $propertySchema['format'] = $parameterEnhancement->format;
+                }
+
+                if ($parameterEnhancement->example !== null) {
+                    $propertySchema['example'] = $parameterEnhancement->example;
+                }
+
+                if ($parameterEnhancement->deprecated) {
+                    $propertySchema['deprecated'] = true;
+                }
+
+                if ($parameterEnhancement->minLength !== null) {
+                    $propertySchema['minLength'] = $parameterEnhancement->minLength;
+                }
+
+                if ($parameterEnhancement->maxLength !== null) {
+                    $propertySchema['maxLength'] = $parameterEnhancement->maxLength;
+                }
+
+                if ($parameterEnhancement->items !== null) {
+                    $propertySchema['items'] = ['type' => $parameterEnhancement->items];
+                }
+
+                $schema['properties'][$parameterEnhancement->name] = $propertySchema;
             }
 
             return $schema;

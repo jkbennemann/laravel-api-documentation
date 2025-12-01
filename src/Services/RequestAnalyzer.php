@@ -348,6 +348,18 @@ class RequestAnalyzer
             if ($parameter->parameters !== null) {
                 $parameters[$parameter->name]['parameters'] = $parameter->parameters;
             }
+
+            if ($parameter->minLength !== null) {
+                $parameters[$parameter->name]['minLength'] = $parameter->minLength;
+            }
+
+            if ($parameter->maxLength !== null) {
+                $parameters[$parameter->name]['maxLength'] = $parameter->maxLength;
+            }
+
+            if ($parameter->items !== null) {
+                $parameters[$parameter->name]['items'] = ['type' => $parameter->items];
+            }
         }
 
         // Then check for attributes on the rules() method if it exists
@@ -373,6 +385,18 @@ class RequestAnalyzer
 
                 if ($parameter->example !== null) {
                     $parameters[$parameter->name]['example'] = $parameter->example;
+                }
+
+                if ($parameter->minLength !== null) {
+                    $parameters[$parameter->name]['minLength'] = $parameter->minLength;
+                }
+
+                if ($parameter->maxLength !== null) {
+                    $parameters[$parameter->name]['maxLength'] = $parameter->maxLength;
+                }
+
+                if ($parameter->items !== null) {
+                    $parameters[$parameter->name]['items'] = ['type' => $parameter->items];
                 }
             }
         }

@@ -18,5 +18,8 @@ class Parameter
         public bool $deprecated = false,
         public mixed $example = null,
         public mixed $parameters = null,
+        public ?int $minLength = null,
+        public ?int $maxLength = null,
+        public ?string $items = null,
     ) {}
 }
