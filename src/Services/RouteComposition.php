@@ -590,6 +590,10 @@ class RouteComposition
                 'detection_method' => 'enhanced_ast_analysis',
             ];
 
+            if (isset($response['schema']['items'])) {
+                $normalizedResponses[$statusCode]['items'] = $response['schema']['items'];
+            }
+
             // Include resource if available
             if (isset($response['resource'])) {
                 $normalizedResponses[$statusCode]['resource'] = $response['resource'];

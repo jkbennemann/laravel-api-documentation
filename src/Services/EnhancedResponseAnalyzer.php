@@ -564,6 +564,15 @@ class EnhancedResponseAnalyzer
 
         $resourceClass = $node->class->toString();
 
+        if (!class_exists($resourceClass)) {
+            $resolvedClass = $this->resolveClassNameFromController($resourceClass, $controller);
+            if ($resolvedClass && class_exists($resolvedClass)) {
+                $resourceClass = $resolvedClass;
+            } else {
+                return;
+            }
+        }
+
         // Use existing ResponseAnalyzer for resource analysis
         $analysis = $this->responseAnalyzer->analyzeJsonResourceResponse($resourceClass);
 
@@ -576,6 +585,50 @@ class EnhancedResponseAnalyzer
 
             // Use detailed schema analysis for resource responses
             $this->addSuccessResponse('200', 'Success', $controller, $method, 'application/json', $analysis, [], null);
+        }
+    }
+
+    private function resolveClassNameFromController(string $shortClassName, string $controllerClass): ?string
+    {
+        if (!class_exists($controllerClass)) {
+            return null;
+        }
+
+        try {
+            $reflection = new \ReflectionClass($controllerClass);
+            $filename = $reflection->getFileName();
+
+            if (!$filename || !file_exists($filename)) {
+                return null;
+            }
+
+            $content = file_get_contents($filename);
+            $namespace = $reflection->getNamespaceName();
+
+            if (preg_match('/^use\s+([^\s;]+\\\\' . preg_quote($shortClassName, '/') . ')\s*;/m', $content, $matches)) {
+                return $matches[1];
+            }
+
+            $sameNamespaceClass = $namespace . '\\' . $shortClassName;
+            if (class_exists($sameNamespaceClass)) {
+                return $sameNamespaceClass;
+            }
+
+            $resourceNamespaces = [
+                str_replace('\\Controllers\\', '\\Resources\\', $namespace),
+                str_replace('\\Http\\Controllers\\', '\\Http\\Resources\\', $namespace),
+            ];
+
+            foreach ($resourceNamespaces as $resourceNamespace) {
+                $potentialClass = $resourceNamespace . '\\' . $shortClassName;
+                if (class_exists($potentialClass)) {
+                    return $potentialClass;
+                }
+            }
+
+            return null;
+        } catch (\Throwable $e) {
+            return null;
         }
     }
 
@@ -735,6 +788,7 @@ class EnhancedResponseAnalyzer
             $description = $instance->description ?: $this->getStatusDescription($statusCode);
             $resource = $instance->resource;
             $headers = $instance->headers;
+            $isCollection = $instance->isCollection;
 
             // Create response schema based on resource if specified
             $schema = null;
@@ -752,7 +806,8 @@ class EnhancedResponseAnalyzer
                     'application/json',
                     $schema,
                     $headers,
-                    is_string($resource) ? $resource : null
+                    is_string($resource) ? $resource : null,
+                    $isCollection
                 );
             } else {
                 $this->addResponse($statusCode, $description, 'application/json', $schema, $headers);
@@ -1426,22 +1481,45 @@ class EnhancedResponseAnalyzer
     /**
      * Add success response with detailed schema analysis
      */
-    private function addSuccessResponse(string $statusCode, string $description, string $controller, string $method, ?string $contentType = 'application/json', ?array $additionalSchema = null, array $headers = [], ?string $resourceClass = null): void
+    private function addSuccessResponse(string $statusCode, string $description, string $controller, string $method, ?string $contentType = 'application/json', ?array $additionalSchema = null, array $headers = [], ?string $resourceClass = null, bool $isCollection = false): void
     {
         if (! isset($this->detectedResponses[$statusCode])) {
             // Use existing ResponseAnalyzer for detailed schema analysis
             $detailedSchema = $this->responseAnalyzer->analyzeControllerMethod($controller, $method);
 
-            // Merge with any additional schema information
-            if ($additionalSchema) {
+            // Prefer additionalSchema (from resource class) if provided and has properties
+            if ($additionalSchema && !empty($additionalSchema['properties'])) {
+                $detailedSchema = $additionalSchema;
+            } elseif ($additionalSchema) {
                 $detailedSchema = array_merge($detailedSchema ?: [], $additionalSchema);
             }
 
             // Apply Parameter attributes to enhance the schema
             $detailedSchema = $this->applyParameterAttributesToSchema($detailedSchema, $controller, $method);
 
+            // Wrap schema in array if isCollection is true
+            if ($isCollection) {
+                // Ensure we have at least a basic schema for collections
+                if (empty($detailedSchema)) {
+                    $detailedSchema = [
+                        'type' => 'object',
+                        'properties' => [],
+                    ];
+                }
+
+                $detailedSchema = [
+                    'type' => 'array',
+                    'items' => $detailedSchema,
+                ];
+            }
+
             // Generate MediaType-level example from schema property examples
-            $responseExample = $this->generateResponseExampleFromSchema($detailedSchema);
+            $responseExample = $this->generateResponseExampleFromSchema($isCollection ? ($detailedSchema['items'] ?? null) : $detailedSchema);
+
+            // Wrap example in array if isCollection is true
+            if ($isCollection && $responseExample) {
+                $responseExample = [$responseExample];
+            }
 
             $response = [
                 'description' => $description,

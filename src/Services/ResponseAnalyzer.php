@@ -896,6 +896,19 @@ class ResponseAnalyzer
                     'enhanced_analysis' => true,
                 ];
             }
+
+            // Fallback for classes that are neither ResourceCollection nor JsonResource
+            return [
+                'type' => 'object',
+                'properties' => [
+                    'data' => [
+                        'type' => 'object',
+                        'description' => 'Resource data',
+                    ],
+                ],
+                'example' => ['data' => []],
+                'enhanced_analysis' => true,
+            ];
         } catch (Throwable $e) {
             return [
                 'type' => 'object',
