@@ -40,6 +40,15 @@ class RequestAnalyzer
     }
 
     /**
+     * Parse validation rules into OpenAPI schema
+     * This method delegates to EnhancedValidationRuleAnalyzer
+     */
+    protected function parseValidationRules(array $rules): array
+    {
+        return $this->enhancedAnalyzer->parseValidationRules($rules);
+    }
+
+    /**
      * Extract raw validation rules from FormRequest class for error response generation
      */
     public function extractValidationRules(?string $requestClass): array

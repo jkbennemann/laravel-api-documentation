@@ -520,12 +520,20 @@ class OpenApi
                 $this->enhanceSchemaWithAstAnalysis($schema, $methodReflection);
             }
 
+            $requestBodyExample = $this->generateRequestBodyExample($route['parameters']);
+
+            $mediaTypeConfig = [
+                'schema' => $schema,
+            ];
+
+            if (!empty($requestBodyExample)) {
+                $mediaTypeConfig['example'] = $requestBodyExample;
+            }
+
             $requestBody = new RequestBody([
                 'required' => true,
                 'content' => [
-                    'application/json' => new MediaType([
-                        'schema' => $schema,
-                    ]),
+                    'application/json' => new MediaType($mediaTypeConfig),
                 ],
             ]);
         }
@@ -820,6 +828,21 @@ class OpenApi
         }
 
         return new Schema($schema);
+    }
+
+    private function generateRequestBodyExample(array $parameters): array
+    {
+        $example = [];
+
+        foreach ($parameters as $name => $param) {
+            if (!isset($param['example']) || $param['example'] === null) {
+                continue;
+            }
+
+            $example[$name] = $param['example'];
+        }
+
+        return $example;
     }
 
     private function buildRequestBodySchema(array $parameters): Schema

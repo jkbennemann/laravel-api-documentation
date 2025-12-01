@@ -178,6 +178,7 @@ class CustomValidationRuleAnalyzer
                 $value = $property->getValue($rule);
 
                 match ($name) {
+                    // Store min/max as temporary values - they will be converted based on type later
                     'min', 'minimum' => $constraints['minimum'] = (int) $value,
                     'max', 'maximum' => $constraints['maximum'] = (int) $value,
                     'minLength', 'min_length' => $constraints['minLength'] = (int) $value,

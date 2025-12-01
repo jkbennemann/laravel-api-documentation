@@ -93,6 +93,60 @@ class EnhancedValidationRuleAnalyzer
             }
         }
 
+        // Handle min/max based on the final determined type
+        // For strings, use minLength/maxLength; for arrays, use minItems/maxItems; for numbers, use minimum/maximum
+        if ($type === 'string') {
+            // Convert minimum/maximum to minLength/maxLength for strings
+            if ($minimum !== null) {
+                $minLength = $minimum;
+                $minimum = null;
+                // Update description to reflect string length constraint
+                $description = array_map(function ($desc) use ($minLength) {
+                    return str_replace("Minimum constraint: {$minLength}.", "Minimum length: {$minLength}.", $desc);
+                }, $description);
+            }
+            if ($maximum !== null) {
+                $maxLength = $maximum;
+                $maximum = null;
+                // Update description to reflect string length constraint
+                $description = array_map(function ($desc) use ($maxLength) {
+                    return str_replace("Maximum constraint: {$maxLength}.", "Maximum length: {$maxLength}.", $desc);
+                }, $description);
+            }
+        } elseif ($type === 'array') {
+            // For arrays, convert to minItems/maxItems
+            $minItems = null;
+            $maxItems = null;
+            if ($minimum !== null) {
+                $minItems = $minimum;
+                $minimum = null;
+                // Update description to reflect array items constraint
+                $description = array_map(function ($desc) use ($minItems) {
+                    return str_replace("Minimum constraint: {$minItems}.", "Minimum items: {$minItems}.", $desc);
+                }, $description);
+            }
+            if ($maximum !== null) {
+                $maxItems = $maximum;
+                $maximum = null;
+                // Update description to reflect array items constraint
+                $description = array_map(function ($desc) use ($maxItems) {
+                    return str_replace("Maximum constraint: {$maxItems}.", "Maximum items: {$maxItems}.", $desc);
+                }, $description);
+            }
+        } else {
+            // For numeric types, update descriptions to reflect value constraints
+            if ($minimum !== null) {
+                $description = array_map(function ($desc) use ($minimum) {
+                    return str_replace("Minimum constraint: {$minimum}.", "Minimum value: {$minimum}.", $desc);
+                }, $description);
+            }
+            if ($maximum !== null) {
+                $description = array_map(function ($desc) use ($maximum) {
+                    return str_replace("Maximum constraint: {$maximum}.", "Maximum value: {$maximum}.", $desc);
+                }, $description);
+            }
+        }
+
         // Build the result
         $result = [
             'type' => $type,
@@ -131,6 +185,14 @@ class EnhancedValidationRuleAnalyzer
             $result['maxLength'] = $maxLength;
         }
 
+        if (isset($minItems) && $minItems !== null) {
+            $result['minItems'] = $minItems;
+        }
+
+        if (isset($maxItems) && $maxItems !== null) {
+            $result['maxItems'] = $maxItems;
+        }
+
         if ($pattern !== null) {
             $result['pattern'] = $pattern;
         }
@@ -145,6 +207,9 @@ class EnhancedValidationRuleAnalyzer
 
         if ($type === 'array' && $items !== null) {
             $result['items'] = $items;
+        } elseif ($type === 'array' && $items === null) {
+            // If items is not set but type is array, set a default
+            $result['items'] = ['type' => 'string'];
         }
 
         if (! empty($conditionalRequired)) {
@@ -543,7 +608,7 @@ class EnhancedValidationRuleAnalyzer
     private function processBasicRule(string $ruleName, array $ruleParams): array
     {
         $result = [
-            'type' => 'string',
+            'type' => null,  // Don't set a default type - let type-specific rules set it
             'format' => null,
             'required' => false,
             'nullable' => false,
@@ -638,6 +703,27 @@ class EnhancedValidationRuleAnalyzer
                 $result['description'] = 'Must be a valid date.';
                 break;
 
+            case 'date_format':
+                $result['type'] = 'string';
+                $result['format'] = 'date-time';
+                if (! empty($ruleParams[0])) {
+                    $result['description'] = "Must match the format: {$ruleParams[0]}.";
+                    $result['example'] = date($ruleParams[0]);
+                } else {
+                    $result['description'] = 'Must match the specified date format.';
+                }
+                break;
+
+            case 'between':
+                if (count($ruleParams) >= 2) {
+                    $min = (int) $ruleParams[0];
+                    $max = (int) $ruleParams[1];
+                    $result['minimum'] = $min;
+                    $result['maximum'] = $max;
+                    $result['description'] = "Value between {$min} and {$max}.";
+                }
+                break;
+
             case 'in':
                 if (! empty($ruleParams)) {
                     $result['enum'] = $ruleParams;
@@ -647,16 +733,18 @@ class EnhancedValidationRuleAnalyzer
                 break;
 
             case 'min':
-                if (! empty($ruleParams[0])) {
+                if (isset($ruleParams[0]) && $ruleParams[0] !== '') {
                     $result['minimum'] = (int) $ruleParams[0];
-                    $result['description'] = "Minimum value: {$ruleParams[0]}.";
+                    // Description will be set correctly in post-processing based on type
+                    $result['description'] = "Minimum constraint: {$ruleParams[0]}.";
                 }
                 break;
 
             case 'max':
-                if (! empty($ruleParams[0])) {
+                if (isset($ruleParams[0]) && $ruleParams[0] !== '') {
                     $result['maximum'] = (int) $ruleParams[0];
-                    $result['description'] = "Maximum value: {$ruleParams[0]}.";
+                    // Description will be set correctly in post-processing based on type
+                    $result['description'] = "Maximum constraint: {$ruleParams[0]}.";
                 }
                 break;
         }
