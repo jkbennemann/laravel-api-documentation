@@ -282,11 +282,31 @@ class RequestAnalyzer
             return $attributeParameters;
         }
 
+        foreach (array_keys($attributeParameters) as $attrName) {
+            $normalizedName = str_replace(['[', ']'], ['.', ''], $attrName);
+            if (strpos($normalizedName, '.') !== false) {
+                $parentName = explode('.', $normalizedName)[0];
+                if (isset($existingParameters[$parentName]) && !isset($attributeParameters[$parentName])) {
+                    unset($existingParameters[$parentName]);
+                }
+            }
+        }
+
         // Merge parameters, with Parameter attributes taking precedence
         foreach ($attributeParameters as $name => $attributeParam) {
             if (isset($existingParameters[$name])) {
                 // Merge with existing parameter, Parameter attribute values take precedence
                 $existingParameters[$name] = array_merge($existingParameters[$name], $attributeParam);
+
+                if (isset($attributeParam['example']) && is_array($attributeParam['example'])
+                    && isset($existingParameters[$name]['properties']) && is_array($existingParameters[$name]['properties'])) {
+                    foreach ($existingParameters[$name]['properties'] as $childKey => &$childProp) {
+                        if (!isset($childProp['example']) && array_key_exists($childKey, $attributeParam['example'])) {
+                            $childProp['example'] = $attributeParam['example'][$childKey];
+                        }
+                    }
+                    unset($childProp);
+                }
             } else {
                 // Add new parameter from attribute
                 $existingParameters[$name] = $attributeParam;
@@ -1216,6 +1236,10 @@ class RequestAnalyzer
                 }
                 if (isset($value['example'])) {
                     $nestedGroups[$parentKey]['properties'][$childKey]['example'] = $value['example'];
+                } elseif (isset($nestedGroups[$parentKey]['example'])
+                    && is_array($nestedGroups[$parentKey]['example'])
+                    && array_key_exists($childKey, $nestedGroups[$parentKey]['example'])) {
+                    $nestedGroups[$parentKey]['properties'][$childKey]['example'] = $nestedGroups[$parentKey]['example'][$childKey];
                 }
                 if (isset($value['minimum'])) {
                     $nestedGroups[$parentKey]['properties'][$childKey]['minimum'] = $value['minimum'];
@@ -1253,6 +1277,10 @@ class RequestAnalyzer
                             'required' => $value['required'] ?? false,
                             'deprecated' => $value['deprecated'] ?? false,
                         ];
+
+                        if (isset($value['example']) && is_array($value['example'])) {
+                            $nestedGroups[$key]['example'] = $value['example'];
+                        }
 
                         // Will be filled by nested children processing
                         // Don't pre-create properties/items here - let the wildcard handling do it
