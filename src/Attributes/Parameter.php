@@ -21,5 +21,6 @@ class Parameter
         public ?int $minLength = null,
         public ?int $maxLength = null,
         public ?string $items = null,
+        public bool $nullable = false,
     ) {}
 }

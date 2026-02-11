@@ -583,8 +583,19 @@ class EnhancedResponseAnalyzer
                 $analysis['wrapping'] = $wrapping;
             }
 
-            // Use detailed schema analysis for resource responses
-            $this->addSuccessResponse('200', 'Success', $controller, $method, 'application/json', $analysis, [], null);
+            // Only add a default 200 if no explicit success status already exists
+            // (e.g. from a DataResponse attribute specifying 201 or 202)
+            $hasExplicitSuccess = false;
+            foreach ($this->detectedResponses as $code => $resp) {
+                if (in_array($code, ['200', '201', '202', '204'])) {
+                    $hasExplicitSuccess = true;
+                    break;
+                }
+            }
+
+            if (! $hasExplicitSuccess) {
+                $this->addSuccessResponse('200', 'Success', $controller, $method, 'application/json', $analysis, [], null);
+            }
         }
     }
 
@@ -1188,9 +1199,16 @@ class EnhancedResponseAnalyzer
                         $property['description'] = $enhancement->description;
                     }
 
-                    // Add example if specified
+                    // Add example if specified (preserve null for nullable fields)
                     if ($enhancement->example !== null) {
                         $property['example'] = $enhancement->example;
+                    } elseif ($enhancement->nullable) {
+                        $property['example'] = null;
+                    }
+
+                    // Add nullable flag if specified
+                    if ($enhancement->nullable) {
+                        $property['nullable'] = true;
                     }
 
                     // Add deprecated flag if specified
@@ -1642,7 +1660,7 @@ class EnhancedResponseAnalyzer
         $hasAnyExample = false;
 
         foreach ($schema['properties'] as $propertyName => $property) {
-            if (isset($property['example'])) {
+            if (array_key_exists('example', $property)) {
                 $example[$propertyName] = $property['example'];
                 $hasAnyExample = true;
             }
