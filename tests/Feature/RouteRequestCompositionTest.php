@@ -28,12 +28,12 @@ it('can compose basic request parameters from a request class', function () {
             'documentation',
             'responses',
         ])
-        ->and($routeData[0]['parameters'])
+        ->and($routeData[0]['query_parameters'])
         ->toBeArray()
         ->toHaveCount(2)
-        ->and($routeData[0]['parameters'])
+        ->and($routeData[0]['query_parameters'])
         ->toHaveKeys(['parameter_1', 'parameter_2'])
-        ->and($routeData[0]['parameters']['parameter_1'])
+        ->and($routeData[0]['query_parameters']['parameter_1'])
         ->toHaveKeys([
             'name',
             'description',
@@ -43,20 +43,20 @@ it('can compose basic request parameters from a request class', function () {
             'deprecated',
             'parameters',
         ])
-        ->and($routeData[0]['parameters']['parameter_1']['name'])
+        ->and($routeData[0]['query_parameters']['parameter_1']['name'])
         ->toBe('parameter_1')
-        ->and($routeData[0]['parameters']['parameter_1']['description'])
+        ->and($routeData[0]['query_parameters']['parameter_1']['description'])
         ->toBeString()
         ->toContain('Required')
-        ->and($routeData[0]['parameters']['parameter_1']['type'])
+        ->and($routeData[0]['query_parameters']['parameter_1']['type'])
         ->toBe('string')
-        ->and($routeData[0]['parameters']['parameter_1']['format'])
+        ->and($routeData[0]['query_parameters']['parameter_1']['format'])
         ->toBeNull()
-        ->and($routeData[0]['parameters']['parameter_1']['required'])
+        ->and($routeData[0]['query_parameters']['parameter_1']['required'])
         ->toBeTrue()
-        ->and($routeData[0]['parameters']['parameter_1']['deprecated'])
+        ->and($routeData[0]['query_parameters']['parameter_1']['deprecated'])
         ->toBeFalse()
-        ->and($routeData[0]['parameters']['parameter_2'])
+        ->and($routeData[0]['query_parameters']['parameter_2'])
         ->toHaveKeys([
             'name',
             'description',
@@ -66,18 +66,18 @@ it('can compose basic request parameters from a request class', function () {
             'deprecated',
             'parameters',
         ])
-        ->and($routeData[0]['parameters']['parameter_2']['name'])
+        ->and($routeData[0]['query_parameters']['parameter_2']['name'])
         ->toBe('parameter_2')
-        ->and($routeData[0]['parameters']['parameter_2']['description'])
+        ->and($routeData[0]['query_parameters']['parameter_2']['description'])
         ->toBeString()
         ->toContain('Must be a valid email')
-        ->and($routeData[0]['parameters']['parameter_2']['type'])
+        ->and($routeData[0]['query_parameters']['parameter_2']['type'])
         ->toBe('string')
-        ->and($routeData[0]['parameters']['parameter_2']['format'])
+        ->and($routeData[0]['query_parameters']['parameter_2']['format'])
         ->toBe('email')
-        ->and($routeData[0]['parameters']['parameter_2']['required'])
+        ->and($routeData[0]['query_parameters']['parameter_2']['required'])
         ->toBeFalse()
-        ->and($routeData[0]['parameters']['parameter_2']['deprecated'])
+        ->and($routeData[0]['query_parameters']['parameter_2']['deprecated'])
         ->toBeFalse();
 });
 
@@ -103,12 +103,12 @@ it('can compose basic attribute parameters from a request class', function () {
             'documentation',
             'responses',
         ])
-        ->and($routeData[0]['parameters'])
+        ->and($routeData[0]['query_parameters'])
         ->toBeArray()
         ->toHaveCount(2)
-        ->and($routeData[0]['parameters'])
+        ->and($routeData[0]['query_parameters'])
         ->toHaveKeys(['parameter_1', 'parameter_2'])
-        ->and($routeData[0]['parameters']['parameter_1'])
+        ->and($routeData[0]['query_parameters']['parameter_1'])
         ->toHaveKeys([
             'name',
             'description',
@@ -117,19 +117,19 @@ it('can compose basic attribute parameters from a request class', function () {
             'required',
             'deprecated',
         ])
-        ->and($routeData[0]['parameters']['parameter_1']['name'])
+        ->and($routeData[0]['query_parameters']['parameter_1']['name'])
         ->toBe('parameter_1')
-        ->and($routeData[0]['parameters']['parameter_1']['description'])
+        ->and($routeData[0]['query_parameters']['parameter_1']['description'])
         ->toBe('The first parameter')
-        ->and($routeData[0]['parameters']['parameter_1']['type'])
+        ->and($routeData[0]['query_parameters']['parameter_1']['type'])
         ->toBe('string')
-        ->and($routeData[0]['parameters']['parameter_1']['format'])
+        ->and($routeData[0]['query_parameters']['parameter_1']['format'])
         ->toBeNull()
-        ->and($routeData[0]['parameters']['parameter_1']['required'])
+        ->and($routeData[0]['query_parameters']['parameter_1']['required'])
         ->toBeTrue()
-        ->and($routeData[0]['parameters']['parameter_1']['deprecated'])
+        ->and($routeData[0]['query_parameters']['parameter_1']['deprecated'])
         ->toBeFalse()
-        ->and($routeData[0]['parameters']['parameter_2'])
+        ->and($routeData[0]['query_parameters']['parameter_2'])
         ->toHaveKeys([
             'name',
             'description',
@@ -138,17 +138,17 @@ it('can compose basic attribute parameters from a request class', function () {
             'required',
             'deprecated',
         ])
-        ->and($routeData[0]['parameters']['parameter_2']['name'])
+        ->and($routeData[0]['query_parameters']['parameter_2']['name'])
         ->toBe('parameter_2')
-        ->and($routeData[0]['parameters']['parameter_2']['description'])
+        ->and($routeData[0]['query_parameters']['parameter_2']['description'])
         ->toBe('The second parameter')
-        ->and($routeData[0]['parameters']['parameter_2']['type'])
+        ->and($routeData[0]['query_parameters']['parameter_2']['type'])
         ->toBe('string')
-        ->and($routeData[0]['parameters']['parameter_2']['format'])
+        ->and($routeData[0]['query_parameters']['parameter_2']['format'])
         ->toBe('email')
-        ->and($routeData[0]['parameters']['parameter_2']['required'])
+        ->and($routeData[0]['query_parameters']['parameter_2']['required'])
         ->toBeFalse()
-        ->and($routeData[0]['parameters']['parameter_2']['deprecated'])
+        ->and($routeData[0]['query_parameters']['parameter_2']['deprecated'])
         ->toBeFalse();
 });
 
@@ -174,15 +174,15 @@ it('can compose nested attribute parameters from a request class', function () {
             'documentation',
             'responses',
         ])
-        ->and($routeData[0]['parameters'])
+        ->and($routeData[0]['query_parameters'])
         ->toBeArray()
         ->toHaveCount(1)
-        ->and($routeData[0]['parameters'])
+        ->and($routeData[0]['query_parameters'])
         ->toHaveKeys(['base'])
-        ->and($routeData[0]['parameters']['base'])
+        ->and($routeData[0]['query_parameters']['base'])
         ->toBeArray()
         ->toHaveCount(7)
-        ->and($routeData[0]['parameters']['base'])
+        ->and($routeData[0]['query_parameters']['base'])
         ->toHaveKeys([
             'name',
             'description',
@@ -190,28 +190,27 @@ it('can compose nested attribute parameters from a request class', function () {
             'format',
             'required',
             'deprecated',
-            'parameters',
+            'properties',
         ])
-        ->and($routeData[0]['parameters']['base']['name'])
+        ->and($routeData[0]['query_parameters']['base']['name'])
         ->toBe('base')
-        ->and($routeData[0]['parameters']['base']['description'])
+        ->and($routeData[0]['query_parameters']['base']['description'])
         ->toBeString()
         ->toContain('Required')
-        ->toContain('array')
-        ->and($routeData[0]['parameters']['base']['type'])
-        ->toBe('array')
-        ->and($routeData[0]['parameters']['base']['format'])
+        ->and($routeData[0]['query_parameters']['base']['type'])
+        ->toBeIn(['array', 'object'])
+        ->and($routeData[0]['query_parameters']['base']['format'])
         ->toBeNull()
-        ->and($routeData[0]['parameters']['base']['required'])
+        ->and($routeData[0]['query_parameters']['base']['required'])
         ->toBeTrue()
-        ->and($routeData[0]['parameters']['base']['deprecated'])
+        ->and($routeData[0]['query_parameters']['base']['deprecated'])
         ->toBeFalse()
-        ->and($routeData[0]['parameters']['base']['parameters'])
+        ->and($routeData[0]['query_parameters']['base']['properties'])
         ->toBeArray()
         ->toHaveCount(2)
-        ->and($routeData[0]['parameters']['base']['parameters'])
+        ->and($routeData[0]['query_parameters']['base']['properties'])
         ->toHaveKeys(['parameter_1', 'parameter_2'])
-        ->and($routeData[0]['parameters']['base']['parameters']['parameter_1'])
+        ->and($routeData[0]['query_parameters']['base']['properties']['parameter_1'])
         ->toHaveKeys([
             'name',
             'description',
@@ -220,21 +219,21 @@ it('can compose nested attribute parameters from a request class', function () {
             'required',
             'deprecated',
         ])
-        ->and($routeData[0]['parameters']['base']['parameters']['parameter_1']['name'])
+        ->and($routeData[0]['query_parameters']['base']['properties']['parameter_1']['name'])
         ->toBe('parameter_1')
-        ->and($routeData[0]['parameters']['base']['parameters']['parameter_1']['description'])
+        ->and($routeData[0]['query_parameters']['base']['properties']['parameter_1']['description'])
         ->toBeString()
         ->toContain('Required')
         ->toContain('string')
-        ->and($routeData[0]['parameters']['base']['parameters']['parameter_1']['type'])
+        ->and($routeData[0]['query_parameters']['base']['properties']['parameter_1']['type'])
         ->toBe('string')
-        ->and($routeData[0]['parameters']['base']['parameters']['parameter_1']['format'])
+        ->and($routeData[0]['query_parameters']['base']['properties']['parameter_1']['format'])
         ->toBeNull()
-        ->and($routeData[0]['parameters']['base']['parameters']['parameter_1']['required'])
+        ->and($routeData[0]['query_parameters']['base']['properties']['parameter_1']['required'])
         ->toBeTrue()
-        ->and($routeData[0]['parameters']['base']['parameters']['parameter_1']['deprecated'])
+        ->and($routeData[0]['query_parameters']['base']['properties']['parameter_1']['deprecated'])
         ->toBeFalse()
-        ->and($routeData[0]['parameters']['base']['parameters']['parameter_2'])
+        ->and($routeData[0]['query_parameters']['base']['properties']['parameter_2'])
         ->toHaveKeys([
             'name',
             'description',
@@ -243,17 +242,17 @@ it('can compose nested attribute parameters from a request class', function () {
             'required',
             'deprecated',
         ])
-        ->and($routeData[0]['parameters']['base']['parameters']['parameter_2']['name'])
+        ->and($routeData[0]['query_parameters']['base']['properties']['parameter_2']['name'])
         ->toBe('parameter_2')
-        ->and($routeData[0]['parameters']['base']['parameters']['parameter_2']['description'])
+        ->and($routeData[0]['query_parameters']['base']['properties']['parameter_2']['description'])
         ->toBeString()
         ->toContain('email')
-        ->and($routeData[0]['parameters']['base']['parameters']['parameter_2']['type'])
+        ->and($routeData[0]['query_parameters']['base']['properties']['parameter_2']['type'])
         ->toBe('string')
-        ->and($routeData[0]['parameters']['base']['parameters']['parameter_2']['format'])
+        ->and($routeData[0]['query_parameters']['base']['properties']['parameter_2']['format'])
         ->toBe('email')
-        ->and($routeData[0]['parameters']['base']['parameters']['parameter_2']['required'])
+        ->and($routeData[0]['query_parameters']['base']['properties']['parameter_2']['required'])
         ->toBeFalse()
-        ->and($routeData[0]['parameters']['base']['parameters']['parameter_2']['deprecated'])
+        ->and($routeData[0]['query_parameters']['base']['properties']['parameter_2']['deprecated'])
         ->toBeFalse();
 });

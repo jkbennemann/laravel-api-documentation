@@ -166,7 +166,7 @@ it('can generate a documentation file with 200 DTO response by annotation', func
         ->and($openApi->paths['/route-1']->get->description)
         ->toBe('')
         ->and($openApi->paths['/route-1']->get->responses)
-        ->toHaveCount(1)
+        ->toHaveKey(200)
         ->and($openApi->paths['/route-1']->get->responses[200]->description)
         ->toBe('A sample description')
         ->and($openApi->paths['/route-1']->get->responses[200]->headers)

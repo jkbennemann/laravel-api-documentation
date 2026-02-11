@@ -2988,6 +2988,29 @@ class ResponseAnalyzer
                 }
             }
 
+            // Check for response()->json($this->method()) patterns where helper returns a DTO
+            if (preg_match('/response\(\)->json\(\s*\$this->(\w+)\(/', $methodBody, $matches)) {
+                $helperMethod = $matches[1];
+                try {
+                    $helperReflection = $reflection->getMethod($helperMethod);
+                    $helperReturnType = $helperReflection->getReturnType();
+                    if ($helperReturnType && ! $helperReturnType->isBuiltin()) {
+                        $typeName = $helperReturnType->getName();
+                        if (class_exists($typeName) && is_subclass_of($typeName, Data::class)) {
+                            $schema = $this->analyzeSpatieDataObject($typeName);
+                            if (! empty($schema)) {
+                                return array_merge($schema, [
+                                    'detected_resource' => $typeName,
+                                    'detection_method' => 'json_response_helper_method_analysis',
+                                ]);
+                            }
+                        }
+                    }
+                } catch (Throwable) {
+                    // Silently continue
+                }
+            }
+
             // CRITICAL: Check for custom response helper methods before proxy patterns
             $customResponseResult = $this->analyzeCustomResponseHelpers($methodBody, $reflection);
             if (! empty($customResponseResult)) {

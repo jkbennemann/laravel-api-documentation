@@ -480,14 +480,38 @@ class EnhancedResponseAnalyzer
      */
     public function analyzeThrowStatement(Throw_ $node, string $controller = '', string $method = ''): void
     {
-        if (! $node->expr instanceof New_) {
+        // Handle throw new Exception()
+        if ($node->expr instanceof New_) {
+            $exceptionClass = $this->getExceptionClassName($node->expr);
+            if ($exceptionClass && isset($this->errorStatusMappings[$exceptionClass])) {
+                $statusCode = (string) $this->errorStatusMappings[$exceptionClass];
+                $this->addErrorResponse($statusCode, $this->getStatusDescription($statusCode), $controller, $method);
+            }
+
             return;
         }
 
-        $exceptionClass = $this->getExceptionClassName($node->expr);
-        if ($exceptionClass && isset($this->errorStatusMappings[$exceptionClass])) {
-            $statusCode = (string) $this->errorStatusMappings[$exceptionClass];
-            $this->addErrorResponse($statusCode, $this->getStatusDescription($statusCode), $controller, $method);
+        // Handle throw Exception::staticMethod() (e.g. ValidationException::withMessages())
+        if ($node->expr instanceof StaticCall && $node->expr->class instanceof Name) {
+            $className = $node->expr->class->toString();
+
+            // Try fully qualified class name first
+            if (isset($this->errorStatusMappings[$className])) {
+                $statusCode = (string) $this->errorStatusMappings[$className];
+                $this->addErrorResponse($statusCode, $this->getStatusDescription($statusCode), $controller, $method);
+
+                return;
+            }
+
+            // Try to resolve short class name against known mappings
+            foreach ($this->errorStatusMappings as $mappedClass => $status) {
+                $shortName = class_basename($mappedClass);
+                if ($shortName === $className) {
+                    $this->addErrorResponse((string) $status, $this->getStatusDescription((string) $status), $controller, $method);
+
+                    return;
+                }
+            }
         }
     }
 
@@ -594,7 +618,7 @@ class EnhancedResponseAnalyzer
             }
 
             if (! $hasExplicitSuccess) {
-                $this->addSuccessResponse('200', 'Success', $controller, $method, 'application/json', $analysis, [], null);
+                $this->addSuccessResponse('200', 'Success', $controller, $method, 'application/json', $analysis, [], $resourceClass);
             }
         }
     }
@@ -1596,6 +1620,11 @@ class EnhancedResponseAnalyzer
             // Use existing ResponseAnalyzer for detailed schema analysis
             $detailedSchema = $this->responseAnalyzer->analyzeControllerMethod($controller, $method);
 
+            // Auto-detect resource class from schema analysis if not provided
+            if (! $resourceClass && isset($detailedSchema['detected_resource'])) {
+                $resourceClass = $detailedSchema['detected_resource'];
+            }
+
             // Prefer additionalSchema (from resource class) if provided and has properties
             if ($additionalSchema && !empty($additionalSchema['properties'])) {
                 $detailedSchema = $additionalSchema;
@@ -2027,17 +2056,32 @@ class EnhancedResponseAnalyzer
     /**
      * Create default success response when no responses detected
      */
-    private function createDefaultSuccessResponse(string $controller, string $method): array
+    private function createDefaultSuccessResponse(string $controller, string $method, ?ReflectionMethod $reflection = null): array
     {
         // Use existing ResponseAnalyzer for detailed analysis
         $analysis = $this->responseAnalyzer->analyzeControllerMethod($controller, $method);
 
-        return [
+        $response = [
             'description' => 'Success',
             'content_type' => 'application/json',
             'headers' => [],
             'schema' => $analysis,
         ];
+
+        // Try to detect resource class — prefer detected_resource from schema analysis
+        if (isset($analysis['detected_resource'])) {
+            $response['resource'] = $analysis['detected_resource'];
+        } elseif ($reflection) {
+            $returnType = $reflection->getReturnType();
+            if ($returnType && ! $returnType->isBuiltin()) {
+                $typeName = $returnType->getName();
+                if (class_exists($typeName)) {
+                    $response['resource'] = $typeName;
+                }
+            }
+        }
+
+        return $response;
     }
 
     /**
@@ -2056,7 +2100,7 @@ class EnhancedResponseAnalyzer
 
         if (! $hasSuccessResponse) {
             // Add default success response based on method analysis
-            $this->detectedResponses['200'] = $this->createDefaultSuccessResponse($controller, $method);
+            $this->detectedResponses['200'] = $this->createDefaultSuccessResponse($controller, $method, $reflection);
         }
 
         // Always add common error responses that any Laravel API endpoint can return

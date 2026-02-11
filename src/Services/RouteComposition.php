@@ -247,8 +247,12 @@ class RouteComposition
                 }
             }
 
-            // If no FormRequest found, try to detect inline validation
-            return $this->detectInlineValidation($method);
+            // If no FormRequest found, try to detect inline validation (if smart features enabled)
+            if (config('api-documentation.smart_features', true)) {
+                return $this->detectInlineValidation($method);
+            }
+
+            return [];
         } catch (Throwable $e) {
             return [];
         }
