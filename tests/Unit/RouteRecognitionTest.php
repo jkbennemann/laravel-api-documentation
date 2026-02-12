@@ -11,5 +11,7 @@ it('recognises registered route', function () {
     });
     Route::get('/route-2', [SimpleController::class, 'index']);
 
-    expect(Route::getRoutes()->count())->toBe(2);
+    $routes = Route::getRoutes();
+    dump(collect($routes->getRoutes())->map(fn ($r) => $r->uri() . ' [' . implode('|', $r->methods()) . ']')->all());
+    expect($routes->count())->toBe(2);
 });
