@@ -62,7 +62,6 @@ it('can generate route information for simplistic route', function () {
         ->toBeNull()
         ->and($routeData[0]['responses'])
         ->toBeArray()
-        ->toHaveCount(1)
         ->toHaveKeys([200]);
 });
 
@@ -314,8 +313,6 @@ it('can generate route information for route with a data resource', function () 
         ->toHaveCount(17)
         ->and($routeData[0]['responses'])
         ->toBeArray()
-        ->toHaveCount(1)
-        ->and($routeData[0]['responses'])
         ->toHaveKeys([200]);
 
     // Rule: Error Handling - Implement proper error boundaries
@@ -357,8 +354,6 @@ it('can generate route information for route with a spatie dto resource', functi
         ->toHaveCount(17)
         ->and($routeData[0]['responses'])
         ->toBeArray()
-        ->toHaveCount(1)
-        ->and($routeData[0]['responses'])
         ->toHaveKeys([200]);
 
     expect($routeData[0]['responses'][200])

@@ -311,13 +311,19 @@ class OpenApi
                     'enum' => $param['enum'] ?? null,
                 ]);
 
+                // Unwrap example if stored as {type, format, value} structure
+                $example = $param['example'] ?? null;
+                if (is_array($example) && array_key_exists('value', $example)) {
+                    $example = $example['value'];
+                }
+
                 $parameters[] = $this->createParameter([
                     'name' => $name,
                     'in' => 'path',
                     'description' => $param['description'] ?? 'Path parameter: ' . $name,
                     'required' => $param['required'] ?? true,
                     'schema' => $schema,
-                    'example' => $param['example'] ?? null,
+                    'example' => $example,
                 ]);
             }
         }
