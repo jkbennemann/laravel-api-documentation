@@ -191,32 +191,32 @@ class PaginationPlugin implements OperationTransformer, Plugin
             $schema['properties']['meta'] = [
                 'type' => 'object',
                 'properties' => [
-                    'path' => ['type' => 'string'],
-                    'per_page' => ['type' => 'integer'],
-                    'next_cursor' => ['type' => 'string', 'nullable' => true],
-                    'prev_cursor' => ['type' => 'string', 'nullable' => true],
+                    'path' => ['type' => 'string', 'example' => 'https://example.com/api/resource'],
+                    'per_page' => ['type' => 'integer', 'example' => 15],
+                    'next_cursor' => ['type' => 'string', 'nullable' => true, 'example' => 'eyJpZCI6MTUsIl9wb2ludHNUb05leHRJdGVtcyI6dHJ1ZX0'],
+                    'prev_cursor' => ['type' => 'string', 'nullable' => true, 'example' => null],
                 ],
             ];
         } else {
             $schema['properties']['links'] = [
                 'type' => 'object',
                 'properties' => [
-                    'first' => ['type' => 'string', 'format' => 'uri'],
-                    'last' => ['type' => 'string', 'format' => 'uri', 'nullable' => true],
-                    'prev' => ['type' => 'string', 'format' => 'uri', 'nullable' => true],
-                    'next' => ['type' => 'string', 'format' => 'uri', 'nullable' => true],
+                    'first' => ['type' => 'string', 'format' => 'uri', 'example' => 'https://example.com/api/resource?page=1'],
+                    'last' => ['type' => 'string', 'format' => 'uri', 'nullable' => true, 'example' => 'https://example.com/api/resource?page=10'],
+                    'prev' => ['type' => 'string', 'format' => 'uri', 'nullable' => true, 'example' => null],
+                    'next' => ['type' => 'string', 'format' => 'uri', 'nullable' => true, 'example' => 'https://example.com/api/resource?page=2'],
                 ],
             ];
             $schema['properties']['meta'] = [
                 'type' => 'object',
                 'properties' => [
-                    'current_page' => ['type' => 'integer'],
-                    'from' => ['type' => 'integer', 'nullable' => true],
-                    'last_page' => ['type' => 'integer'],
-                    'per_page' => ['type' => 'integer'],
-                    'to' => ['type' => 'integer', 'nullable' => true],
-                    'total' => ['type' => 'integer'],
-                    'path' => ['type' => 'string'],
+                    'current_page' => ['type' => 'integer', 'example' => 1],
+                    'from' => ['type' => 'integer', 'nullable' => true, 'example' => 1],
+                    'last_page' => ['type' => 'integer', 'example' => 10],
+                    'per_page' => ['type' => 'integer', 'example' => 15],
+                    'to' => ['type' => 'integer', 'nullable' => true, 'example' => 15],
+                    'total' => ['type' => 'integer', 'example' => 150],
+                    'path' => ['type' => 'string', 'example' => 'https://example.com/api/resource'],
                 ],
             ];
         }
