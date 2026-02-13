@@ -20,6 +20,7 @@ use JkBennemann\LaravelApiDocumentation\Analyzers\QueryParam\PhpDocQueryParamete
 use JkBennemann\LaravelApiDocumentation\Analyzers\QueryParam\QueryParameterAttributeAnalyzer;
 use JkBennemann\LaravelApiDocumentation\Analyzers\QueryParam\RequestMethodCallAnalyzer;
 use JkBennemann\LaravelApiDocumentation\Analyzers\QueryParam\RuntimeCaptureQueryAnalyzer;
+use JkBennemann\LaravelApiDocumentation\Analyzers\Request\ContainerFormRequestAnalyzer;
 use JkBennemann\LaravelApiDocumentation\Analyzers\Request\FormRequestAnalyzer;
 use JkBennemann\LaravelApiDocumentation\Analyzers\Request\InlineValidationAnalyzer;
 use JkBennemann\LaravelApiDocumentation\Analyzers\Request\RequestBodyAttributeAnalyzer;
@@ -174,6 +175,7 @@ class LaravelApiDocumentationServiceProvider extends PackageServiceProvider
         $registry->addRequestExtractor(new RequestBodyAttributeAnalyzer, 100);
         $formRequestAnalyzer = new FormRequestAnalyzer($config, $astCache);
         $registry->addRequestExtractor($formRequestAnalyzer, 90);
+        $registry->addRequestExtractor(new ContainerFormRequestAnalyzer($formRequestAnalyzer, $config, $astCache), 85);
         $registry->addRequestExtractor(new InlineValidationAnalyzer($config), 80);
         $registry->addRequestExtractor(new RuntimeCaptureRequestAnalyzer($capturedRepo), 60);
 
