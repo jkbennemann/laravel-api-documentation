@@ -12,9 +12,9 @@ use JkBennemann\LaravelApiDocumentation\Schema\EloquentModelAnalyzer;
 use JkBennemann\LaravelApiDocumentation\Schema\SchemaRegistry;
 use JkBennemann\LaravelApiDocumentation\Schema\TypeMapper;
 use PhpParser\Node;
+use PhpParser\Node\ArrayItem;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\Array_;
-use PhpParser\Node\Expr\ArrayItem;
 use PhpParser\Node\Scalar\String_;
 use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node\Stmt\Return_;
@@ -133,7 +133,7 @@ class JsonResourceAnalyzer
         return null;
     }
 
-    private function analyzeCollection(string $collectionClass): ?SchemaObject
+    private function analyzeCollection(string $collectionClass): SchemaObject
     {
         // Try to find the underlying resource class
         try {
@@ -393,6 +393,23 @@ class JsonResourceAnalyzer
             return $this->inferFromPropertyAccess($value, $resourceClass);
         }
 
+        // Explicit type casts: (int), (bool), (float), (array)
+        if ($value instanceof Expr\Cast\Int_) {
+            return SchemaObject::integer();
+        }
+        if ($value instanceof Expr\Cast\Bool_) {
+            return SchemaObject::boolean();
+        }
+        if ($value instanceof Expr\Cast\Double) {
+            return SchemaObject::number('double');
+        }
+        if ($value instanceof Expr\Cast\Array_) {
+            return new SchemaObject(type: 'array', items: SchemaObject::string());
+        }
+        if ($value instanceof Expr\Cast\String_) {
+            return SchemaObject::string();
+        }
+
         // $this->when($condition, $value)
         if ($value instanceof Expr\MethodCall && $value->name instanceof Node\Identifier) {
             $methodName = $value->name->toString();
@@ -428,13 +445,18 @@ class JsonResourceAnalyzer
             }
         }
 
-        // Static call: SomeResource::make($this->relation)
+        // Static call: SomeResource::make($this->relation) or SomeResource::collection(...)
         if ($value instanceof Expr\StaticCall && $value->class instanceof Node\Name) {
             $className = $value->class->toString();
-            if (str_ends_with($className, 'Resource')) {
-                // Nested resource
+            $staticMethodName = $value->name instanceof Node\Identifier ? $value->name->toString() : null;
+
+            if (str_ends_with($className, 'Resource') || str_ends_with($className, 'Collection')) {
                 $schema = $this->tryResolveResource($className, $resourceClass);
                 if ($schema !== null) {
+                    if ($staticMethodName === 'collection') {
+                        return SchemaObject::array($schema);
+                    }
+
                     return $schema;
                 }
             }
@@ -449,9 +471,9 @@ class JsonResourceAnalyzer
             }
         }
 
-        // String literal
+        // String literal — use as single-value enum for constant type discriminators
         if ($value instanceof String_) {
-            return SchemaObject::string();
+            return new SchemaObject(type: 'string', enum: [$value->value]);
         }
 
         // Integer literal
@@ -478,13 +500,20 @@ class JsonResourceAnalyzer
         // Array literal
         if ($value instanceof Array_) {
             if ($this->isSequentialArray($value)) {
+                // Try to infer item type from first element
+                if (! empty($value->items) && $value->items[0] instanceof ArrayItem) {
+                    $itemSchema = $this->inferPropertySchema($value->items[0]->value, $resourceClass);
+
+                    return SchemaObject::array($itemSchema);
+                }
+
                 return SchemaObject::array(SchemaObject::string());
             }
 
             return $this->extractSchemaFromArray($value, $resourceClass);
         }
 
-        // Ternary
+        // Ternary: $this->x ? value : other
         if ($value instanceof Expr\Ternary) {
             if ($value->if !== null) {
                 $schema = $this->inferPropertySchema($value->if, $resourceClass);
@@ -492,6 +521,19 @@ class JsonResourceAnalyzer
 
                 return $schema;
             }
+            // Short ternary: $this->x ?: default — infer from condition (left side)
+            $schema = $this->inferPropertySchema($value->cond, $resourceClass);
+            $schema->nullable = true;
+
+            return $schema;
+        }
+
+        // Null coalescing: $this->x ?? default — resolved type is nullable
+        if ($value instanceof Expr\BinaryOp\Coalesce) {
+            $schema = $this->inferPropertySchema($value->left, $resourceClass);
+            $schema->nullable = true;
+
+            return $schema;
         }
 
         // Default
@@ -520,9 +562,14 @@ class JsonResourceAnalyzer
         if ($this->modelAnalyzer !== null) {
             $modelClass = $this->modelAnalyzer->getModelForResource($resourceClass);
             if ($modelClass !== null) {
-                $isModelHidden = ! $this->modelAnalyzer->shouldExposeProperty($modelClass, $propertyName);
+                // Handle chained property access: $this->relation->property
+                $resolvedModel = $this->resolveChainedPropertyModel($node, $modelClass);
+                $resolvedProperty = $propertyName;
 
-                $modelSchema = $this->modelAnalyzer->getPropertyType($modelClass, $propertyName);
+                $targetModel = $resolvedModel ?? $modelClass;
+                $isModelHidden = ! $this->modelAnalyzer->shouldExposeProperty($targetModel, $resolvedProperty);
+
+                $modelSchema = $this->modelAnalyzer->getPropertyType($targetModel, $resolvedProperty);
                 if ($modelSchema !== null) {
                     if ($isNullsafe) {
                         $modelSchema = clone $modelSchema;
@@ -548,9 +595,11 @@ class JsonResourceAnalyzer
             $propertyName === 'email' => SchemaObject::string('email'),
             $propertyName === 'uuid' => SchemaObject::string('uuid'),
             $propertyName === 'url' || str_ends_with($propertyName, '_url') => SchemaObject::string('uri'),
-            str_starts_with($propertyName, 'is_') || str_starts_with($propertyName, 'has_') => SchemaObject::boolean(),
-            in_array($propertyName, ['price', 'amount', 'total', 'balance', 'cost']) => SchemaObject::number('double'),
-            in_array($propertyName, ['count', 'quantity', 'age', 'position', 'order']) => SchemaObject::integer(),
+            str_starts_with($propertyName, 'is_') || str_starts_with($propertyName, 'has_') || str_starts_with($propertyName, 'can_') => SchemaObject::boolean(),
+            str_ends_with($propertyName, '_count') || str_ends_with($propertyName, '_size') => SchemaObject::integer(),
+            in_array($propertyName, ['price', 'amount', 'total', 'balance', 'cost', 'rate', 'latitude', 'longitude', 'lat', 'lng']) => SchemaObject::number('double'),
+            in_array($propertyName, ['count', 'quantity', 'age', 'position', 'order', 'year', 'month', 'day', 'week', 'length', 'width', 'height', 'size', 'track', 'disc', 'play_count', 'duration', 'bitrate', 'port', 'attempts', 'priority', 'sort_order', 'level']) => SchemaObject::integer(),
+            str_ends_with($propertyName, '_path') || str_ends_with($propertyName, '_name') || str_ends_with($propertyName, '_type') || str_ends_with($propertyName, '_key') => SchemaObject::string(),
             $isNullsafe => new SchemaObject(type: 'string', nullable: true),
             default => SchemaObject::string(),
         };
@@ -561,6 +610,73 @@ class JsonResourceAnalyzer
         }
 
         return $schema;
+    }
+
+    /**
+     * For chained property access like $this->relation->property, resolve the intermediate
+     * relation to find the related model class so we can type the final property.
+     */
+    private function resolveChainedPropertyModel(Node $node, string $baseModelClass): ?string
+    {
+        // Only handle $this->x->y (depth 2)
+        if (! ($node instanceof Expr\PropertyFetch || $node instanceof Expr\NullsafePropertyFetch)) {
+            return null;
+        }
+
+        $parent = $node->var ?? null;
+        if (! ($parent instanceof Expr\PropertyFetch || $parent instanceof Expr\NullsafePropertyFetch)) {
+            return null;
+        }
+
+        // The parent must be on $this
+        $grandParent = $parent->var ?? null;
+        if (! ($grandParent instanceof Expr\Variable) || $grandParent->name !== 'this') {
+            return null;
+        }
+
+        $relationName = $parent->name instanceof Node\Identifier ? $parent->name->toString() : null;
+        if ($relationName === null) {
+            return null;
+        }
+
+        // Try to resolve the relation to a model class
+        try {
+            $reflection = new \ReflectionClass($baseModelClass);
+            if (! $reflection->hasMethod($relationName)) {
+                return null;
+            }
+
+            $method = $reflection->getMethod($relationName);
+            $returnType = $method->getReturnType();
+
+            if (! $returnType instanceof \ReflectionNamedType) {
+                return null;
+            }
+
+            $returnTypeName = $returnType->getName();
+            $relationClasses = [
+                'Illuminate\Database\Eloquent\Relations\BelongsTo',
+                'Illuminate\Database\Eloquent\Relations\HasOne',
+                'Illuminate\Database\Eloquent\Relations\HasOneThrough',
+                'Illuminate\Database\Eloquent\Relations\MorphOne',
+                'Illuminate\Database\Eloquent\Relations\HasMany',
+                'Illuminate\Database\Eloquent\Relations\BelongsToMany',
+                'Illuminate\Database\Eloquent\Relations\HasManyThrough',
+                'Illuminate\Database\Eloquent\Relations\MorphMany',
+                'Illuminate\Database\Eloquent\Relations\MorphToMany',
+            ];
+
+            if (! in_array($returnTypeName, $relationClasses, true)) {
+                return null;
+            }
+
+            // Extract the related model from the relation method's AST
+            $relatedModel = $this->extractRelatedModel($reflection, $relationName);
+
+            return $relatedModel;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     private function inferConditionalField(Expr\MethodCall $call, string $resourceClass): SchemaObject
