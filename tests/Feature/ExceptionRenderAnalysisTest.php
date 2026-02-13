@@ -46,6 +46,7 @@ class ExceptionRenderAnalysisTest extends TestCase
 
         $schema = $errorResponse['content']['application/json']['schema'] ?? null;
         expect($schema)->not()->toBeNull();
+        $schema = $this->resolveSchemaRef($schema, $spec);
         expect($schema['properties'])->toHaveKey('error');
         expect($schema['properties'])->toHaveKey('message');
         expect($schema['properties']['error']['example'])->toBe('insufficient_balance');

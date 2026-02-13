@@ -16,6 +16,7 @@ use JkBennemann\LaravelApiDocumentation\Data\SchemaObject;
 use JkBennemann\LaravelApiDocumentation\Data\SchemaResult;
 use JkBennemann\LaravelApiDocumentation\Schema\ExampleGenerator;
 use JkBennemann\LaravelApiDocumentation\Schema\PhpDocParser;
+use JkBennemann\LaravelApiDocumentation\Schema\SchemaRegistry;
 
 class PathBuilder
 {
@@ -23,8 +24,10 @@ class PathBuilder
 
     private ?PhpDocParser $phpDocParser = null;
 
-    public function __construct(?ExampleGenerator $exampleGenerator = null)
-    {
+    public function __construct(
+        ?ExampleGenerator $exampleGenerator = null,
+        private readonly ?SchemaRegistry $schemaRegistry = null,
+    ) {
         $this->schemaBuilder = new SchemaBuilder($exampleGenerator);
     }
 
@@ -173,11 +176,13 @@ class PathBuilder
                 $schema = $bindingSchema;
             }
 
-            // Default path parameter
+            // Generate description for path parameters
             $description = null;
             $bindingField = $ctx->route->bindingFields[$name] ?? null;
             if ($bindingField !== null) {
                 $description = "Resolved by {$bindingField}";
+            } else {
+                $description = $this->generatePathParameterDescription($name);
             }
 
             $parameters[] = array_filter([
@@ -242,7 +247,7 @@ class PathBuilder
 
     /**
      * @param  array<int, ResponseResult>  $responses
-     * @return array<string, array<string, mixed>>
+     * @return array<int|string, array<string, mixed>>
      */
     private function buildResponses(array $responses): array
     {
@@ -255,6 +260,20 @@ class PathBuilder
         $built = [];
 
         foreach ($responses as $result) {
+            $schema = $result->schema;
+
+            // Register response schemas as components for $ref deduplication
+            if ($schema !== null && $this->schemaRegistry !== null && $schema->ref === null) {
+                $name = $this->deriveResponseSchemaName($result->source ?? '', $result->statusCode);
+                if ($name !== null) {
+                    $registered = $this->schemaRegistry->registerIfComplex($name, $schema);
+                    if ($registered instanceof SchemaObject && $registered !== $schema) {
+                        $schema = $registered;
+                        $result = $result->withSchema($schema);
+                    }
+                }
+            }
+
             $response = ['description' => $result->description ?: 'Response'];
 
             if ($result->schema !== null) {
@@ -405,6 +424,8 @@ class PathBuilder
         // Determine the binding field name
         $bindingField = $ctx->route->bindingFields[$paramName] ?? null;
 
+        $modelClass = null;
+
         // If no explicit binding field, try to detect from the model's getRouteKeyName()
         if ($bindingField === null && $ctx->hasReflection()) {
             $modelClass = $this->detectModelForParameter($ctx, $paramName);
@@ -422,6 +443,11 @@ class PathBuilder
         }
 
         if ($bindingField === null) {
+            // No explicit binding field — check model traits for UUID/ULID, else default to integer
+            if ($modelClass !== null) {
+                return $this->inferSchemaFromModelKey($modelClass);
+            }
+
             return null;
         }
 
@@ -435,6 +461,38 @@ class PathBuilder
             str_contains($bindingField, 'email') => new SchemaObject(type: 'string', format: 'email'),
             default => SchemaObject::string(),
         };
+    }
+
+    private function inferSchemaFromModelKey(string $modelClass): SchemaObject
+    {
+        try {
+            $traits = class_uses_recursive($modelClass);
+            if (in_array('Illuminate\Database\Eloquent\Concerns\HasUuids', $traits, true)) {
+                return new SchemaObject(type: 'string', format: 'uuid');
+            }
+            if (in_array('Illuminate\Database\Eloquent\Concerns\HasUlids', $traits, true)) {
+                return new SchemaObject(type: 'string', format: 'ulid');
+            }
+
+            $model = (new \ReflectionClass($modelClass))->newInstanceWithoutConstructor();
+            if ($model->getKeyType() === 'int') {
+                return SchemaObject::integer();
+            }
+        } catch (\Throwable) {
+            // Skip
+        }
+
+        return SchemaObject::integer();
+    }
+
+    private function generatePathParameterDescription(string $paramName): string
+    {
+        // Convert snake_case/camelCase to readable words
+        $readable = str_replace('_', ' ', $paramName);
+        $readable = preg_replace('/([a-z])([A-Z])/', '$1 $2', $readable);
+        $readable = strtolower($readable);
+
+        return 'The '.trim($readable).' ID';
     }
 
     /**
@@ -615,5 +673,19 @@ class PathBuilder
         $uri = trim($uri, '.');
 
         return $method.'.'.$uri;
+    }
+
+    private function deriveResponseSchemaName(string $source, int $statusCode): ?string
+    {
+        return match (true) {
+            $source === 'error:authentication' => 'AuthenticationError',
+            $source === 'error:authorization' => 'AuthorizationError',
+            $source === 'error:not_found' => 'NotFoundError',
+            $source === 'error:validation' => 'ValidationError',
+            $source === 'error:rate_limit' => 'RateLimitError',
+            str_starts_with($source, 'analyzer:exception') => 'Error'.$statusCode,
+            $source === 'config:error_responses' => 'Error'.$statusCode,
+            default => null, // already registered or unique per-endpoint
+        };
     }
 }

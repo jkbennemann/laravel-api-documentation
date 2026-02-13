@@ -163,10 +163,6 @@ class CapturedResponseRepository
         }
 
         $timestamps = array_column($responses, 'captured_at');
-        if (empty($timestamps)) {
-            return true;
-        }
-
         $lastCapture = max($timestamps);
 
         try {

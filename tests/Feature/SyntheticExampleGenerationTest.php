@@ -450,7 +450,9 @@ class SyntheticExampleGenerationTest extends TestCase
         $requestBody = $spec['paths']['/api/register']['post']['requestBody'] ?? null;
         expect($requestBody)->not()->toBeNull();
 
-        $properties = $requestBody['content']['application/json']['schema']['properties'] ?? [];
+        $schema = $requestBody['content']['application/json']['schema'] ?? [];
+        $schema = $this->resolveSchemaRef($schema, $spec);
+        $properties = $schema['properties'] ?? [];
         expect($properties)->not()->toBeEmpty();
 
         // RegisterRequest has: name, email, password — each should have an example

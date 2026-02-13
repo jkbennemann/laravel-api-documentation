@@ -199,6 +199,9 @@ final class SchemaObject implements \JsonSerializable
         }
         if ($this->items !== null) {
             $data['items'] = $this->items->jsonSerialize();
+        } elseif ($type === 'array') {
+            // Ensure all array types have items (OpenAPI best practice)
+            $data['items'] = ['type' => 'string'];
         }
         if ($this->properties !== null && $this->properties !== []) {
             $data['properties'] = array_map(

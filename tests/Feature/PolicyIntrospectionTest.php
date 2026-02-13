@@ -89,6 +89,7 @@ class PolicyIntrospectionTest extends TestCase
         $schema = $spec['paths']['/api/posts/{post}']['put']['responses']['403']['content']['application/json']['schema'] ?? null;
 
         expect($schema)->not()->toBeNull();
+        $schema = $this->resolveSchemaRef($schema, $spec);
         expect($schema['properties'])->toHaveKey('message');
     }
 }

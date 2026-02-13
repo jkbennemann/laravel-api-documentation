@@ -14,7 +14,6 @@ use JkBennemann\LaravelApiDocumentation\Schema\ClassSchemaResolver;
 use JkBennemann\LaravelApiDocumentation\Schema\EloquentModelAnalyzer;
 use JkBennemann\LaravelApiDocumentation\Schema\PhpDocParser;
 use JkBennemann\LaravelApiDocumentation\Schema\SchemaRegistry;
-use JkBennemann\LaravelApiDocumentation\Schema\TypeMapper;
 use PhpParser\Node;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\MethodCall;
@@ -26,8 +25,6 @@ use PhpParser\NodeFinder;
 
 class ReturnTypeAnalyzer implements ResponseExtractor
 {
-    private TypeMapper $typeMapper;
-
     private JsonResourceAnalyzer $resourceAnalyzer;
 
     private SpatieDataResponseAnalyzer $spatieAnalyzer;
@@ -42,14 +39,13 @@ class ReturnTypeAnalyzer implements ResponseExtractor
     private AstCache $astCache;
 
     public function __construct(
-        private readonly SchemaRegistry $registry,
+        SchemaRegistry $registry,
         ClassSchemaResolver $classResolver,
         EloquentModelAnalyzer $modelAnalyzer,
         PhpDocParser $phpDocParser,
         array $config = [],
         ?AstCache $astCache = null,
     ) {
-        $this->typeMapper = new TypeMapper;
         $this->classResolver = $classResolver;
         $this->phpDocParser = $phpDocParser;
         $this->astCache = $astCache ?? new AstCache(sys_get_temp_dir(), 0);

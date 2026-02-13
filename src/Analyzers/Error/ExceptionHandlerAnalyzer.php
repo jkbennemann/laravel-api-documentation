@@ -173,11 +173,7 @@ class ExceptionHandlerAnalyzer implements ResponseExtractor
             return null;
         }
 
-        try {
-            $reflection = new \ReflectionClass($className);
-        } catch (\Throwable) {
-            return null;
-        }
+        $reflection = new \ReflectionClass($className);
 
         // Try render() method first — custom exceptions often define their own response
         $renderResult = $this->analyzeRenderMethod($reflection);
@@ -347,7 +343,7 @@ class ExceptionHandlerAnalyzer implements ResponseExtractor
         $required = [];
 
         foreach ($value->items as $item) {
-            if (! $item instanceof Node\Expr\ArrayItem || $item->key === null) {
+            if (! $item instanceof Node\ArrayItem || $item->key === null) {
                 continue;
             }
 

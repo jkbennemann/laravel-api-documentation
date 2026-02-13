@@ -8,7 +8,6 @@ use JkBennemann\LaravelApiDocumentation\Analyzers\AnalysisPipeline;
 use JkBennemann\LaravelApiDocumentation\Attributes\Tag;
 use JkBennemann\LaravelApiDocumentation\Data\AnalysisContext;
 use JkBennemann\LaravelApiDocumentation\Data\SchemaObject;
-use JkBennemann\LaravelApiDocumentation\Merge\ResultMerger;
 use JkBennemann\LaravelApiDocumentation\Schema\ExampleGenerator;
 use JkBennemann\LaravelApiDocumentation\Schema\PhpDocParser;
 use JkBennemann\LaravelApiDocumentation\Schema\SchemaRegistry;
@@ -19,13 +18,12 @@ class OpenApiEmitter
 
     private SecurityBuilder $securityBuilder;
 
-    private ResultMerger $merger;
-
     /** @var array<string, array{name: string, description?: string}> Collected tags keyed by name */
     private array $tags = [];
 
     private ExampleGenerator $exampleGenerator;
 
+    /** @phpstan-ignore constructor.unusedParameter */
     public function __construct(
         private readonly AnalysisPipeline $pipeline,
         private readonly SchemaRegistry $registry,
@@ -33,12 +31,11 @@ class OpenApiEmitter
         ?PhpDocParser $phpDocParser = null,
     ) {
         $this->exampleGenerator = new ExampleGenerator;
-        $this->pathBuilder = new PathBuilder($this->exampleGenerator);
+        $this->pathBuilder = new PathBuilder($this->exampleGenerator, $this->registry);
         if ($phpDocParser !== null) {
             $this->pathBuilder->setPhpDocParser($phpDocParser);
         }
         $this->securityBuilder = new SecurityBuilder($registry);
-        $this->merger = new ResultMerger($config['analysis']['priority'] ?? 'static_first');
     }
 
     /**

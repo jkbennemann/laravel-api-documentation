@@ -159,6 +159,18 @@ class EloquentModelAnalyzer
             return SchemaObject::string('date-time');
         }
 
+        // 4. Check PHPDoc @property annotations (including parent classes / IDE helper stubs)
+        $schema = $this->resolveFromPhpDocProperty($reflection, $property);
+        if ($schema !== null) {
+            return $schema;
+        }
+
+        // 5. Check database column type
+        $schema = $this->resolveFromDatabaseColumn($reflection, $property);
+        if ($schema !== null) {
+            return $schema;
+        }
+
         return null;
     }
 
@@ -296,6 +308,57 @@ class EloquentModelAnalyzer
         }
     }
 
+    private function resolveFromPhpDocProperty(\ReflectionClass $reflection, string $property): ?SchemaObject
+    {
+        // Walk up the class hierarchy (includes IDE helper stubs / base classes)
+        $current = $reflection;
+        while ($current !== false) {
+            $docComment = $current->getDocComment();
+            if ($docComment !== false) {
+                // Match @property Type $name or @property-read Type $name
+                if (preg_match_all('/@property(?:-read)?\s+([^\s$]+)\s+\$(\w+)/', $docComment, $matches, PREG_SET_ORDER)) {
+                    foreach ($matches as $match) {
+                        if ($match[2] === $property) {
+                            return $this->typeMapper->mapPhpType($match[1]);
+                        }
+                    }
+                }
+            }
+            $current = $current->getParentClass();
+        }
+
+        return null;
+    }
+
+    private function resolveFromDatabaseColumn(\ReflectionClass $reflection, string $property): ?SchemaObject
+    {
+        try {
+            $instance = $reflection->newInstanceWithoutConstructor();
+            $table = $instance->getTable();
+            $connection = $instance->getConnectionName();
+
+            $schema = \Illuminate\Support\Facades\Schema::connection($connection);
+            if (! $schema->hasColumn($table, $property)) {
+                return null;
+            }
+
+            $columnType = $schema->getColumnType($table, $property);
+
+            return match ($columnType) {
+                'integer', 'bigint', 'smallint', 'tinyint' => SchemaObject::integer(),
+                'float', 'double', 'decimal' => SchemaObject::number('double'),
+                'boolean' => SchemaObject::boolean(),
+                'date' => SchemaObject::string('date'),
+                'datetime', 'timestamp' => SchemaObject::string('date-time'),
+                'json', 'jsonb' => SchemaObject::object(),
+                'text', 'string', 'char', 'varchar' => SchemaObject::string(),
+                default => SchemaObject::string(),
+            };
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
     private function castToSchema(string $castType): ?SchemaObject
     {
         // Handle cast classes like 'decimal:2'
@@ -316,7 +379,6 @@ class EloquentModelAnalyzer
             $baseCast === 'encrypted' => SchemaObject::string(),
             $baseCast === 'hashed' => SchemaObject::string(),
             enum_exists($baseCast) => $this->typeMapper->mapEnum($baseCast),
-            class_exists($baseCast) && enum_exists($baseCast) => $this->typeMapper->mapEnum($baseCast),
             class_exists($baseCast) => $this->resolveCustomCastType($baseCast),
             default => null,
         };

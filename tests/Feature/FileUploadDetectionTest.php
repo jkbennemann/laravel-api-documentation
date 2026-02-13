@@ -46,6 +46,7 @@ class FileUploadDetectionTest extends TestCase
         $spec = $this->generateSpec();
 
         $schema = $spec['paths']['/api/documents']['post']['requestBody']['content']['multipart/form-data']['schema'];
+        $schema = $this->resolveSchemaRef($schema, $spec);
         $documentProp = $schema['properties']['document'] ?? null;
 
         expect($documentProp)->not()->toBeNull();
@@ -60,6 +61,7 @@ class FileUploadDetectionTest extends TestCase
         $spec = $this->generateSpec();
 
         $schema = $spec['paths']['/api/documents']['post']['requestBody']['content']['multipart/form-data']['schema'];
+        $schema = $this->resolveSchemaRef($schema, $spec);
         $thumbnailProp = $schema['properties']['thumbnail'] ?? null;
 
         expect($thumbnailProp)->not()->toBeNull();
@@ -74,6 +76,7 @@ class FileUploadDetectionTest extends TestCase
         $spec = $this->generateSpec();
 
         $schema = $spec['paths']['/api/documents']['post']['requestBody']['content']['multipart/form-data']['schema'];
+        $schema = $this->resolveSchemaRef($schema, $spec);
         $documentProp = $schema['properties']['document'] ?? null;
 
         expect($documentProp)->not()->toBeNull();
@@ -100,6 +103,7 @@ class FileUploadDetectionTest extends TestCase
         $spec = $this->generateSpec();
 
         $schema = $spec['paths']['/api/documents']['post']['requestBody']['content']['multipart/form-data']['schema'];
+        $schema = $this->resolveSchemaRef($schema, $spec);
 
         // title is a regular string field alongside file fields
         $titleProp = $schema['properties']['title'] ?? null;

@@ -56,6 +56,7 @@ class CustomExceptionHandlerTest extends TestCase
 
         $schema = $operation['responses']['401']['content']['application/json']['schema'] ?? null;
         expect($schema)->not()->toBeNull();
+        $schema = $this->resolveSchemaRef($schema, $spec);
         expect($schema['properties'])->toHaveKey('timestamp');
         expect($schema['properties'])->toHaveKey('message');
         expect($schema['properties'])->toHaveKey('path');
@@ -80,6 +81,7 @@ class CustomExceptionHandlerTest extends TestCase
 
         $schema = $operation['responses']['404']['content']['application/json']['schema'] ?? null;
         expect($schema)->not()->toBeNull();
+        $schema = $this->resolveSchemaRef($schema, $spec);
         expect($schema['properties'])->toHaveKey('timestamp');
         expect($schema['properties'])->toHaveKey('message');
         expect($schema['properties'])->toHaveKey('path');
@@ -105,6 +107,7 @@ class CustomExceptionHandlerTest extends TestCase
 
         $schema = $operation['responses']['400']['content']['application/json']['schema'] ?? null;
         expect($schema)->not()->toBeNull();
+        $schema = $this->resolveSchemaRef($schema, $spec);
         expect($schema['properties'])->toHaveKey('timestamp');
         expect($schema['properties'])->toHaveKey('message');
     }
@@ -145,6 +148,7 @@ class CustomExceptionHandlerTest extends TestCase
 
         $schema = $operation['responses']['401']['content']['application/json']['schema'] ?? null;
         expect($schema)->not()->toBeNull();
+        $schema = $this->resolveSchemaRef($schema, $spec);
         expect($schema['properties'])->toHaveKey('message');
 
         // Default handler should NOT have envelope fields
@@ -170,6 +174,7 @@ class CustomExceptionHandlerTest extends TestCase
 
         $schema = $operation['responses']['400']['content']['application/json']['schema'] ?? null;
         expect($schema)->not()->toBeNull();
+        $schema = $this->resolveSchemaRef($schema, $spec);
         expect($schema['properties'])->toHaveKey('request_id');
         expect($schema['properties'])->toHaveKey('timestamp');
         expect($schema['properties'])->toHaveKey('details');
@@ -193,6 +198,7 @@ class CustomExceptionHandlerTest extends TestCase
 
         $schema = $operation['responses']['401']['content']['application/json']['schema'] ?? null;
         expect($schema)->not()->toBeNull();
+        $schema = $this->resolveSchemaRef($schema, $spec);
 
         // Message example should be "Unauthenticated." from the getMessage() match
         expect($schema['properties']['message']['example'])->toBe('Unauthenticated.');
@@ -216,6 +222,7 @@ class CustomExceptionHandlerTest extends TestCase
 
         $schema = $operation['responses']['404']['content']['application/json']['schema'] ?? null;
         expect($schema)->not()->toBeNull();
+        $schema = $this->resolveSchemaRef($schema, $spec);
         expect($schema['properties'])->toHaveKey('timestamp');
         expect($schema['properties'])->toHaveKey('path');
         expect($schema['properties'])->toHaveKey('request_id');
