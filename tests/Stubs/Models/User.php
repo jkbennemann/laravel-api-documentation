@@ -13,9 +13,15 @@ class User extends Model
         'id',
         'name',
         'email',
+        'password',
         'email_verified_at',
         'created_at',
         'updated_at',
+    ];
+
+    protected $hidden = [
+        'password',
+        'remember_token',
     ];
 
     protected $casts = [
@@ -23,6 +29,15 @@ class User extends Model
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
+
+    protected $appends = [
+        'display_name',
+    ];
+
+    public function getDisplayNameAttribute(): string
+    {
+        return $this->name.' ('.$this->email.')';
+    }
 
     public function posts(): HasMany
     {
