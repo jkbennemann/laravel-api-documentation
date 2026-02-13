@@ -8,6 +8,7 @@ use Illuminate\Console\Command;
 use JkBennemann\LaravelApiDocumentation\Discovery\RouteDiscovery;
 use JkBennemann\LaravelApiDocumentation\Emission\OpenApiEmitter;
 use JkBennemann\LaravelApiDocumentation\Output\MultiDomainWriter;
+use JkBennemann\LaravelApiDocumentation\Schema\ClassSchemaResolver;
 use JkBennemann\LaravelApiDocumentation\Schema\SchemaRegistry;
 
 class GenerateDocumentationCommand extends Command
@@ -28,6 +29,7 @@ class GenerateDocumentationCommand extends Command
         RouteDiscovery $discovery,
         OpenApiEmitter $emitter,
         SchemaRegistry $registry,
+        ClassSchemaResolver $classResolver,
     ): int {
         // Clear cache if requested
         if ($this->option('clear-cache')) {
@@ -67,8 +69,9 @@ class GenerateDocumentationCommand extends Command
 
             $this->info("Generating documentation: {$fileConfig['name']}...");
 
-            // Reset registry for each file
+            // Reset registry and resolver cache for each file
             $registry->reset();
+            $classResolver->reset();
 
             // Discover routes
             $contexts = $discovery->discover($fileKey === 'default' ? null : $fileKey);
@@ -144,7 +147,7 @@ class GenerateDocumentationCommand extends Command
 
         // Watch mode
         if ($this->option('watch')) {
-            return $this->watchAndRegenerate($discovery, $emitter, $registry);
+            return $this->watchAndRegenerate($discovery, $emitter, $registry, $classResolver);
         }
 
         return self::SUCCESS;
@@ -154,6 +157,7 @@ class GenerateDocumentationCommand extends Command
         RouteDiscovery $discovery,
         OpenApiEmitter $emitter,
         SchemaRegistry $registry,
+        ClassSchemaResolver $classResolver,
     ): int {
         $watchPaths = $this->resolveWatchPaths();
         $this->info('Watching for changes in: '.implode(', ', array_map('basename', $watchPaths)));
@@ -200,6 +204,7 @@ class GenerateDocumentationCommand extends Command
                     }
 
                     $registry->reset();
+                    $classResolver->reset();
                     $contexts = $discovery->discover($fileKey === 'default' ? null : $fileKey);
 
                     if (empty($contexts)) {
