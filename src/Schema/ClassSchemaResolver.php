@@ -21,6 +21,17 @@ class ClassSchemaResolver
     ) {}
 
     /**
+     * Clear the resolved class cache. Must be called when SchemaRegistry is reset
+     * (e.g. between multi-domain generation runs) so that nested $ref schemas
+     * are re-registered in the fresh registry.
+     */
+    public function reset(): void
+    {
+        $this->resolving = [];
+        $this->cache = [];
+    }
+
+    /**
      * Resolve a PHP class into a SchemaObject with typed properties.
      * Returns null for truly opaque/unresolvable classes.
      */
