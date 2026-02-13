@@ -384,12 +384,4 @@ None.
 - **Production Safety**: Multiple checks prevent capture from running in production
 - **File Permissions**: Captured response files are stored in `.schemas/` (should be gitignored for sensitive data)
 
-## Future Enhancements
-
-- [ ] PDF generation for commission statements
-- [ ] Email notifications for documentation updates
-- [ ] Advanced diff viewer for schema changes
-- [ ] Automatic validation in CI/CD pipelines
-- [ ] Integration with API testing tools
-
 ---
