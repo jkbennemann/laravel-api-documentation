@@ -48,7 +48,7 @@ class RouteDiscovery
             // Check documentation file assignment
             if ($documentationFile !== null) {
                 $docFiles = $this->resolveDocumentationFiles($routeInfo);
-                if (! in_array($documentationFile, $docFiles, true) && ! in_array('default', $docFiles, true)) {
+                if (! in_array($documentationFile, $docFiles, true)) {
                     continue;
                 }
             }
