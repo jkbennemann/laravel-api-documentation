@@ -575,6 +575,7 @@ class ReturnTypeAnalyzer implements ResponseExtractor
                 if ($statusCode !== null) {
                     $results[$statusCode] = new ResponseResult(
                         statusCode: $statusCode,
+                        schema: $this->abortSchema($statusCode),
                         description: $this->descriptionForStatus($statusCode),
                         source: 'ast:abort',
                     );
@@ -1199,9 +1200,27 @@ class ReturnTypeAnalyzer implements ResponseExtractor
             401 => 'Unauthorized',
             403 => 'Forbidden',
             404 => 'Not Found',
+            405 => 'Method Not Allowed',
             422 => 'Unprocessable Entity',
             500 => 'Internal Server Error',
+            501 => 'Not Implemented',
             default => 'Response',
         };
+    }
+
+    /**
+     * Build a standard error schema for abort() responses.
+     */
+    private function abortSchema(int $statusCode): SchemaObject
+    {
+        return SchemaObject::object(
+            properties: [
+                'message' => new SchemaObject(
+                    type: 'string',
+                    example: $this->descriptionForStatus($statusCode),
+                ),
+            ],
+            required: ['message'],
+        );
     }
 }

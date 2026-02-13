@@ -279,6 +279,166 @@ class SyntheticExampleGenerationTest extends TestCase
         expect($result->properties['email']->example)->toBe('user@example.com');
     }
 
+    // --- Composition schema tests ---
+
+    public function test_one_of_sub_schemas_get_examples(): void
+    {
+        $schema = new SchemaObject(
+            oneOf: [
+                SchemaObject::object([
+                    'email' => SchemaObject::string(),
+                    'role' => SchemaObject::string(),
+                ]),
+                SchemaObject::object([
+                    'name' => SchemaObject::string(),
+                ]),
+            ],
+        );
+
+        $result = $this->generator->generate($schema);
+
+        expect($result->oneOf[0]->properties['email']->example)->toBe('user@example.com');
+        expect($result->oneOf[0]->properties['role']->example)->toBeString();
+        expect($result->oneOf[1]->properties['name']->example)->toBe('Example name');
+    }
+
+    public function test_all_of_sub_schemas_get_examples(): void
+    {
+        $schema = new SchemaObject(
+            allOf: [
+                SchemaObject::object([
+                    'id' => SchemaObject::integer(),
+                ]),
+                SchemaObject::object([
+                    'title' => SchemaObject::string(),
+                ]),
+            ],
+        );
+
+        $result = $this->generator->generate($schema);
+
+        expect($result->allOf[0]->properties['id']->example)->toBe(1);
+        expect($result->allOf[1]->properties['title']->example)->toBe('Example title');
+    }
+
+    public function test_any_of_sub_schemas_get_examples(): void
+    {
+        $schema = new SchemaObject(
+            anyOf: [
+                SchemaObject::string(),
+                SchemaObject::integer(),
+            ],
+        );
+
+        $result = $this->generator->generate($schema);
+
+        expect($result->anyOf[0]->example)->toBe('string');
+        expect($result->anyOf[1]->example)->toBe(1);
+    }
+
+    public function test_properties_with_non_object_type_get_examples(): void
+    {
+        // Simulates wildcard validation rules where type is "array" but properties exist
+        $schema = new SchemaObject(
+            type: 'array',
+            properties: [
+                'first_name' => SchemaObject::string(),
+                'city' => SchemaObject::string(),
+            ],
+        );
+
+        $result = $this->generator->generate($schema);
+
+        expect($result->properties['first_name']->example)->toBe('John');
+        expect($result->properties['city']->example)->toBe('New York');
+    }
+
+    public function test_person_name_heuristics(): void
+    {
+        $schema = SchemaObject::object([
+            'first_name' => SchemaObject::string(),
+            'last_name' => SchemaObject::string(),
+            'company' => SchemaObject::string(),
+            'username' => SchemaObject::string(),
+        ]);
+
+        $result = $this->generator->generate($schema);
+
+        expect($result->properties['first_name']->example)->toBe('John');
+        expect($result->properties['last_name']->example)->toBe('Doe');
+        expect($result->properties['company']->example)->toBe('Acme Inc.');
+        expect($result->properties['username']->example)->toBe('johndoe');
+    }
+
+    public function test_address_heuristics(): void
+    {
+        $schema = SchemaObject::object([
+            'line1' => SchemaObject::string(),
+            'line2' => SchemaObject::string(),
+            'state' => SchemaObject::string(),
+            'currency' => SchemaObject::string(),
+        ]);
+
+        $result = $this->generator->generate($schema);
+
+        expect($result->properties['line1']->example)->toBe('123 Main St');
+        expect($result->properties['line2']->example)->toBe('Suite 100');
+        expect($result->properties['state']->example)->toBe('NY');
+        expect($result->properties['currency']->example)->toBe('USD');
+    }
+
+    public function test_pagination_heuristics(): void
+    {
+        $schema = SchemaObject::object([
+            'current_page' => SchemaObject::integer(),
+            'last_page' => SchemaObject::integer(),
+            'total' => SchemaObject::integer(),
+            'from' => new SchemaObject(type: 'integer', nullable: true),
+            'to' => new SchemaObject(type: 'integer', nullable: true),
+            'path' => SchemaObject::string(),
+        ]);
+
+        $result = $this->generator->generate($schema);
+
+        expect($result->properties['current_page']->example)->toBe(1);
+        expect($result->properties['last_page']->example)->toBe(10);
+        expect($result->properties['total']->example)->toBe(100);
+        expect($result->properties['from']->example)->toBe(1);
+        expect($result->properties['to']->example)->toBe(15);
+        expect($result->properties['path']->example)->toBe('/api/resource');
+    }
+
+    public function test_boolean_field_name_heuristics(): void
+    {
+        $schema = SchemaObject::object([
+            'is_active' => SchemaObject::boolean(),
+            'has_permission' => SchemaObject::boolean(),
+            'enabled' => SchemaObject::boolean(),
+        ]);
+
+        $result = $this->generator->generate($schema);
+
+        expect($result->properties['is_active']->example)->toBe(true);
+        expect($result->properties['has_permission']->example)->toBe(true);
+        expect($result->properties['enabled']->example)->toBe(true);
+    }
+
+    public function test_time_format_gets_example(): void
+    {
+        $schema = new SchemaObject(type: 'string', format: 'time');
+        $result = $this->generator->generate($schema);
+
+        expect($result->example)->toBe('10:30:00');
+    }
+
+    public function test_byte_format_gets_example(): void
+    {
+        $schema = new SchemaObject(type: 'string', format: 'byte');
+        $result = $this->generator->generate($schema);
+
+        expect($result->example)->toBe('U3dhZ2dlciByb2Nrcw==');
+    }
+
     // --- Integration tests ---
 
     public function test_full_pipeline_request_body_has_examples(): void

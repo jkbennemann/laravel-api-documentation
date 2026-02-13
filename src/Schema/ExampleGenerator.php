@@ -19,8 +19,8 @@ class ExampleGenerator
             return $schema;
         }
 
-        // For objects, recurse into properties (don't set example on the object itself)
-        if ($schema->type === 'object' && ! empty($schema->properties)) {
+        // Schemas with properties — recurse into each property (don't set example on the object itself)
+        if (! empty($schema->properties)) {
             $modified = false;
             $newProperties = [];
 
@@ -64,6 +64,11 @@ class ExampleGenerator
             return $schema;
         }
 
+        // Composition schemas — recurse into sub-schemas
+        if ($schema->oneOf !== null || $schema->anyOf !== null || $schema->allOf !== null) {
+            return $this->generateForComposition($schema);
+        }
+
         // For scalar leaves, generate an example
         return $this->generateForSchema($schema, null);
     }
@@ -77,12 +82,17 @@ class ExampleGenerator
             return $schema;
         }
 
-        // Recurse into objects and arrays first
-        if ($schema->type === 'object' && ! empty($schema->properties)) {
+        // Recurse into schemas with properties (regardless of type)
+        if (! empty($schema->properties)) {
             return $this->generate($schema);
         }
 
         if ($schema->type === 'array' && $schema->items !== null) {
+            return $this->generate($schema);
+        }
+
+        // Recurse into composition schemas
+        if ($schema->oneOf !== null || $schema->anyOf !== null || $schema->allOf !== null) {
             return $this->generate($schema);
         }
 
@@ -101,6 +111,33 @@ class ExampleGenerator
         $clone->example = $example;
 
         return $clone;
+    }
+
+    /**
+     * Recurse into oneOf/anyOf/allOf sub-schemas to fill in examples.
+     */
+    private function generateForComposition(SchemaObject $schema): SchemaObject
+    {
+        $modified = false;
+        $clone = clone $schema;
+
+        foreach (['oneOf', 'anyOf', 'allOf'] as $key) {
+            if ($schema->{$key} === null) {
+                continue;
+            }
+
+            $newSchemas = [];
+            foreach ($schema->{$key} as $subSchema) {
+                $generated = $this->generate($subSchema);
+                if ($generated !== $subSchema) {
+                    $modified = true;
+                }
+                $newSchemas[] = $generated;
+            }
+            $clone->{$key} = $newSchemas;
+        }
+
+        return $modified ? $clone : $schema;
     }
 
     /**
@@ -151,7 +188,12 @@ class ExampleGenerator
             }
         }
 
-        // 6. Type-based fallback
+        // 6. String constraint heuristics (maxLength gives a reasonable-length example)
+        if ($schema->type === 'string' && $schema->maxLength !== null && $schema->maxLength <= 10) {
+            return 'abc';
+        }
+
+        // 7. Type-based fallback
         return $this->generateFromType($schema->type);
     }
 
@@ -169,23 +211,25 @@ class ExampleGenerator
             return 'password123';
         }
 
-        // Token
-        if (str_contains($lower, 'token')) {
+        // Token / secret / key (auth-related)
+        if (str_contains($lower, 'token') || str_contains($lower, 'secret') || $lower === 'api_key') {
             return 'abc123def456';
         }
 
         // Phone
-        if (str_contains($lower, 'phone')) {
+        if (str_contains($lower, 'phone') || str_contains($lower, 'mobile') || str_contains($lower, 'fax')) {
             return '+1-555-555-5555';
         }
 
-        // URL/link/href
-        if (str_contains($lower, 'url') || str_contains($lower, 'link') || str_contains($lower, 'href')) {
+        // URL/link/href/website/homepage
+        if (str_contains($lower, 'url') || str_contains($lower, 'link') || str_contains($lower, 'href')
+            || str_contains($lower, 'website') || str_contains($lower, 'homepage')) {
             return 'https://example.com';
         }
 
-        // Image/avatar/photo
-        if (str_contains($lower, 'image') || str_contains($lower, 'avatar') || str_contains($lower, 'photo')) {
+        // Image/avatar/photo/logo/icon/thumbnail
+        if (str_contains($lower, 'image') || str_contains($lower, 'avatar') || str_contains($lower, 'photo')
+            || str_contains($lower, 'logo') || str_contains($lower, 'icon') || str_contains($lower, 'thumbnail')) {
             return 'https://example.com/image.jpg';
         }
 
@@ -203,16 +247,43 @@ class ExampleGenerator
         if (str_ends_with($lower, '_at') || str_ends_with($lower, 'datetime')) {
             return '2025-01-15T10:30:00Z';
         }
-        if (str_contains($lower, 'date')) {
+        if (str_contains($lower, 'date') || str_ends_with($lower, '_on')) {
             return '2025-01-15';
         }
 
+        // Person name fields (before generic 'name' match and before 'first'/'last')
+        if (str_contains($lower, 'first_name') || str_contains($lower, 'firstname') || $lower === 'given_name') {
+            return 'John';
+        }
+        if (str_contains($lower, 'last_name') || str_contains($lower, 'lastname')
+            || $lower === 'surname' || $lower === 'family_name') {
+            return 'Doe';
+        }
+        if ($lower === 'full_name' || $lower === 'fullname' || $lower === 'display_name') {
+            return 'John Doe';
+        }
+        if ($lower === 'username' || $lower === 'user_name' || $lower === 'login') {
+            return 'johndoe';
+        }
+        if ($lower === 'nickname') {
+            return 'Johnny';
+        }
+
         // Address fields (before count/quantity to avoid "country" matching "count")
-        if (str_contains($lower, 'address')) {
+        if (str_contains($lower, 'address') || $lower === 'line1' || $lower === 'street') {
             return '123 Main St';
+        }
+        if ($lower === 'line2') {
+            return 'Suite 100';
+        }
+        if ($lower === 'line3' || $lower === 'line4') {
+            return '';
         }
         if (str_contains($lower, 'city')) {
             return 'New York';
+        }
+        if (str_contains($lower, 'state') || str_contains($lower, 'province') || str_contains($lower, 'region')) {
+            return 'NY';
         }
         if (str_contains($lower, 'country')) {
             return 'US';
@@ -221,9 +292,38 @@ class ExampleGenerator
             return '10001';
         }
 
-        // Amount/price/cost
-        if (str_contains($lower, 'amount') || str_contains($lower, 'price') || str_contains($lower, 'cost')) {
-            return 99.99;
+        // Company/organization
+        if (str_contains($lower, 'company') || str_contains($lower, 'organization') || str_contains($lower, 'organisation')) {
+            return 'Acme Inc.';
+        }
+
+        // Currency
+        if ($lower === 'currency' || $lower === 'currency_code') {
+            return 'USD';
+        }
+        if ($lower === 'locale' || $lower === 'language' || $lower === 'lang') {
+            return 'en';
+        }
+
+        // Amount/price/cost/fee/total/balance/rate
+        if (str_contains($lower, 'amount') || str_contains($lower, 'price') || str_contains($lower, 'cost')
+            || str_contains($lower, 'fee') || str_contains($lower, 'balance') || str_contains($lower, 'rate')
+            || str_contains($lower, 'subtotal') || str_contains($lower, 'discount')) {
+            return $type === 'integer' ? 100 : 99.99;
+        }
+
+        // Percentage/ratio
+        if (str_contains($lower, 'percent') || str_contains($lower, 'ratio')) {
+            return $type === 'integer' ? 50 : 0.5;
+        }
+
+        // Weight/size/width/height/length/depth/duration
+        if (str_contains($lower, 'weight') || str_contains($lower, 'width') || str_contains($lower, 'height')
+            || str_contains($lower, 'length') || str_contains($lower, 'depth') || str_contains($lower, 'size')) {
+            return $type === 'integer' ? 100 : 10.5;
+        }
+        if (str_contains($lower, 'duration') || str_contains($lower, 'timeout') || str_contains($lower, 'interval')) {
+            return 30;
         }
 
         // Latitude/longitude
@@ -240,16 +340,51 @@ class ExampleGenerator
         }
 
         // Pagination
-        if ($lower === 'page') {
+        if ($lower === 'page' || $lower === 'current_page') {
             return 1;
         }
-        if ($lower === 'per_page' || $lower === 'limit') {
+        if ($lower === 'per_page' || $lower === 'limit' || $lower === 'page_size') {
             return 15;
         }
+        if ($lower === 'total' || $lower === 'total_count' || $lower === 'total_items') {
+            return 100;
+        }
+        if ($lower === 'last_page' || $lower === 'total_pages') {
+            return 10;
+        }
+        if ($lower === 'from') {
+            return $type === 'integer' ? 1 : null;
+        }
+        if ($lower === 'to') {
+            return $type === 'integer' ? 15 : null;
+        }
 
-        // Count/quantity
-        if (str_contains($lower, 'count') || str_contains($lower, 'quantity')) {
+        // Count/quantity/number
+        if (str_contains($lower, 'count') || str_contains($lower, 'quantity') || $lower === 'qty') {
             return 1;
+        }
+
+        // Priority/position/rank/level
+        if (str_contains($lower, 'priority') || str_contains($lower, 'position') || str_contains($lower, 'rank')
+            || str_contains($lower, 'level') || $lower === 'order' || $lower === 'sort_order') {
+            return 1;
+        }
+
+        // Version
+        if ($lower === 'version') {
+            return '1.0.0';
+        }
+
+        // Path (filesystem or URL path)
+        if ($lower === 'path') {
+            return '/api/resource';
+        }
+
+        // Content/body/text/message/note/comment/summary
+        if ($lower === 'body' || $lower === 'content' || $lower === 'text' || $lower === 'message'
+            || $lower === 'note' || $lower === 'comment' || $lower === 'summary' || $lower === 'bio'
+            || $lower === 'excerpt' || $lower === 'reason') {
+            return 'Example text content';
         }
 
         // ID fields
@@ -262,29 +397,56 @@ class ExampleGenerator
             return 'active';
         }
 
-        // Type
-        if ($lower === 'type') {
+        // Type/kind/category
+        if ($lower === 'type' || $lower === 'kind' || $lower === 'category') {
             return 'default';
         }
 
-        // Sort/order
-        if (str_contains($lower, 'sort') || str_contains($lower, 'order')) {
+        // Method (HTTP or payment)
+        if ($lower === 'method') {
+            return 'GET';
+        }
+
+        // Format/mime_type
+        if ($lower === 'format' || $lower === 'mime_type' || $lower === 'content_type') {
+            return 'application/json';
+        }
+
+        // Sort/order direction
+        if (str_contains($lower, 'sort') || $lower === 'direction') {
             return 'asc';
         }
 
-        // Title
-        if (str_contains($lower, 'title')) {
+        // Title/subject/label/headline
+        if (str_contains($lower, 'title') || str_contains($lower, 'subject') || str_contains($lower, 'headline')) {
             return 'Example title';
         }
 
-        // Name fields
+        // Label/tag
+        if ($lower === 'label' || $lower === 'tag') {
+            return 'example-label';
+        }
+
+        // Name fields (generic, after specific name matches)
         if (str_contains($lower, 'name')) {
             return 'Example name';
         }
 
         // Description
         if (str_contains($lower, 'description')) {
-            return 'A description';
+            return 'A detailed description of the resource';
+        }
+
+        // Value (generic)
+        if ($lower === 'value' || $lower === 'data' || $lower === 'result') {
+            return 'string';
+        }
+
+        // Boolean-like field names
+        if (str_starts_with($lower, 'is_') || str_starts_with($lower, 'has_') || str_starts_with($lower, 'can_')
+            || str_starts_with($lower, 'should_') || str_starts_with($lower, 'allow')
+            || $lower === 'active' || $lower === 'enabled' || $lower === 'visible' || $lower === 'published') {
+            return true;
         }
 
         return null;
@@ -297,11 +459,15 @@ class ExampleGenerator
             'uuid' => '550e8400-e29b-41d4-a716-446655440000',
             'date' => '2025-01-15',
             'date-time' => '2025-01-15T10:30:00Z',
+            'time' => '10:30:00',
             'uri', 'url' => 'https://example.com',
+            'hostname' => 'example.com',
             'ipv4' => '192.168.1.1',
             'ipv6' => '2001:0db8:85a3::8a2e:0370:7334',
+            'password' => 'password123',
+            'byte' => 'U3dhZ2dlciByb2Nrcw==',
             'json' => '{}',
-            'binary' => null, // No useful example for binary
+            'binary' => null,
             default => null,
         };
     }
