@@ -6,11 +6,13 @@ namespace JkBennemann\LaravelApiDocumentation\Analyzers\Request;
 
 use JkBennemann\LaravelApiDocumentation\Contracts\RequestBodyExtractor;
 use JkBennemann\LaravelApiDocumentation\Data\AnalysisContext;
+use JkBennemann\LaravelApiDocumentation\Data\SchemaObject;
 use JkBennemann\LaravelApiDocumentation\Data\SchemaResult;
+use JkBennemann\LaravelApiDocumentation\Schema\SchemaRegistry;
 use JkBennemann\LaravelApiDocumentation\Schema\ValidationRuleMapper;
 use PhpParser\Node;
+use PhpParser\Node\ArrayItem;
 use PhpParser\Node\Expr\Array_;
-use PhpParser\Node\Expr\ArrayItem;
 use PhpParser\Node\Expr\MethodCall;
 use PhpParser\Node\Scalar\String_;
 use PhpParser\NodeFinder;
@@ -19,9 +21,9 @@ class InlineValidationAnalyzer implements RequestBodyExtractor
 {
     private ValidationRuleMapper $ruleMapper;
 
-    public function __construct(array $config = [])
+    public function __construct(array $config = [], private readonly ?SchemaRegistry $schemaRegistry = null)
     {
-        $this->ruleMapper = new ValidationRuleMapper($config);
+        $this->ruleMapper = new ValidationRuleMapper($config, $schemaRegistry);
     }
 
     public function extract(AnalysisContext $ctx): ?SchemaResult
@@ -36,6 +38,17 @@ class InlineValidationAnalyzer implements RequestBodyExtractor
         }
 
         $schema = $this->ruleMapper->mapAllRules($rules);
+
+        if ($this->schemaRegistry !== null && $ctx->controllerClass() !== null) {
+            $controllerName = class_basename($ctx->controllerClass());
+            $methodName = $ctx->reflectionMethod?->getName() ?? 'invoke';
+            $name = $controllerName.'_'.$methodName;
+            $registered = $this->schemaRegistry->registerIfComplex($name, $schema);
+            if ($registered instanceof SchemaObject) {
+                $schema = $registered;
+            }
+        }
+
         $contentType = $this->ruleMapper->hasFileUpload($rules)
             ? 'multipart/form-data'
             : 'application/json';

@@ -85,6 +85,7 @@ class TagAndSummaryInferenceTest extends TestCase
 
         $schema = $operation['requestBody']['content']['application/json']['schema'] ?? null;
         expect($schema)->not()->toBeNull();
+        $schema = $this->resolveSchemaRef($schema, $spec);
 
         // Should have password_confirmation field
         expect($schema['properties'])->toHaveKey('password_confirmation');
