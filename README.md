@@ -3,662 +3,1202 @@
 [![Latest Version on Packagist](https://img.shields.io/packagist/v/jkbennemann/laravel-api-documentation.svg?style=flat-square)](https://packagist.org/packages/jkbennemann/laravel-api-documentation)
 [![Total Downloads](https://img.shields.io/packagist/dt/jkbennemann/laravel-api-documentation.svg?style=flat-square)](https://packagist.org/packages/jkbennemann/laravel-api-documentation)
 
-## Overview
+A zero-configuration OpenAPI 3.1.0 documentation generator for Laravel. Analyzes your routes, controllers, form requests, and responses using AST parsing, PHP reflection, and optional runtime capture - then outputs a complete, valid OpenAPI spec without you writing a single annotation.
 
-Laravel API Documentation is a powerful package that automatically generates OpenAPI 3.0 documentation from your Laravel application code. It eliminates the need to manually write and maintain API documentation by intelligently analyzing your routes, controllers, requests, and responses.
+## Requirements
 
-### Key Features
-
-- **🎯 Runtime Response Capture**: Achieve 95%+ accuracy by capturing real API responses during testing (NEW!)
-- **Zero-Config Operation**: Works out of the box with standard Laravel conventions
-- **Automatic Route Analysis**: Scans all routes and extracts path parameters, HTTP methods, and middleware
-- **Smart Request Analysis**: Extracts validation rules from FormRequest classes to document request parameters
-- **Dynamic Response Detection**: Analyzes controller return types and method bodies to document responses
-- **Spatie Data Integration**: First-class support for Spatie Laravel Data DTOs
-- **Resource Collection Support**: Handles JsonResource and ResourceCollection responses
-- **Attribute Enhancement**: Optional PHP 8 attributes for additional documentation control
-- **🔒 Production Safe**: Zero runtime overhead - capture only runs in local/testing environments
+- PHP 8.2+
+- Laravel 10, 11, or 12
 
 ## Installation
-
-### 1. Install via Composer
 
 ```bash
 composer require jkbennemann/laravel-api-documentation
 ```
 
-### 2. Publish Configuration (Optional)
+Publish the configuration file (optional):
 
 ```bash
 php artisan vendor:publish --tag="api-documentation-config"
 ```
 
-### 3. Link Storage Directory
-
-The package stores documentation in your storage directory. Make it accessible with:
+Generate your documentation:
 
 ```bash
-php artisan storage:link
+php artisan api:generate
 ```
 
-## Configuration
+That's it. The package discovers your routes, analyzes your code, and writes an OpenAPI 3.1.0 spec to `storage/app/public/api-documentation.json`.
 
-### Default Settings
+## Table of Contents
 
-Out of the box, the package:
-
-- Ignores vendor routes and `HEAD`/`OPTIONS` methods
-- Disables Swagger/ReDoc UIs by default (can be enabled in config)
-- Stores documentation at `storage/app/public/api-documentation.json`
-
-### Documentation Storage
-
-To include the generated documentation in version control, update your `.gitignore`:
-
-```bash
-# storage/app/public/.gitignore
-*
-!.gitignore
-!api-documentation.json
-```
-
-### Custom Storage Location
-
-For a more accessible location, add a custom disk in `config/filesystems.php`:
-
-```php
-'documentation' => [
-    'driver'     => 'local',
-    'root'       => public_path('docs'),
-    'url'        => env('APP_URL') . '/docs',
-    'visibility' => 'public',
-],
-```
-
-Then update your config:
-
-```php
-// config/laravel-api-documentation.php
-'storage' => [
-    'disk' => 'documentation',
-    'filename' => 'api-documentation.json',
-],
-```
-
-### CI/CD Integration
-
-Add documentation generation to your deployment workflow:
-
-```bash
-# In your deployment script
-php artisan documentation:generate
-```
-
-Or add to your `composer.json` scripts:
-
-```json
-"scripts": {
-    "post-deploy": [
-        "@php artisan documentation:generate"
-    ]
-}
-```
-
-## Usage
-
-### Quick Start with Runtime Capture (Recommended)
-
-For **95%+ accuracy**, enable runtime capture to use real API responses:
-
-```bash
-# 1. Enable capture in .env.local
-DOC_CAPTURE_MODE=true
-
-# 2. Run your tests (responses are automatically captured)
-composer test
-
-# 3. Generate documentation (uses captured + static analysis)
-php artisan documentation:generate
-```
-
-**That's it!** Your documentation now reflects actual API behavior with 95%+ accuracy.
-
-See [Runtime Capture Guide](RUNTIME_CAPTURE_GUIDE.md) for detailed information.
-
-### Basic Generation (Static Analysis Only)
-
-```bash
-php artisan documentation:generate
-```
-
-This command scans your application routes and generates an OpenAPI 3.0 specification file at your configured location using static code analysis (~70% accuracy).
-
-### Viewing Documentation
-
-By default, the documentation is accessible at:
-
-- `/documentation` - Default UI (Swagger if enabled)
-- `/documentation/swagger` - Swagger UI (if enabled)
-- `/documentation/redoc` - ReDoc UI (if enabled)
-
-To enable the UIs, update your configuration:
-
-```php
-// config/laravel-api-documentation.php
-'ui' => [
-    'enabled' => true,
-    'swagger' => true,
-    'redoc' => true,
-],
-```
-
-### Specifying Files to Generate
-
-Generate documentation for specific files only:
-
-```bash
-php artisan documentation:generate --file=api-v1
-```
-
-This generates `api-v1.json` based on your configuration settings.
+- [How It Works](#how-it-works)
+- [Quick Start](#quick-start)
+- [Commands](#commands)
+- [Runtime Capture](#runtime-capture)
+- [PHP Attributes](#php-attributes)
+- [Configuration](#configuration)
+- [Tags & Documentation](#tags--documentation)
+- [Documentation Viewers](#documentation-viewers)
+- [Output Formats](#output-formats)
+- [Plugin System](#plugin-system)
+- [Built-in Plugins](#built-in-plugins)
+- [Creating a Plugin](#creating-a-plugin)
+- [Integrations](#integrations)
+- [CI/CD Integration](#cicd-integration)
+- [Security](#security)
+- [Credits](#credits)
+- [License](#license)
 
 ## How It Works
 
-The package analyzes your Laravel application using several intelligent components:
+The package uses a 5-layer pipeline to generate documentation:
 
-1. **Route Analysis**: Scans all registered routes to identify controllers, HTTP methods, and path parameters
-2. **Controller Analysis**: Examines controller methods to determine response types and structures
-3. **Request Analysis**: Processes FormRequest classes to extract validation rules and convert them to OpenAPI parameters
-4. **Response Analysis**: Detects return types and analyzes method bodies to determine response structures
+```
+1. Route Discovery     Collects routes, applies filters, extracts metadata
+        |
+2. Analysis Pipeline   Chains priority-ordered analyzers for requests, responses,
+        |              query parameters, errors, and security schemes
+3. Schema Registry     Deduplicates schemas via content fingerprinting, manages $ref
+        |
+4. Merge Engine        Combines static analysis + runtime capture + attributes
+        |              (configurable priority: static_first or captured_first)
+5. OpenAPI Emission    Builds final spec, resolves references, writes output
+```
 
-## Key Features
+### What Gets Analyzed Automatically
 
-### Zero-Configuration Detection
+**Requests:**
+- `FormRequest` validation rules (types, formats, min/max, enums, patterns, required/optional)
+- Inline `$this->validate()` and `Validator::make()` calls
+- `$request->get()`, `$request->query()`, `$request->integer()` method calls in controller bodies
+- File upload detection (`file`, `image` rules) with automatic `multipart/form-data` content type
+- Nested parameter structures (`user.profile.name`)
 
-The package automatically detects and documents your API with minimal configuration:
+**Responses:**
+- Return type declarations (`JsonResource`, `JsonResponse`, `ResourceCollection`, Spatie `Data`)
+- Controller method body analysis (traces `response()->json([...])` return statements)
+- PHPDoc `@return` types including union types (`UserData|AdminData` produces `oneOf`)
+- Abort statements (`abort(404)`, `abort_if()`) for error responses
+- Paginated responses with `data`, `meta`, and `links` structure
+- `JsonResource::toArray()` analysis (property types, `$this->when()`, `$this->whenLoaded()`, `$this->merge()`)
 
-#### Response Type Detection
-- Analyzes controller return types (`JsonResponse`, `ResourceCollection`, etc.)
-- Examines method bodies when return types aren't declared
-- Supports union types (`@return UserData|AdminData`)
-- Generates proper paginated response structures with `data`, `meta`, and `links`
+**Query Parameters:**
+- `FormRequest` rules on GET routes become query parameters
+- PHPDoc `@queryParam` annotations
+- Pagination detection (`paginate()`, `simplePaginate()`, `cursorPaginate()`) adds `page`/`per_page` params
 
-#### Controller Support
-- Works with traditional and invokable controllers
-- Processes class-level and method-level attributes
-- Handles mixed controller architectures seamlessly
+**Errors:**
+- `FormRequest` presence adds `422` validation error
+- `auth`/`sanctum` middleware adds `401` unauthorized
+- `Gate`/`authorize` calls add `403` forbidden
+- Route model binding adds `404` not found
+- `throttle` middleware adds `429` rate limited
+- Custom exception handler analysis for app-specific error schemas
 
-#### Request Parameter Extraction
-- Extracts validation rules from FormRequest classes
-- Detects route parameters (`{id}`, `{user}`) automatically
-- Supports nested parameter structures (`user.profile.name`)
-- Handles parameters merged from route values in `prepareForValidation`
+**Security:**
+- `auth:sanctum`, `auth:api`, `jwt.auth` middleware detected as Bearer token auth
+- OAuth scopes extracted from `scope:` and `scopes:` middleware
+- Sanctum abilities extracted from `ability:` and `abilities:` middleware
 
-#### Validation & Type Detection
-- Converts Laravel validation rules to OpenAPI types and formats
-- Intelligently determines required vs. optional parameters
-- Maps validation rules to appropriate formats (`email` → `string` with `email` format)
+## Quick Start
 
-#### Resource & Collection Support
-- Distinguishes between arrays and object responses
-- Analyzes ResourceCollection for contained DTO types
-- Supports `DataCollectionOf` attributes for nested collections
+### Zero-Config (Static Analysis)
 
-## Recent Enhancements
+For a standard Laravel API, no configuration is needed:
 
-### Route Parameter Handling
-- **Route Value Detection**: Properly handles parameters merged from route values in `prepareForValidation`
-- **Parameter Exclusion**: Supports the `IgnoreDataParameter` attribute to exclude fields from body parameters
+```bash
+php artisan api:generate
+```
 
-### Spatie Data Integration
-- **Clean Schema Generation**: Excludes internal Spatie Data fields (`_additional` and `_data_context`) from documentation
-- **DataCollectionOf Support**: Properly documents nested collection structures with correct item types
-- **Union Type Support**: Handles PHP 8+ union types in Spatie Data objects
+The package reads your routes, controllers, form requests, and resources to produce a spec. This typically achieves ~70% schema accuracy, depending on how explicitly typed your code is.
 
-### Dynamic Response Analysis
-- **JsonResource Analysis**: Improved detection of dynamic properties in JsonResource responses
-- **Method Body Parsing**: Enhanced analysis of controller method bodies for response structure detection
-- **Paginated Response Support**: Accurate documentation of paginated responses with proper structure
+### With Runtime Capture (Recommended)
 
----
+Enable runtime capture to use real API responses from your test suite, bringing accuracy to 95%+:
 
-For more information on the OpenAPI specification, see [OpenAPI Specification](https://swagger.io/specification/).
+**1. Add to `phpunit.xml`:**
 
-## Enhancing Documentation with Attributes
+```xml
+<php>
+    <env name="DOC_CAPTURE_MODE" value="true"/>
+</php>
+```
 
-While the package works automatically, you can enhance your documentation using PHP 8 attributes.
+**2. Register the middleware in your test setup** (e.g., `TestCase.php` or a service provider used during testing):
 
-### Controller Method Attributes
+```php
+use JkBennemann\LaravelApiDocumentation\Middleware\CaptureApiResponseMiddleware;
+
+// In a test service provider or TestCase::setUp()
+$this->app['router']->pushMiddlewareToGroup('api', CaptureApiResponseMiddleware::class);
+```
+
+**3. Run your tests, then generate:**
+
+```bash
+php artisan test
+php artisan api:generate
+```
+
+The middleware captures request/response data to `.schemas/responses/` during test runs. The generator merges this with static analysis to produce accurate schemas with real examples. See [Runtime Capture](#runtime-capture) for details.
+
+### With Attributes (Precision)
+
+For routes where auto-detection falls short (proxy controllers, dynamic responses), add PHP 8 attributes:
+
+```php
+use JkBennemann\LaravelApiDocumentation\Attributes\{Tag, Summary, DataResponse};
+
+#[Tag('Users')]
+#[Summary('List all users')]
+#[DataResponse(200, description: 'Paginated user list', resource: UserResource::class)]
+public function index(): ResourceCollection
+{
+    return UserResource::collection(User::paginate());
+}
+```
+
+## Commands
+
+### `api:generate` - Generate Documentation
+
+```bash
+php artisan api:generate [options]
+```
+
+| Option | Description |
+|---|---|
+| `--format=json` | Output format: `json`, `yaml`, or `postman` |
+| `--domain=` | Generate for a specific domain only |
+| `--route=` | Generate for a single route URI (for debugging) |
+| `--method=GET` | HTTP method when using `--route` |
+| `--dev` | Include development servers in output |
+| `--clear-cache` | Clear AST cache before generating |
+| `--verbose-analysis` | Show analyzer decisions during generation |
+| `--watch` | Watch for file changes and regenerate automatically |
+
+**Examples:**
+
+```bash
+# Standard generation
+php artisan api:generate
+
+# YAML output
+php artisan api:generate --format=yaml
+
+# Debug a single route
+php artisan api:generate --route=api/users --method=GET --verbose-analysis
+
+# Watch mode during development
+php artisan api:generate --watch
+
+# Export as Postman collection
+php artisan api:generate --format=postman
+```
+
+### `api:lint` - Lint Spec Quality
+
+```bash
+php artisan api:lint [options]
+```
+
+| Option | Description |
+|---|---|
+| `--file=` | Path to an existing OpenAPI JSON file to lint |
+| `--domain=` | Generate and lint a specific domain |
+| `--json` | Output results as JSON |
+
+Reports coverage (summaries, descriptions, examples, error responses, request/response bodies), issues (errors, warnings), and a quality score (0-100) with a letter grade.
+
+```bash
+php artisan api:lint
+# Score: 82/100 (B)
+# Coverage: summaries 95%, descriptions 60%, examples 80%
+```
+
+### `api:diff` - Detect Breaking Changes
+
+```bash
+php artisan api:diff <old-spec> <new-spec> [options]
+```
+
+| Option | Description |
+|---|---|
+| `--fail-on-breaking` | Exit with code 1 if breaking changes are found |
+| `--json` | Output results as JSON |
+
+Compares two OpenAPI specs and reports breaking vs non-breaking changes. Detects removed endpoints, removed response fields, type changes, new required parameters, and added auth requirements.
+
+```bash
+# Compare specs
+php artisan api:diff public/api-v1.json public/api-v2.json
+
+# Use in CI to block breaking changes
+php artisan api:diff old.json new.json --fail-on-breaking
+```
+
+### `api:types` - Generate TypeScript Definitions
+
+```bash
+php artisan api:types [options]
+```
+
+| Option | Description |
+|---|---|
+| `--output=` | Output file path (default: `resources/js/types/api.d.ts`) |
+| `--file=` | Path to an existing OpenAPI JSON file |
+| `--stdout` | Print to stdout instead of writing to file |
+
+Generates TypeScript interfaces from your OpenAPI component schemas, including request/response types for operations that have an `operationId`.
+
+### `api:clear-cache` - Clear Caches
+
+```bash
+php artisan api:clear-cache [options]
+```
+
+| Option | Description |
+|---|---|
+| `--ast` | Clear AST analysis cache only |
+| `--captures` | Clear captured responses only |
+
+Without flags, clears both AST and capture caches.
+
+### `api:plugins` - List Registered Plugins
+
+```bash
+php artisan api:plugins
+```
+
+Shows all registered plugins with their names, priorities, and capabilities (which interfaces they implement).
+
+## Runtime Capture
+
+Runtime capture records real HTTP request/response data during your test runs. This data is then merged with static analysis during generation.
+
+### How It Works
+
+1. The `CaptureApiResponseMiddleware` intercepts API responses in `local`/`testing` environments (never in production)
+2. For each response, it infers an OpenAPI schema from the JSON structure and stores it to `.schemas/responses/`
+3. Captures are **idempotent** - if the schema structure hasn't changed between test runs, the file is not rewritten (no noisy git diffs)
+4. Sensitive data (passwords, tokens, API keys, credit card numbers) is automatically redacted
+5. During `api:generate`, the captured schemas are merged with static analysis results
+
+### Configuration
+
+In `config/api-documentation.php`:
+
+```php
+'capture' => [
+    'enabled' => env('DOC_CAPTURE_MODE', false),
+    'storage_path' => base_path('.schemas/responses'),
+    'capture' => [
+        'requests'  => true,   // Capture request bodies and query params
+        'responses' => true,   // Capture response bodies
+        'headers'   => true,   // Capture relevant headers
+        'examples'  => true,   // Store sanitized examples
+    ],
+    'sanitize' => [
+        'enabled' => true,
+        'sensitive_keys' => [
+            'password', 'token', 'secret', 'api_key', 'access_token',
+            'credit_card', 'cvv', 'ssn', // ... and more
+        ],
+        'redacted_value' => '***REDACTED***',
+    ],
+    'rules' => [
+        'max_size' => 1024 * 100,  // Skip responses over 100KB
+        'exclude_routes' => ['telescope/*', 'horizon/*', '_debugbar/*', 'sanctum/*'],
+    ],
+],
+```
+
+### Merge Priority
+
+Control whether static analysis or captured data takes precedence:
+
+```php
+'analysis' => [
+    'priority' => 'static_first',  // or 'captured_first'
+],
+```
+
+- **`static_first`** (default): Attributes > Static Analysis > Runtime Capture
+- **`captured_first`**: Attributes > Runtime Capture > Static Analysis
+
+### Version Control
+
+Consider committing `.schemas/responses/` to version control. Captures are idempotent, so unchanged schemas produce no git diffs. This gives you:
+- Documentation that works without running the full test suite
+- A record of your API's response shapes over time
+- Faster CI builds (skip test run, generate from committed captures)
+
+## PHP Attributes
+
+Attributes give you precise control when auto-detection needs help. They always take the highest priority.
+
+### `#[Tag]`
+
+Groups operations in the generated documentation. Applied at class or method level. Optionally includes a description (supports Markdown) that appears in ReDoc/Scalar as introductory content for the tag section.
 
 ```php
 use JkBennemann\LaravelApiDocumentation\Attributes\Tag;
-use JkBennemann\LaravelApiDocumentation\Attributes\Summary;
-use JkBennemann\LaravelApiDocumentation\Attributes\Description;
-use JkBennemann\LaravelApiDocumentation\Attributes\AdditionalDocumentation;
-use JkBennemann\LaravelApiDocumentation\Attributes\DataResponse;
 
-#[Tag('Authentication')]
-#[Summary('Login a user')]
-#[Description('Logs a user in with email and password credentials.')]
-#[AdditionalDocumentation(url: 'https://example.com/auth', description: 'Auth documentation')]
-#[DataResponse(200, description: 'Logged in user information', resource: UserResource::class)]
-#[DataResponse(401, description: 'Failed Authentication', resource: ['error' => 'string'])]
-public function login(LoginRequest $request)
-{
-    // Method implementation
-}
+#[Tag('Users')]
+class UserController extends Controller {}
+
+// With description
+#[Tag('Widgets', description: 'Operations for managing widgets and their configurations.')]
+public function index() {}
+
+// Multiple tags
+#[Tag(['Users', 'Admin'])]
+public function promoteUser() {}
 ```
 
-Available parameters:
-- (required) `status` (int) - The status code of the response
-- `description` (string) - A description of the response; *default:`''`*
-- `resource` (null | string | array) - The resource class or Spatie Data object class that is returned by the route (e.g. `UserResource::class`, `['id' => 'string']`, `null`); *default:`[]`*
-- `headers` (null | array) - An array of response headers that are returned by the route (e.g. `['X-Token' => 'string']`); *default:`[]`*
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `value` | `string\|array\|null` | `null` | Tag name or array of tag names |
+| `description` | `string\|null` | `null` | Tag description (Markdown supported). Can also be set via config. |
+
+> **Precedence:** Config `tags` descriptions override `#[Tag]` attribute descriptions. See [Tags & Documentation](#tags--documentation).
+
+### `#[Summary]` and `#[Description]`
+
+Set the operation summary (short) and description (detailed). Also inferred from PHPDoc if not provided.
 
 ```php
-# SampleController.php
+use JkBennemann\LaravelApiDocumentation\Attributes\Summary;
+use JkBennemann\LaravelApiDocumentation\Attributes\Description;
+
+#[Summary('List all users')]
+#[Description('Returns a paginated list of users with optional filtering by status and role.')]
+public function index() {}
+```
+
+### `#[DataResponse]`
+
+Define response schemas explicitly. Repeatable for multiple status codes.
+
+```php
 use JkBennemann\LaravelApiDocumentation\Attributes\DataResponse;
 
-//..
-#[DataResponse(200, description: 'Logged in user information', resource: UserResource::class, headers: ['X-Token' => 'Token for the user to be used to issue API calls',])]
-#[DataResponse(401, description: 'Failed Authentication', resource: ['error' => 'string'])]
-public function index()
+#[DataResponse(200, description: 'User details', resource: UserResource::class)]
+#[DataResponse(404, description: 'User not found', resource: ['message' => 'string'])]
+public function show(string $id) {}
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `status` | `int` | *(required)* | HTTP status code |
+| `description` | `string` | `''` | Response description |
+| `resource` | `string\|array\|null` | `[]` | Resource class, Spatie Data class, or inline schema |
+| `headers` | `array` | `[]` | Response headers (`['X-Token' => 'description']`) |
+| `isCollection` | `bool` | `false` | Whether the response is a collection |
+
+### `#[Parameter]`
+
+Enhance request body or response properties. Applied at class level (resources) or method level (form requests). Repeatable.
+
+```php
+use JkBennemann\LaravelApiDocumentation\Attributes\Parameter;
+
+// On a FormRequest's rules() method
+#[Parameter(name: 'email', required: true, format: 'email', description: 'User email', example: 'john@example.com')]
+#[Parameter(name: 'role', type: 'string', description: 'User role', deprecated: true)]
+public function rules(): array { /* ... */ }
+
+// On a JsonResource's toArray() method
+#[Parameter(name: 'id', type: 'string', format: 'uuid', description: 'Unique identifier')]
+#[Parameter(name: 'avatar_url', type: 'string', format: 'uri', description: 'Profile image URL')]
+public function toArray($request): array { /* ... */ }
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `name` | `string` | *(required)* | Property name |
+| `required` | `bool` | `false` | Whether the property is required |
+| `type` | `string` | `'string'` | OpenAPI type (also accepts aliases: `date`, `email`, `uuid`, etc.) |
+| `format` | `string\|null` | `null` | OpenAPI format |
+| `description` | `string` | `''` | Property description |
+| `deprecated` | `bool` | `false` | Mark as deprecated |
+| `example` | `mixed` | `null` | Example value |
+| `nullable` | `bool` | `false` | Allow null values |
+| `minLength` | `int\|null` | `null` | Minimum string length |
+| `maxLength` | `int\|null` | `null` | Maximum string length |
+| `items` | `string\|null` | `null` | Array item type |
+| `resource` | `string\|null` | `null` | Nested resource class |
+
+**Type aliases** are automatically normalized to valid OpenAPI types:
+
+| Alias | Becomes |
+|---|---|
+| `date` | `type: "string", format: "date"` |
+| `datetime`, `date-time`, `timestamp` | `type: "string", format: "date-time"` |
+| `time` | `type: "string", format: "time"` |
+| `email` | `type: "string", format: "email"` |
+| `url`, `uri` | `type: "string", format: "uri"` |
+| `uuid` | `type: "string", format: "uuid"` |
+| `ip`, `ipv4` | `type: "string", format: "ipv4"` |
+| `ipv6` | `type: "string", format: "ipv6"` |
+| `binary` | `type: "string", format: "binary"` |
+| `byte` | `type: "string", format: "byte"` |
+| `password` | `type: "string", format: "password"` |
+| `int` | `type: "integer"` |
+| `bool` | `type: "boolean"` |
+| `float`, `double` | `type: "number"` |
+
+### `#[PathParameter]`
+
+Document path parameters. Repeatable.
+
+```php
+use JkBennemann\LaravelApiDocumentation\Attributes\PathParameter;
+
+#[PathParameter(name: 'id', type: 'string', format: 'uuid', description: 'User ID', example: '550e8400-e29b-41d4-a716-446655440000')]
+public function show(string $id) {}
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `name` | `string` | *(required)* | Parameter name (must match route parameter) |
+| `type` | `string` | `'string'` | Parameter type |
+| `format` | `string\|null` | `null` | Parameter format |
+| `description` | `string` | `''` | Parameter description |
+| `required` | `bool` | `true` | Whether required |
+| `example` | `mixed` | `null` | Example value |
+
+### `#[QueryParameter]`
+
+Document query parameters explicitly. Repeatable.
+
+```php
+use JkBennemann\LaravelApiDocumentation\Attributes\QueryParameter;
+
+#[QueryParameter(name: 'status', description: 'Filter by status', enum: ['active', 'inactive', 'banned'])]
+#[QueryParameter(name: 'per_page', type: 'integer', description: 'Items per page', example: 25)]
+public function index() {}
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `name` | `string` | *(required)* | Parameter name |
+| `type` | `string` | `'string'` | Parameter type |
+| `format` | `string\|null` | `null` | Parameter format |
+| `description` | `string` | `''` | Parameter description |
+| `required` | `bool` | `false` | Whether required |
+| `example` | `mixed` | `null` | Example value |
+| `enum` | `array\|null` | `null` | Allowed values |
+
+### `#[ResponseHeader]`
+
+Document response headers. Repeatable.
+
+```php
+use JkBennemann\LaravelApiDocumentation\Attributes\ResponseHeader;
+
+#[ResponseHeader(name: 'X-Request-Id', description: 'Unique request identifier', format: 'uuid')]
+#[ResponseHeader(name: 'X-RateLimit-Remaining', type: 'integer', description: 'Remaining requests')]
+public function index() {}
+```
+
+### `#[RequestBody]` and `#[ResponseBody]`
+
+Low-level control over request/response schemas when you need full override.
+
+```php
+use JkBennemann\LaravelApiDocumentation\Attributes\RequestBody;
+use JkBennemann\LaravelApiDocumentation\Attributes\ResponseBody;
+
+#[RequestBody(description: 'Webhook payload', contentType: 'application/json', dataClass: WebhookPayload::class)]
+#[ResponseBody(statusCode: 202, description: 'Accepted')]
+public function handleWebhook() {}
+```
+
+### `#[ExcludeFromDocs]`
+
+Exclude a controller or specific method from documentation.
+
+```php
+use JkBennemann\LaravelApiDocumentation\Attributes\ExcludeFromDocs;
+
+// Exclude entire controller
+#[ExcludeFromDocs]
+class InternalController extends Controller {}
+
+// Exclude single method
+class UserController extends Controller
 {
-    //...
+    #[ExcludeFromDocs]
+    public function debug() {}
 }
 ```
-This will add a new field to the route object in the OpenAPI file:
+
+### `#[AdditionalDocumentation]`
+
+Link to external documentation.
+
+```php
+use JkBennemann\LaravelApiDocumentation\Attributes\AdditionalDocumentation;
+
+#[AdditionalDocumentation(url: 'https://docs.example.com/auth', description: 'Authentication guide')]
+public function login() {}
+```
+
+### `#[DocumentationFile]`
+
+Route an endpoint to a specific documentation file (for multi-file setups).
+
+```php
+use JkBennemann\LaravelApiDocumentation\Attributes\DocumentationFile;
+
+#[DocumentationFile('internal-api')]
+class InternalApiController extends Controller {}
+```
+
+### `#[IgnoreDataParameter]`
+
+Exclude a Spatie Data property from the request body schema.
+
+```php
+use JkBennemann\LaravelApiDocumentation\Attributes\IgnoreDataParameter;
+
+#[IgnoreDataParameter(parameters: 'internal_field')]
+public function store(CreateUserData $data) {}
+```
+
+### PHPDoc Annotations
+
+The package also reads PHPDoc blocks:
+
+```php
+/**
+ * Get a list of users
+ *
+ * Returns all active users with optional filtering.
+ *
+ * @queryParam per_page integer Number of results per page. Example: 25
+ * @queryParam search string Search by name or email. Example: john
+ * @queryParam status string Filter by account status. Example: active
+ *
+ * @return \Illuminate\Http\Resources\Json\ResourceCollection<UserResource>
+ *
+ * @deprecated Use /api/v2/users instead
+ */
+public function index(Request $request): ResourceCollection {}
+```
+
+- The first line becomes the `summary`, the rest becomes the `description`
+- `@queryParam` entries are extracted as query parameters
+- `@return` type is used for response schema detection
+- `@deprecated` marks the operation as deprecated
+
+## Configuration
+
+After publishing the config (`php artisan vendor:publish --tag="api-documentation-config"`), the file is at `config/api-documentation.php`. Key sections:
+
+### OpenAPI Metadata
+
+```php
+'open_api_version' => '3.1.0',
+'version' => '1.0.0',
+'title' => 'My API',  // Defaults to APP_NAME
+```
+
+### Route Filtering
+
+```php
+'include_vendor_routes' => false,
+'include_closure_routes' => false,
+'excluded_routes' => [
+    'telescope/*',
+    'horizon/*',
+],
+'excluded_methods' => ['HEAD', 'OPTIONS'],
+```
+
+### Servers
+
+```php
+'servers' => [
+    ['url' => env('APP_URL', 'http://localhost'), 'description' => 'Local'],
+    ['url' => 'https://api.example.com', 'description' => 'Production'],
+],
+```
+
+### Analysis
+
+```php
+'analysis' => [
+    'priority' => 'static_first',  // 'static_first' or 'captured_first'
+    'cache_ttl' => 3600,           // AST cache TTL in seconds (0 disables)
+    'cache_path' => null,          // Defaults to storage_path()
+],
+```
+
+### Code Samples
+
+```php
+'code_samples' => [
+    'enabled' => false,
+    'languages' => ['bash', 'javascript', 'php', 'python'],
+    'base_url' => null,  // null uses '{baseUrl}' placeholder
+],
+```
+
+When enabled, adds `x-codeSamples` to each operation with working cURL, fetch, Guzzle, and requests examples.
+
+### Error Responses
+
+```php
+'error_responses' => [
+    'enabled' => true,
+    'defaults' => [
+        'status_messages' => [
+            '400' => 'The request could not be processed.',
+            '401' => 'Authentication credentials are required.',
+            '403' => 'You do not have permission.',
+            '404' => 'The requested resource was not found.',
+            '422' => 'The request contains invalid data.',
+            '429' => 'Too many requests.',
+            '500' => 'An internal server error occurred.',
+        ],
+    ],
+],
+```
+
+### Validation Rule Mappings
+
+```php
+'smart_requests' => [
+    'rule_types' => [
+        'string'   => ['type' => 'string'],
+        'integer'  => ['type' => 'integer'],
+        'boolean'  => ['type' => 'boolean'],
+        'email'    => ['type' => 'string', 'format' => 'email'],
+        'uuid'     => ['type' => 'string', 'format' => 'uuid'],
+        'url'      => ['type' => 'string', 'format' => 'uri'],
+        'file'     => ['type' => 'string', 'format' => 'binary'],
+        'image'    => ['type' => 'string', 'format' => 'binary'],
+        // ... and more
+    ],
+],
+```
+
+## Tags & Documentation
+
+Enrich your documentation viewers (ReDoc, Scalar) with tag descriptions, navigation groups, documentation-only pages, and external links. All settings are zero-config by default — empty arrays and `null` values produce no output.
+
+### Tag Descriptions
+
+Add Markdown descriptions to tags. These appear as introductory content in tag sections.
+
+```php
+// config/api-documentation.php
+'tags' => [
+    'Users' => 'Operations for managing user accounts.',
+    'Billing' => '## Billing API\nAll endpoints require an active subscription.',
+],
+```
+
+Descriptions can also be set via the `#[Tag]` attribute:
+
+```php
+#[Tag('Users', description: 'Operations for managing user accounts.')]
+```
+
+Config descriptions take precedence over attribute descriptions.
+
+### Tag Groups (`x-tagGroups`)
+
+Group tags into sections for the ReDoc/Scalar navigation sidebar:
+
+```php
+'tag_groups' => [
+    ['name' => 'User Management', 'tags' => ['Users', 'Roles', 'Permissions']],
+    ['name' => 'Commerce', 'tags' => ['Products', 'Orders', 'Billing']],
+],
+```
+
+This emits the `x-tagGroups` vendor extension recognized by ReDoc and Scalar. By default, any tags not assigned to a group are automatically collected into an "Other" group so they remain visible in the sidebar. To instead hide ungrouped tags (the default ReDoc/Scalar behavior), set:
+
+```php
+'tag_groups_include_ungrouped' => false,
+```
+
+### Trait Tags (`x-traitTag`)
+
+Add documentation-only tags that appear in the sidebar but aren't associated with any operations. Useful for guides, introductions, or changelogs:
+
+```php
+'trait_tags' => [
+    [
+        'name' => 'Getting Started',
+        'description' => "# Welcome\n\nThis API uses Bearer token authentication. See the [Authentication](#section/Authentication) section for details.",
+    ],
+    [
+        'name' => 'Changelog',
+        'description' => "# Changelog\n\n## v2.0\n- New billing endpoints\n- Improved error responses",
+    ],
+],
+```
+
+Trait tags are emitted with `x-traitTag: true` and support full Markdown in the description.
+
+### External Documentation
+
+Add a spec-level link to external documentation:
+
+```php
+'external_docs' => [
+    'url' => 'https://docs.example.com',
+    'description' => 'Full developer documentation',
+],
+```
+
+Set to `null` (default) to omit from the spec.
+
+### Domain Overrides
+
+All four settings (`tags`, `tag_groups`, `trait_tags`, `external_docs`) can be overridden per domain:
+
+```php
+'domains' => [
+    'public' => [
+        'title' => 'Public API',
+        'tags' => ['Users' => 'Public user endpoints.'],
+        'tag_groups' => [
+            ['name' => 'Core', 'tags' => ['Users', 'Products']],
+        ],
+        'external_docs' => ['url' => 'https://docs.example.com'],
+    ],
+    'internal' => [
+        'title' => 'Internal API',
+        'tags' => ['Admin' => 'Internal admin operations.'],
+    ],
+],
+```
+
+### Multi-Domain Support
+
+Generate separate specs for different API domains:
+
+```php
+'domains' => [
+    'public' => [
+        'title' => 'Public API',
+        'main' => 'https://api.example.com',
+        'servers' => [
+            ['url' => 'https://api.example.com', 'description' => 'Production'],
+        ],
+    ],
+    'internal' => [
+        'title' => 'Internal API',
+        'main' => 'https://internal.example.com',
+        'servers' => [
+            ['url' => 'https://internal.example.com', 'description' => 'Internal'],
+        ],
+    ],
+],
+```
+
+```bash
+php artisan api:generate --domain=public
+```
+
+### Multi-File Support
+
+Output multiple documentation files from a single app:
+
+```php
+'ui' => [
+    'storage' => [
+        'files' => [
+            'default' => [
+                'name' => 'Public API',
+                'filename' => 'api-documentation.json',
+                'process' => true,
+            ],
+            'internal' => [
+                'name' => 'Internal API',
+                'filename' => 'internal-api.json',
+                'process' => true,
+            ],
+        ],
+    ],
+],
+```
+
+Use `#[DocumentationFile('internal')]` on controllers to route them to a specific file.
+
+## Documentation Viewers
+
+Three built-in documentation UIs are available. Enable them in your config:
+
+```php
+'ui' => [
+    'default' => 'swagger',  // 'swagger', 'redoc', or 'scalar'
+
+    'swagger' => [
+        'enabled' => true,
+        'route' => '/documentation/swagger',
+        'version' => '5.17.14',
+        'middleware' => ['web'],
+    ],
+
+    'redoc' => [
+        'enabled' => true,
+        'route' => '/documentation/redoc',
+        'version' => '2.2.0',
+        'middleware' => ['web'],
+    ],
+
+    'scalar' => [
+        'enabled' => true,
+        'route' => '/documentation/scalar',
+        'version' => '2.2.0',
+        'middleware' => ['web'],
+    ],
+],
+```
+
+When any UI is enabled, a default hub page is registered at `/documentation` that redirects to your chosen default viewer.
+
+To publish and customize the view templates:
+
+```bash
+php artisan vendor:publish --tag="api-documentation-views"
+```
+
+## Output Formats
+
+### JSON (default)
+
+```bash
+php artisan api:generate
+# Output: storage/app/public/api-documentation.json
+```
+
+### YAML
+
+Requires the `ext-yaml` PHP extension, or falls back to a built-in converter.
+
+```bash
+php artisan api:generate --format=yaml
+```
+
+### Postman Collection
+
+Exports a Postman Collection v2.1 file, grouped by tags, with auth headers, path/query parameters, and request body examples.
+
+```bash
+php artisan api:generate --format=postman
+```
+
+### TypeScript Definitions
+
+```bash
+php artisan api:types
+# Output: resources/js/types/api.d.ts
+```
+
+## Plugin System
+
+The package is built around 6 plugin interfaces. Each interface represents a specific analysis capability. All built-in analyzers use the same interfaces, so plugins have the same power as core functionality.
+
+### Plugin Interfaces
+
+| Interface | Purpose | Method Signature |
+|---|---|---|
+| `RequestBodyExtractor` | Extract request body schemas | `extract(AnalysisContext $ctx): ?SchemaResult` |
+| `ResponseExtractor` | Extract response schemas | `extract(AnalysisContext $ctx): array` (of `ResponseResult`) |
+| `QueryParameterExtractor` | Extract query parameters | `extract(AnalysisContext $ctx): array` (of `ParameterResult`) |
+| `SecuritySchemeDetector` | Detect auth schemes | `detect(AnalysisContext $ctx): ?array` |
+| `OperationTransformer` | Post-process operations | `transform(array $operation, AnalysisContext $ctx): array` |
+| `ExceptionSchemaProvider` | Custom exception schemas | `provides(string $exceptionClass): bool` + `getResponse(string $exceptionClass): ResponseResult` |
+
+Every plugin must implement the base `Plugin` interface:
+
+```php
+use JkBennemann\LaravelApiDocumentation\Contracts\Plugin;
+
+interface Plugin
+{
+    public function name(): string;
+    public function boot(PluginRegistry $registry): void;
+    public function priority(): int;
+}
+```
+
+### Priority System
+
+Analyzers run in priority order (highest first). The first non-null result wins for request bodies; all results are collected for responses and query parameters.
+
+| Range | Used By |
+|---|---|
+| 100 | Attribute-based analyzers (manual overrides) |
+| 80-90 | Core static analyzers (FormRequest, ReturnType) |
+| 60-70 | Runtime capture analyzers |
+| 40-50 | Built-in plugins (BearerAuth, Pagination, Spatie) |
+| 1-39 | Community plugins (recommended range) |
+
+### Registering Plugins
+
+**Via config:**
+
+```php
+// config/api-documentation.php
+'plugins' => [
+    App\Documentation\MyPlugin::class,
+],
+```
+
+**Via Composer auto-discovery** (for package authors):
+
 ```json
 {
-    //...
-    "\/login": {
-        "post": {
-            //...
-            "responses": {
-                "200": {
-                    "description": "Logged in user information",
-                    "headers": {
-                        "X-Token": {
-                            "description": "Token for the user to be used to issue API calls",
-                            "schema": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "content": {
-                        "application\/json": {
-                            "schema": {
-                                //data of the UserResource.php
-                            }
-                        }
-                    }
-                },
-                "401": {
-                    "description": "Failed Authentication",
-                    "headers": {},
-                    "content": {
-                        "application\/json": {
-                            "schema": {
-                                "type": "object",
-                                "properties": {
-                                    "error": {
-                                        "type": "string"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            //...
+    "extra": {
+        "api-documentation": {
+            "plugins": [
+                "Vendor\\Package\\MyPlugin"
+            ]
         }
     }
 }
 ```
 
-### Request/Resource attributes
-
-For request or resource classes the same attributes can be used as for the routes, except for the `Tag` attribute.  
-In addition to that the following attributes are available:
-
-#### 1. PathParameter
-This attribute can be used to specify additional information about path parameters in your routes.  
-It can be applied to controller methods to enhance the documentation of route parameters like `{id}`, `{user}`, etc.
-
-Available parameters:
-- (required) `name` (string) - The name of the path parameter (must match the route parameter)
-- `required` (boolean) - Whether the parameter is required or not; *default:`true`*
-- `description` (string) - A description of the parameter; *default:`''`*
-- `type` (string) - The type of the parameter; *default:`'string'`*
-- `format` (string) - The format of the parameter, considered as the sub-type as of OpenAPI; *default:`null`*
-- `example` (mixed) - An example value for the parameter; *default:`null`*
+**Programmatically at runtime:**
 
 ```php
-# UserController.php
-use JkBennemann\LaravelApiDocumentation\Attributes\PathParameter;
+use JkBennemann\LaravelApiDocumentation\LaravelApiDocumentation;
 
-//..
-#[PathParameter(name: 'id', type: 'string', format: 'uuid', description: 'The user ID', example: '123e4567-e89b-12d3-a456-426614174000')]
-#[PathParameter(name: 'status', type: 'string', description: 'Filter users by status', example: 'active')]
-public function show(string $id, string $status)
-{
-    //...
-}
+LaravelApiDocumentation::extend(new MyPlugin());
 ```
 
-#### 2. Parameter
-This attribute can be used to specify additional information about request or response parameters.  
-It can be applied at both **class level** and **method level** (e.g., on the `rules()` method of FormRequest classes).
+## Built-in Plugins
 
-Available parameters:
-- (required) `name` (string) - The name of the parameter
-- `required` (boolean) - Whether the parameter is required or not; *default:`false`*
-- `description` (string) - A description of the parameter; *default:`''`*
-- `type` (string) - The type of the parameter; *default:`'string'`*
-- `format` (string) - The format of the parameter, considered as the sub-type as of OpenAPI; *default:`null`*
-- `example` (mixed) - An example value for the parameter; *default:`null`*
-- `deprecated` (boolean) - Whether the parameter is deprecated or not; *default:`false`*
+### BearerAuthPlugin
 
-**Method Level Usage (FormRequest):**
-```php
-# LoginUserRequest.php
-use JkBennemann\LaravelApiDocumentation\Attributes\Parameter;
+Always active. Detects Bearer token authentication from `auth:sanctum`, `auth:api`, and `jwt.auth` middleware. Extracts OAuth scopes and Sanctum abilities.
 
-//..
-#[Parameter(name: 'email', required: true, format: 'email', description: 'The email of the user', example: 'hello@example.com')]
-#[Parameter(name: 'password', required: true, description: 'The password of the user')]
-#[Parameter(name: 'confirm_token', required: true, description: 'The confirmation token. This is not used any longer!', deprecated: true)]
-public function rules(): array
-{
-    return [
-        'email' => [
-            'required',
-            'email',
-        ],
-        'password' => 'required',
-    ];
-}
-```
+### PaginationPlugin
 
-**Class Level Usage (Resource):**
-```php
-# UserResource.php
-use JkBennemann\LaravelApiDocumentation\Attributes\Parameter;
+Always active. Detects `paginate()`, `simplePaginate()`, and `cursorPaginate()` calls via AST analysis. Wraps response schemas with `data`/`meta`/`links` pagination envelope.
 
-#[Parameter(name: 'id', type: 'string', format: 'uuid', description: 'The user ID', example: '123e4567-e89b-12d3-a456-426614174000')]
-#[Parameter(name: 'email', type: 'string', format: 'email', description: 'The users email address')]
-#[Parameter(name: 'attributes', type: 'array', description: 'Additional attributes assigned to the user', example: [])]
-public function toArray($request): array|JsonSerializable|Arrayable
-{
-    return [
-        'id' => $this->id,
-        'email' => $this->email,
-        'attributes' => $this->userAttributes ?? [],
-    ];
-}
-```
+### CodeSamplePlugin
 
-### 📋 **Query Parameter Annotations**
+Enabled when `code_samples.enabled` is `true` in config. Generates working code examples in bash (cURL), JavaScript (fetch), PHP (Guzzle), and Python (requests) with proper auth headers and request bodies.
 
-In addition to attributes, the package supports `@queryParam` annotations for documenting query parameters:
+### SpatieDataPlugin
 
-```php
-# UserController.php
+Auto-detected when `spatie/laravel-data` is installed. Extracts request body schemas from Spatie Data DTO constructor properties. Handles optional properties, `Lazy` types, and nested DTOs with `$ref` deduplication.
 
-/**
- * Get a list of users
- * 
- * @queryParam per_page integer Number of users per page. Example: 15
- * @queryParam search string Search term for filtering users. Example: john
- * @queryParam status string Filter by user status. Example: active
- */
-public function index(Request $request)
-{
-    //...
-}
-```
+### SpatieQueryBuilderPlugin
 
-This automatically generates query parameter documentation in the OpenAPI specification.
+Auto-detected when `spatie/laravel-query-builder` is installed. Extracts `filter[...]`, `sort`, `include`, and `fields` query parameters from `allowedFilters()`, `allowedSorts()`, `allowedIncludes()`, and `allowedFields()` calls.
 
-## 💡 **Usage Examples & Best Practices**
+### JsonApiPlugin
 
-Here are some comprehensive examples showing how to leverage the automatic detection features:
+Auto-detected when `timacdonald/json-api` is installed. Generates proper JSON:API response schemas (`data`/`attributes`/`relationships`/`links`), sets content type to `application/vnd.api+json`, and adds the `Accept` header.
 
-### **Example 1: Complete Controller with Automatic Detection**
+### LaravelActionsPlugin
+
+Auto-detected when `lorisleiva/laravel-actions` is installed. Extracts request schemas from Action classes using the `AsController` trait by analyzing `rules()` methods and `handle()` parameters.
+
+## Creating a Plugin
+
+Here is a complete example of a plugin that adds a custom header to every operation:
 
 ```php
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Documentation;
 
-use App\Http\Requests\CreateUserRequest;
-use App\Http\Resources\UserResource;
-use App\Models\User;
-use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Resources\Json\ResourceCollection;
-use JkBennemann\LaravelApiDocumentation\Attributes\{Tag, Summary, Description, PathParameter, DataResponse};
+use JkBennemann\LaravelApiDocumentation\Contracts\OperationTransformer;
+use JkBennemann\LaravelApiDocumentation\Contracts\Plugin;
+use JkBennemann\LaravelApiDocumentation\Data\AnalysisContext;
+use JkBennemann\LaravelApiDocumentation\PluginRegistry;
 
-#[Tag('Users')]
-class UserController extends Controller
+class CorrelationIdPlugin implements Plugin, OperationTransformer
 {
-    /**
-     * Get a paginated list of users
-     * 
-     * @queryParam per_page integer Number of users per page. Example: 15
-     * @queryParam search string Search term for filtering users. Example: john
-     * @queryParam status string Filter by user status. Example: active
-     * 
-     * @return ResourceCollection<UserResource>
-     */
-    #[Summary('List all users')]
-    #[Description('Retrieves a paginated list of users with optional filtering capabilities')]
-    public function index(Request $request): ResourceCollection
+    public function name(): string
     {
-        $users = User::query()
-            ->when($request->search, fn($q) => $q->where('name', 'like', "%{$request->search}%"))
-            ->when($request->status, fn($q) => $q->where('status', $request->status))
-            ->paginate($request->per_page ?? 15);
-
-        return UserResource::collection($users);
+        return 'correlation-id';
     }
 
-    /**
-     * Get a specific user by ID
-     */
-    #[PathParameter(name: 'id', type: 'string', format: 'uuid', description: 'The user ID', example: '123e4567-e89b-12d3-a456-426614174000')]
-    #[DataResponse(200, description: 'User found successfully', resource: UserResource::class)]
-    #[DataResponse(404, description: 'User not found', resource: ['message' => 'string'])]
-    public function show(string $id): UserResource|JsonResponse
+    public function boot(PluginRegistry $registry): void
     {
-        $user = User::findOrFail($id);
-        return new UserResource($user);
+        $registry->addOperationTransformer($this, priority: 30);
     }
 
-    /**
-     * Create a new user
-     */
-    #[Summary('Create user')]
-    #[DataResponse(201, description: 'User created successfully', resource: UserResource::class)]
-    #[DataResponse(422, description: 'Validation failed')]
-    public function store(CreateUserRequest $request): UserResource
+    public function priority(): int
     {
-        $user = User::create($request->validated());
-        return new UserResource($user);
+        return 30;
+    }
+
+    public function transform(array $operation, AnalysisContext $ctx): array
+    {
+        $operation['parameters'][] = [
+            'name' => 'X-Correlation-ID',
+            'in' => 'header',
+            'required' => false,
+            'description' => 'Optional correlation ID for request tracing',
+            'schema' => ['type' => 'string', 'format' => 'uuid'],
+        ];
+
+        return $operation;
     }
 }
 ```
 
-### **Example 2: Advanced FormRequest with Nested Parameters**
+Register it:
 
 ```php
-<?php
+// config/api-documentation.php
+'plugins' => [
+    App\Documentation\CorrelationIdPlugin::class,
+],
+```
 
-namespace App\Http\Requests;
+### Plugin with Multiple Capabilities
 
-use Illuminate\Foundation\Http\FormRequest;
-use JkBennemann\LaravelApiDocumentation\Attributes\Parameter;
+A plugin can implement multiple interfaces:
 
-class CreateUserRequest extends FormRequest
+```php
+class MyPlugin implements Plugin, ResponseExtractor, QueryParameterExtractor
 {
-    #[Parameter(name: 'name', required: true, description: 'The full name of the user', example: 'John Doe')]
-    #[Parameter(name: 'email', required: true, format: 'email', description: 'Unique email address', example: 'john@example.com')]
-    #[Parameter(name: 'profile.bio', description: 'User biography', example: 'Software developer with 5 years experience')]
-    #[Parameter(name: 'profile.avatar', type: 'string', format: 'uri', description: 'Avatar image URL')]
-    #[Parameter(name: 'preferences.notifications', type: 'boolean', description: 'Enable email notifications', example: true)]
+    public function name(): string { return 'my-plugin'; }
+    public function priority(): int { return 35; }
+
+    public function boot(PluginRegistry $registry): void
+    {
+        $registry->addResponseExtractor($this, priority: 35);
+        $registry->addQueryExtractor($this, priority: 35);
+    }
+
+    public function extract(AnalysisContext $ctx): array
+    {
+        // This method serves both interfaces - differentiate
+        // by checking what's being requested via the context
+        return [];
+    }
+}
+```
+
+### The AnalysisContext Object
+
+Every analyzer receives an `AnalysisContext` that provides:
+
+- `$ctx->routeInfo` - Route metadata (URI, methods, middleware, parameters)
+- `$ctx->reflectionMethod` - PHP `ReflectionMethod` of the controller action
+- `$ctx->reflectionClass` - PHP `ReflectionClass` of the controller
+- `$ctx->ast` - Parsed AST statements of the controller method body
+- `$ctx->classAttributes` - PHP 8 attributes on the controller class
+- `$ctx->methodAttributes` - PHP 8 attributes on the method
+
+### Plugin Safety
+
+Plugins that throw during `boot()` are automatically unregistered and logged. A failing plugin never breaks documentation generation for other routes.
+
+## Integrations
+
+### Spatie Laravel Data
+
+When `spatie/laravel-data` is installed, Data objects used as controller method parameters are automatically documented:
+
+```php
+class CreateUserData extends Data
+{
+    public function __construct(
+        public string $name,
+        public string $email,
+        public ?string $bio = null,
+    ) {}
+}
+
+// Automatically generates request body schema with name (required), email (required), bio (nullable)
+public function store(CreateUserData $data): UserResource {}
+```
+
+### Spatie Laravel Query Builder
+
+When `spatie/laravel-query-builder` is installed, allowed filters, sorts, and includes are extracted as query parameters:
+
+```php
+$users = QueryBuilder::for(User::class)
+    ->allowedFilters(['name', 'email', 'status'])
+    ->allowedSorts(['name', 'created_at'])
+    ->allowedIncludes(['posts', 'profile'])
+    ->paginate();
+// Generates: filter[name], filter[email], filter[status], sort (enum), include (enum), page, per_page
+```
+
+### Laravel Actions
+
+When `lorisleiva/laravel-actions` is installed, Action classes with the `AsController` trait are analyzed:
+
+```php
+class CreateUser
+{
+    use AsAction;
+    use AsController;
+
     public function rules(): array
     {
-        return [
-            'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'email', 'unique:users'],
-            'profile.bio' => ['nullable', 'string', 'max:1000'],
-            'profile.avatar' => ['nullable', 'url'],
-            'preferences.notifications' => ['boolean'],
-            'preferences.theme' => ['string', 'in:light,dark'],
-        ];
+        return ['name' => 'required|string', 'email' => 'required|email'];
     }
+
+    public function handle(string $name, string $email): User {}
 }
 ```
 
-### **Example 3: Invokable Controllers with Class-Level Attributes**
+### JSON:API (timacdonald/json-api)
 
-Laravel's invokable controllers (single-action controllers) are fully supported with class-level attribute processing:
+When `timacdonald/json-api` is installed, JSON:API resources produce proper `data`/`attributes`/`relationships` response schemas.
 
-```php
-<?php
+## CI/CD Integration
 
-namespace App\Http\Controllers;
+### Generate on Deploy
 
-use App\Http\Requests\CreatePostRequest;
-use App\Http\Resources\PostResource;
-use App\Models\Post;
-use Illuminate\Http\JsonResponse;
-use JkBennemann\LaravelApiDocumentation\Attributes\{Tag, Summary, Description, DataResponse};
-
-#[Tag('Posts')]
-#[Summary('Create a new blog post')]
-#[Description('Creates a new blog post with the provided content and metadata')]
-#[DataResponse(PostResource::class, 201, 'Post created successfully')]
-class CreatePostController extends Controller
-{
-    /**
-     * Handle the incoming request to create a new post.
-     * 
-     * @param CreatePostRequest $request
-     * @return JsonResponse
-     */
-    public function __invoke(CreatePostRequest $request): JsonResponse
-    {
-        $post = Post::create($request->validated());
-        
-        return PostResource::make($post)
-            ->response()
-            ->setStatusCode(201);
-    }
-}
+```bash
+php artisan api:generate --format=json
 ```
 
-**Key Features for Invokable Controllers:**
-- **Class-Level Attributes**: `#[Tag]`, `#[Summary]`, `#[Description]` placed on the class are automatically detected
-- **Automatic Route Processing**: Both `Controller@method` and `Controller` (invokable) route formats supported
-- **Response Type Detection**: Same automatic detection as traditional controllers
-- **Request Validation**: FormRequest classes processed normally
-- **Mixed Controller Support**: Traditional and invokable controllers work seamlessly together
+### Block Breaking Changes
 
-**Route Registration:**
-```php
-// Traditional route registration for invokable controllers
-Route::post('/posts', CreatePostController::class);
+```bash
+# Store current spec before changes
+cp storage/app/public/api-documentation.json /tmp/old-spec.json
 
-// Mixed with traditional controllers
-Route::get('/posts', [PostController::class, 'index']);
-Route::post('/posts', CreatePostController::class);  // Invokable
-Route::get('/posts/{id}', [PostController::class, 'show']);
+# Generate new spec
+php artisan api:generate
+
+# Compare - fails with exit code 1 if breaking changes detected
+php artisan api:diff /tmp/old-spec.json storage/app/public/api-documentation.json --fail-on-breaking
 ```
 
-### **Example 4: Resource with Spatie Data Integration**
+### Validate Spec Quality
 
-```php
-<?php
-
-namespace App\Http\Resources;
-
-use Illuminate\Http\Resources\Json\JsonResource;
-use JkBennemann\LaravelApiDocumentation\Attributes\Parameter;
-
-class UserResource extends JsonResource
-{
-    #[Parameter(name: 'id', type: 'string', format: 'uuid', description: 'Unique user identifier')]
-    #[Parameter(name: 'name', type: 'string', description: 'Full name of the user')]
-    #[Parameter(name: 'email', type: 'string', format: 'email', description: 'User email address')]
-    #[Parameter(name: 'profile', type: 'object', description: 'User profile information')]
-    #[Parameter(name: 'created_at', type: 'string', format: 'date-time', description: 'Account creation timestamp')]
-    public function toArray($request): array
-    {
-        return [
-            'id' => $this->id,
-            'name' => $this->name,
-            'email' => $this->email,
-            'profile' => [
-                'bio' => $this->profile?->bio,
-                'avatar' => $this->profile?->avatar,
-            ],
-            'preferences' => [
-                'notifications' => $this->preferences['notifications'] ?? true,
-                'theme' => $this->preferences['theme'] ?? 'light',
-            ],
-            'created_at' => $this->created_at,
-            'updated_at' => $this->updated_at,
-        ];
-    }
-}
+```bash
+php artisan api:lint
+# Returns non-zero exit code if errors are found
 ```
 
-### **Example 5: Union Types with Multiple Response Formats**
+### Generate with Captures in CI
 
-```php
-<?php
-
-namespace App\Http\Controllers;
-
-use App\DTOs\UserData;
-use App\DTOs\AdminData;
+```bash
+DOC_CAPTURE_MODE=true php artisan test
+php artisan api:generate
 ```
 
-### **🎯 Best Practices**
+## Security
 
-1. **Leverage Automatic Detection**: Let the package automatically detect response types and validation rules
-2. **Use Attributes for Enhancement**: Add `#[Parameter]` and `#[PathParameter]` attributes only when you need to provide additional context
-3. **Document Complex Scenarios**: Use `@queryParam` annotations for query parameters and union return types for multiple response formats
-4. **Structured Validation**: Use nested validation rules for complex request structures
-5. **Consistent Naming**: Use consistent parameter naming across your API for better documentation
+The package is designed with security as a priority:
 
-## Roadmap
-
-### ✅ **Completed Features**
-- [x] **Advanced Response Type Detection**: Automatic detection of return types, union types, and method body analysis
-- [x] **Smart Request Parameter Extraction**: FormRequest validation rule processing and parameter attribute support
-- [x] **Invokable Controller Support**: Full support for Laravel invokable controllers with class-level attribute processing
-- [x] **Path Parameter Documentation**: `#[PathParameter]` attribute for route parameter enhancement
-- [x] **Query Parameter Support**: `@queryParam` annotation processing
-- [x] **Nested Parameter Handling**: Complex nested parameter structures with proper grouping
-- [x] **Spatie Data Integration**: Full support for Spatie Data objects with automatic schema generation
-- [x] **Resource Collection Intelligence**: Smart detection of collection types and pagination
-- [x] **Union Type Processing**: DocBlock union type analysis with `oneOf` schema generation
-- [x] **Class Name Resolution**: Automatic resolution of short class names to fully qualified names
-- [x] **Validation Rule Conversion**: Laravel validation rules to OpenAPI type conversion
-
-### 🚀 **Planned Enhancements**
-- [ ] **Enhanced Examples**: More comprehensive example generation for request/response bodies
-- [ ] **Custom Validation Rules**: Support for custom Laravel validation rules
-- [ ] **Advanced Response Headers**: Automatic detection of response headers from controller methods
-- [ ] **File Upload Documentation**: Automatic detection and documentation of file upload endpoints
-- [ ] **Middleware Documentation**: Enhanced middleware detection and security scheme generation
-- [ ] **Custom Storage Options**: Support for external storages (e.g., GitHub, S3 Bucket, etc.)
-- [ ] **Multi-version API Support**: Support for API versioning in documentation
-- [ ] **Performance Optimization**: Caching mechanisms for large applications
-- [ ] **Integration Testing**: Built-in API testing capabilities based on generated documentation
-
-## Security Vulnerabilities
+- **Production safe**: The capture middleware is gated behind environment checks and will never run in production, even if `DOC_CAPTURE_MODE` is accidentally set
+- **Sensitive data redaction**: Passwords, tokens, API keys, credit card numbers, and SSNs are automatically redacted in captured examples
+- **No runtime overhead**: The package only runs during documentation generation (`api:generate`) and optionally during testing (capture mode). It adds zero overhead to production request handling
 
 Please review [our security policy](../../security/policy) on how to report security vulnerabilities.
 
