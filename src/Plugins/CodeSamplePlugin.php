@@ -7,7 +7,9 @@ namespace JkBennemann\LaravelApiDocumentation\Plugins;
 use JkBennemann\LaravelApiDocumentation\Contracts\OperationTransformer;
 use JkBennemann\LaravelApiDocumentation\Contracts\Plugin;
 use JkBennemann\LaravelApiDocumentation\Data\AnalysisContext;
+use JkBennemann\LaravelApiDocumentation\Data\Reference;
 use JkBennemann\LaravelApiDocumentation\PluginRegistry;
+use JkBennemann\LaravelApiDocumentation\Schema\SchemaRegistry;
 
 class CodeSamplePlugin implements OperationTransformer, Plugin
 {
@@ -19,7 +21,7 @@ class CodeSamplePlugin implements OperationTransformer, Plugin
     /**
      * @param  string[]|null  $languages  Languages to generate (null = all)
      */
-    public function __construct(?array $languages = null, ?string $baseUrl = null)
+    public function __construct(?array $languages = null, ?string $baseUrl = null, private ?SchemaRegistry $schemaRegistry = null)
     {
         $this->languages = $languages ?? ['bash', 'javascript', 'php', 'python'];
         $this->baseUrl = $baseUrl;
@@ -252,6 +254,17 @@ class CodeSamplePlugin implements OperationTransformer, Plugin
 
     private function extractExample(array $schema): mixed
     {
+        // Resolve $ref schemas
+        if (isset($schema['$ref']) && $this->schemaRegistry !== null) {
+            $name = str_replace('#/components/schemas/', '', $schema['$ref']);
+            $resolved = $this->schemaRegistry->resolve(Reference::schema($name));
+            if ($resolved !== null) {
+                return $this->extractExample($resolved->jsonSerialize());
+            }
+
+            return null;
+        }
+
         // If the schema has a direct example, use it
         if (isset($schema['example'])) {
             return $schema['example'];
