@@ -1101,6 +1101,592 @@ Every analyzer receives an `AnalysisContext` that provides:
 
 Plugins that throw during `boot()` are automatically unregistered and logged. A failing plugin never breaks documentation generation for other routes.
 
+### Community Plugin Ideas
+
+Below are detailed implementation examples for plugins the community could build. Each example is a complete, working plugin that can be copied into your project and customized.
+
+#### API Key Authentication
+
+Detects custom middleware that validates API keys via headers or query parameters.
+
+```php
+<?php
+
+namespace App\Documentation;
+
+use JkBennemann\LaravelApiDocumentation\Contracts\Plugin;
+use JkBennemann\LaravelApiDocumentation\Contracts\SecuritySchemeDetector;
+use JkBennemann\LaravelApiDocumentation\Data\AnalysisContext;
+use JkBennemann\LaravelApiDocumentation\PluginRegistry;
+
+class ApiKeyAuthPlugin implements Plugin, SecuritySchemeDetector
+{
+    /**
+     * Map your middleware aliases to their API key configuration.
+     * Adjust these to match your application's middleware names.
+     */
+    private const MIDDLEWARE_MAP = [
+        'api-key'      => ['header', 'X-API-Key'],
+        'api_key'      => ['header', 'X-API-Key'],
+        'api.key'      => ['header', 'X-API-Key'],
+        'client-token' => ['header', 'X-Client-Token'],
+    ];
+
+    public function name(): string
+    {
+        return 'api-key-auth';
+    }
+
+    public function boot(PluginRegistry $registry): void
+    {
+        $registry->addSecurityDetector($this, 45);
+    }
+
+    public function priority(): int
+    {
+        return 45;
+    }
+
+    public function detect(AnalysisContext $ctx): ?array
+    {
+        foreach ($ctx->route->middleware as $middleware) {
+            $name = explode(':', $middleware)[0];
+
+            if (isset(self::MIDDLEWARE_MAP[$name])) {
+                [$in, $paramName] = self::MIDDLEWARE_MAP[$name];
+
+                return [
+                    'name' => 'apiKeyAuth',
+                    'scheme' => [
+                        'type' => 'apiKey',
+                        'in' => $in,          // 'header' or 'query'
+                        'name' => $paramName,  // The header/query parameter name
+                    ],
+                ];
+            }
+        }
+
+        return null;
+    }
+}
+```
+
+#### RFC 7807 Problem Details
+
+Maps exceptions to standardized [Problem Details](https://www.rfc-editor.org/rfc/rfc7807) responses. This is the only interface (`ExceptionSchemaProvider`) with no built-in implementation — a great opportunity for a community package.
+
+```php
+<?php
+
+namespace App\Documentation;
+
+use JkBennemann\LaravelApiDocumentation\Contracts\ExceptionSchemaProvider;
+use JkBennemann\LaravelApiDocumentation\Contracts\Plugin;
+use JkBennemann\LaravelApiDocumentation\Data\ResponseResult;
+use JkBennemann\LaravelApiDocumentation\Data\SchemaObject;
+use JkBennemann\LaravelApiDocumentation\PluginRegistry;
+
+class ProblemDetailsPlugin implements Plugin, ExceptionSchemaProvider
+{
+    /**
+     * Map exception classes to their Problem Details type URI and title.
+     * Customize this for your application's exception hierarchy.
+     */
+    private const EXCEPTION_MAP = [
+        \Illuminate\Auth\AuthenticationException::class => [
+            'status' => 401,
+            'type' => 'https://httpstatuses.com/401',
+            'title' => 'Unauthenticated',
+        ],
+        \Illuminate\Auth\Access\AuthorizationException::class => [
+            'status' => 403,
+            'type' => 'https://httpstatuses.com/403',
+            'title' => 'Forbidden',
+        ],
+        \Illuminate\Database\Eloquent\ModelNotFoundException::class => [
+            'status' => 404,
+            'type' => 'https://httpstatuses.com/404',
+            'title' => 'Resource Not Found',
+        ],
+        \Illuminate\Validation\ValidationException::class => [
+            'status' => 422,
+            'type' => 'https://httpstatuses.com/422',
+            'title' => 'Validation Failed',
+        ],
+    ];
+
+    public function name(): string
+    {
+        return 'problem-details';
+    }
+
+    public function boot(PluginRegistry $registry): void
+    {
+        $registry->addExceptionSchemaProvider($this);
+    }
+
+    public function priority(): int
+    {
+        return 35;
+    }
+
+    public function provides(string $exceptionClass): bool
+    {
+        return isset(self::EXCEPTION_MAP[$exceptionClass]);
+    }
+
+    public function getResponse(string $exceptionClass): ResponseResult
+    {
+        $config = self::EXCEPTION_MAP[$exceptionClass];
+
+        $properties = [
+            'type' => new SchemaObject(type: 'string', format: 'uri', example: $config['type']),
+            'title' => new SchemaObject(type: 'string', example: $config['title']),
+            'status' => new SchemaObject(type: 'integer', example: $config['status']),
+            'detail' => SchemaObject::string(),
+            'instance' => new SchemaObject(type: 'string', format: 'uri'),
+        ];
+
+        // Validation errors include an additional 'errors' object
+        if ($exceptionClass === \Illuminate\Validation\ValidationException::class) {
+            $properties['errors'] = SchemaObject::object();
+        }
+
+        return new ResponseResult(
+            statusCode: $config['status'],
+            schema: SchemaObject::object($properties, ['type', 'title', 'status']),
+            description: $config['title'],
+            contentType: 'application/problem+json',
+            source: 'plugin:problem-details',
+        );
+    }
+}
+```
+
+#### League Fractal Transformers
+
+Detects [Fractal](https://fractal.thephpleague.com/) transformers and extracts response schemas by analyzing the `transform()` method's return array via AST parsing.
+
+```php
+<?php
+
+namespace App\Documentation;
+
+use JkBennemann\LaravelApiDocumentation\Contracts\Plugin;
+use JkBennemann\LaravelApiDocumentation\Contracts\ResponseExtractor;
+use JkBennemann\LaravelApiDocumentation\Data\AnalysisContext;
+use JkBennemann\LaravelApiDocumentation\Data\ResponseResult;
+use JkBennemann\LaravelApiDocumentation\Data\SchemaObject;
+use JkBennemann\LaravelApiDocumentation\PluginRegistry;
+use PhpParser\Node;
+use PhpParser\Node\ArrayItem;
+use PhpParser\Node\Scalar\String_;
+use PhpParser\Node\Stmt\Return_;
+use PhpParser\NodeFinder;
+use PhpParser\ParserFactory;
+
+class FractalPlugin implements Plugin, ResponseExtractor
+{
+    public function name(): string
+    {
+        return 'league-fractal';
+    }
+
+    public function boot(PluginRegistry $registry): void
+    {
+        // Only activate when Fractal is installed
+        if (! class_exists(\League\Fractal\TransformerAbstract::class)) {
+            return;
+        }
+
+        $registry->addResponseExtractor($this, 35);
+    }
+
+    public function priority(): int
+    {
+        return 35;
+    }
+
+    public function extract(AnalysisContext $ctx): array
+    {
+        if (! $ctx->hasAst() || ! $ctx->hasReflection()) {
+            return [];
+        }
+
+        // Find Fractal transformer usage in the controller method's AST
+        $transformerClass = $this->detectTransformer($ctx);
+        if ($transformerClass === null) {
+            return [];
+        }
+
+        // Parse the transformer's transform() method to extract the schema
+        $schema = $this->analyzeTransformer($transformerClass);
+        if ($schema === null) {
+            return [];
+        }
+
+        return [
+            new ResponseResult(
+                statusCode: 200,
+                schema: $schema,
+                description: 'Success',
+                source: 'plugin:fractal',
+            ),
+        ];
+    }
+
+    /**
+     * Look for patterns like:
+     *   $fractal->item($model, new UserTransformer)
+     *   $fractal->collection($models, new UserTransformer)
+     *   return fractal($model, new UserTransformer)->toArray()
+     */
+    private function detectTransformer(AnalysisContext $ctx): ?string
+    {
+        $nodeFinder = new NodeFinder;
+        $news = $nodeFinder->findInstanceOf(
+            $ctx->astNode->stmts ?? [],
+            Node\Expr\New_::class,
+        );
+
+        foreach ($news as $new) {
+            if (! $new->class instanceof Node\Name) {
+                continue;
+            }
+
+            $className = $new->class->toString();
+            $resolved = $this->resolveClassName($className, $ctx);
+
+            if ($resolved !== null
+                && class_exists($resolved)
+                && is_subclass_of($resolved, \League\Fractal\TransformerAbstract::class)
+            ) {
+                return $resolved;
+            }
+        }
+
+        return null;
+    }
+
+    private function analyzeTransformer(string $transformerClass): ?SchemaObject
+    {
+        try {
+            $ref = new \ReflectionClass($transformerClass);
+            $fileName = $ref->getFileName();
+            if ($fileName === false || ! file_exists($fileName)) {
+                return null;
+            }
+        } catch (\Throwable) {
+            return null;
+        }
+
+        // Parse the transformer file's AST
+        $parser = (new ParserFactory)->createForNewestSupportedVersion();
+        $stmts = $parser->parse(file_get_contents($fileName));
+        if ($stmts === null) {
+            return null;
+        }
+
+        // Find the transform() method
+        $nodeFinder = new NodeFinder;
+        $methods = $nodeFinder->findInstanceOf($stmts, Node\Stmt\ClassMethod::class);
+
+        foreach ($methods as $method) {
+            if ($method->name->toString() !== 'transform') {
+                continue;
+            }
+
+            return $this->extractSchemaFromTransformMethod($method);
+        }
+
+        return null;
+    }
+
+    private function extractSchemaFromTransformMethod(Node\Stmt\ClassMethod $method): ?SchemaObject
+    {
+        $nodeFinder = new NodeFinder;
+        $returns = $nodeFinder->findInstanceOf($method->stmts ?? [], Return_::class);
+
+        foreach ($returns as $return) {
+            if (! $return->expr instanceof Node\Expr\Array_) {
+                continue;
+            }
+
+            $properties = [];
+            foreach ($return->expr->items as $item) {
+                if (! $item instanceof ArrayItem || ! $item->key instanceof String_) {
+                    continue;
+                }
+
+                $properties[$item->key->value] = $this->inferType($item->value);
+            }
+
+            if (! empty($properties)) {
+                return SchemaObject::object($properties);
+            }
+        }
+
+        return null;
+    }
+
+    private function inferType(Node\Expr $expr): SchemaObject
+    {
+        // $model->id, $model->count — infer from property name
+        if ($expr instanceof Node\Expr\PropertyFetch
+            && $expr->name instanceof Node\Identifier
+        ) {
+            return $this->inferFromName($expr->name->toString());
+        }
+
+        // (int) $value, (bool) $value
+        if ($expr instanceof Node\Expr\Cast\Int_) {
+            return SchemaObject::integer();
+        }
+        if ($expr instanceof Node\Expr\Cast\Bool_) {
+            return SchemaObject::boolean();
+        }
+        if ($expr instanceof Node\Expr\Cast\Double) {
+            return SchemaObject::number('double');
+        }
+
+        return SchemaObject::string();
+    }
+
+    private function inferFromName(string $name): SchemaObject
+    {
+        return match (true) {
+            $name === 'id' => SchemaObject::integer(),
+            str_ends_with($name, '_id') => SchemaObject::integer(),
+            str_ends_with($name, '_count') => SchemaObject::integer(),
+            str_starts_with($name, 'is_') || str_starts_with($name, 'has_') => SchemaObject::boolean(),
+            str_ends_with($name, '_at') => SchemaObject::string('date-time'),
+            str_contains($name, 'email') => SchemaObject::string('email'),
+            str_contains($name, 'url') || str_contains($name, 'link') => SchemaObject::string('uri'),
+            str_contains($name, 'uuid') => SchemaObject::string('uuid'),
+            str_contains($name, 'price') || str_contains($name, 'amount') => SchemaObject::number('double'),
+            default => SchemaObject::string(),
+        };
+    }
+
+    private function resolveClassName(string $shortName, AnalysisContext $ctx): ?string
+    {
+        // Try fully qualified
+        if (class_exists($shortName)) {
+            return $shortName;
+        }
+
+        // Try same namespace as controller
+        $controllerClass = $ctx->controllerClass();
+        if ($controllerClass !== null) {
+            $ns = substr($controllerClass, 0, (int) strrpos($controllerClass, '\\'));
+            $fqcn = $ns . '\\' . $shortName;
+            if (class_exists($fqcn)) {
+                return $fqcn;
+            }
+
+            // Try Transformers sub-namespace
+            $parentNs = substr($ns, 0, (int) strrpos($ns, '\\'));
+            $fqcn = $parentNs . '\\Transformers\\' . $shortName;
+            if (class_exists($fqcn)) {
+                return $fqcn;
+            }
+        }
+
+        return null;
+    }
+}
+```
+
+#### Versioning Headers
+
+Detects API versioning strategies and documents the version parameter on each operation.
+
+```php
+<?php
+
+namespace App\Documentation;
+
+use JkBennemann\LaravelApiDocumentation\Contracts\OperationTransformer;
+use JkBennemann\LaravelApiDocumentation\Contracts\Plugin;
+use JkBennemann\LaravelApiDocumentation\Data\AnalysisContext;
+use JkBennemann\LaravelApiDocumentation\PluginRegistry;
+
+class VersioningHeaderPlugin implements Plugin, OperationTransformer
+{
+    public function __construct(
+        private string $headerName = 'X-API-Version',
+        private array $supportedVersions = ['2024-01-01', '2025-01-01'],
+        private ?string $defaultVersion = null,
+    ) {
+        $this->defaultVersion ??= end($this->supportedVersions) ?: null;
+    }
+
+    public function name(): string
+    {
+        return 'versioning-header';
+    }
+
+    public function boot(PluginRegistry $registry): void
+    {
+        $registry->addOperationTransformer($this, 25);
+    }
+
+    public function priority(): int
+    {
+        return 25;
+    }
+
+    public function transform(array $operation, AnalysisContext $ctx): array
+    {
+        // Only add to routes that match your versioned API prefix
+        if (! str_starts_with($ctx->route->uri, 'api/')) {
+            return $operation;
+        }
+
+        $operation['parameters'] ??= [];
+        $operation['parameters'][] = [
+            'name' => $this->headerName,
+            'in' => 'header',
+            'required' => false,
+            'description' => "API version. Defaults to `{$this->defaultVersion}` if omitted.",
+            'schema' => [
+                'type' => 'string',
+                'enum' => $this->supportedVersions,
+                'default' => $this->defaultVersion,
+            ],
+        ];
+
+        return $operation;
+    }
+}
+```
+
+Register with custom configuration:
+
+```php
+// config/api-documentation.php
+'plugins' => [
+    new App\Documentation\VersioningHeaderPlugin(
+        headerName: 'X-API-Version',
+        supportedVersions: ['2024-01-01', '2024-07-01', '2025-01-01'],
+    ),
+],
+```
+
+#### Cache Control Headers
+
+Detects caching middleware and documents conditional request headers (`ETag`, `If-None-Match`).
+
+```php
+<?php
+
+namespace App\Documentation;
+
+use JkBennemann\LaravelApiDocumentation\Contracts\OperationTransformer;
+use JkBennemann\LaravelApiDocumentation\Contracts\Plugin;
+use JkBennemann\LaravelApiDocumentation\Data\AnalysisContext;
+use JkBennemann\LaravelApiDocumentation\PluginRegistry;
+
+class CacheHeaderPlugin implements Plugin, OperationTransformer
+{
+    /**
+     * Middleware names that indicate the response supports caching.
+     */
+    private const CACHE_MIDDLEWARE = [
+        'cache.headers',
+        'etag',
+        'last-modified',
+    ];
+
+    public function name(): string
+    {
+        return 'cache-headers';
+    }
+
+    public function boot(PluginRegistry $registry): void
+    {
+        $registry->addOperationTransformer($this, 20);
+    }
+
+    public function priority(): int
+    {
+        return 20;
+    }
+
+    public function transform(array $operation, AnalysisContext $ctx): array
+    {
+        // Only apply to GET requests with caching middleware
+        if (strtoupper($ctx->route->httpMethod()) !== 'GET') {
+            return $operation;
+        }
+
+        $cacheMiddleware = $this->detectCacheMiddleware($ctx);
+        if ($cacheMiddleware === null) {
+            return $operation;
+        }
+
+        // Add conditional request headers
+        $operation['parameters'] ??= [];
+        $operation['parameters'][] = [
+            'name' => 'If-None-Match',
+            'in' => 'header',
+            'required' => false,
+            'description' => 'ETag value from a previous response. Returns 304 if unchanged.',
+            'schema' => ['type' => 'string'],
+        ];
+
+        // Document the 304 response
+        $operation['responses']['304'] = [
+            'description' => 'Not Modified — the resource has not changed since the last request.',
+        ];
+
+        // Add cache-related response headers to the 200 response
+        if (isset($operation['responses']['200'])) {
+            $operation['responses']['200']['headers'] = array_merge(
+                $operation['responses']['200']['headers'] ?? [],
+                [
+                    'ETag' => [
+                        'description' => 'Entity tag for cache validation.',
+                        'schema' => ['type' => 'string'],
+                    ],
+                    'Cache-Control' => [
+                        'description' => 'Cache directives for the response.',
+                        'schema' => ['type' => 'string'],
+                        'example' => $this->buildCacheControlExample($cacheMiddleware),
+                    ],
+                ],
+            );
+        }
+
+        return $operation;
+    }
+
+    private function detectCacheMiddleware(AnalysisContext $ctx): ?string
+    {
+        foreach ($ctx->route->middleware as $middleware) {
+            $name = explode(':', $middleware)[0];
+            if (in_array($name, self::CACHE_MIDDLEWARE, true)) {
+                return $middleware;
+            }
+        }
+
+        return null;
+    }
+
+    private function buildCacheControlExample(string $middleware): string
+    {
+        // Parse cache.headers:public;max_age=3600 format
+        if (str_starts_with($middleware, 'cache.headers:')) {
+            $directives = substr($middleware, 14);
+
+            return str_replace(['_', ';'], ['-', ', '], $directives);
+        }
+
+        return 'public, max-age=3600';
+    }
+}
+```
+
 ## Integrations
 
 ### Spatie Laravel Data
