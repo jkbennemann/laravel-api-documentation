@@ -30,7 +30,7 @@ class CaptureApiResponseMiddleware
                 // Silently fail - don't break the application
                 // Log if in testing mode
                 if (app()->environment('testing')) {
-                    logger()->warning('Failed to capture API response: ' . $e->getMessage());
+                    logger()->warning('Failed to capture API response: '.$e->getMessage());
                 }
             }
         }
@@ -52,17 +52,17 @@ class CaptureApiResponseMiddleware
         $enabled = config('api-documentation.capture.enabled', false);
 
         // Check environment variable directly as fallback
-        if (!$enabled && !env('DOC_CAPTURE_MODE', false)) {
+        if (! $enabled && ! env('DOC_CAPTURE_MODE', false)) {
             return false;
         }
 
         // Only capture if we have a route
-        if (!$request->route()) {
+        if (! $request->route()) {
             return false;
         }
 
         // Check if this is an API route we care about
-        if (!$this->isApiRoute($request)) {
+        if (! $this->isApiRoute($request)) {
             return false;
         }
 
@@ -106,7 +106,7 @@ class CaptureApiResponseMiddleware
         foreach ($excludedRoutes as $pattern) {
             if (str_contains($pattern, '*')) {
                 // Wildcard match
-                $regex = '/^' . str_replace('*', '.*', preg_quote($pattern, '/')) . '$/';
+                $regex = '/^'.str_replace('*', '.*', preg_quote($pattern, '/')).'$/';
                 if (preg_match($regex, $uri)) {
                     return true;
                 }
@@ -172,7 +172,7 @@ class CaptureApiResponseMiddleware
         if (in_array($method, ['GET', 'HEAD'])) {
             $queryParams = $request->query->all();
 
-            if (!empty($queryParams)) {
+            if (! empty($queryParams)) {
                 $requestData['query_parameters'] = $this->sanitizeExample($queryParams);
                 $requestData['query_schema'] = $this->inferSchema($queryParams);
             }
@@ -189,7 +189,7 @@ class CaptureApiResponseMiddleware
 
             // Also capture query params if they exist (e.g., DELETE /resource?force=true)
             $queryParams = $request->query->all();
-            if (!empty($queryParams)) {
+            if (! empty($queryParams)) {
                 $requestData['query_parameters'] = $this->sanitizeExample($queryParams);
                 $requestData['query_schema'] = $this->inferSchema($queryParams);
             }
@@ -221,7 +221,7 @@ class CaptureApiResponseMiddleware
 
         // Fall back to request input (for form data)
         $input = $request->all();
-        if (!empty($input)) {
+        if (! empty($input)) {
             return $input;
         }
 
@@ -384,7 +384,7 @@ class CaptureApiResponseMiddleware
                     'properties' => $properties,
                 ];
 
-                if (!empty($required)) {
+                if (! empty($required)) {
                     $schema['required'] = $required;
                 }
 
@@ -448,11 +448,11 @@ class CaptureApiResponseMiddleware
      */
     private function sanitizeExample(mixed $data): mixed
     {
-        if (!config('api-documentation.capture.sanitize.enabled', true)) {
+        if (! config('api-documentation.capture.sanitize.enabled', true)) {
             return $data;
         }
 
-        if (!is_array($data)) {
+        if (! is_array($data)) {
             return $data;
         }
 
@@ -502,13 +502,13 @@ class CaptureApiResponseMiddleware
         $storagePath = config('api-documentation.capture.storage_path', base_path('.schemas/responses'));
 
         // Create storage directory if it doesn't exist
-        if (!File::exists($storagePath)) {
+        if (! File::exists($storagePath)) {
             File::makeDirectory($storagePath, 0755, true);
         }
 
         // Generate filename from route
         $filename = $this->generateFilename($route);
-        $filepath = $storagePath . '/' . $filename;
+        $filepath = $storagePath.'/'.$filename;
 
         // Load existing captures for this route
         $existing = [];
@@ -518,6 +518,12 @@ class CaptureApiResponseMiddleware
 
         // Add/update capture for this status code
         $statusCode = (string) $capture['status'];
+
+        // Skip write if schema structure hasn't changed (idempotent)
+        if (isset($existing[$statusCode]) && $this->capturedSchemasMatch($existing[$statusCode], $capture)) {
+            return;
+        }
+
         $existing[$statusCode] = $capture;
 
         // Write back to file
@@ -525,6 +531,30 @@ class CaptureApiResponseMiddleware
             $filepath,
             json_encode($existing, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
         );
+    }
+
+    /**
+     * Compare structural schemas between existing and new capture.
+     * Ignores volatile fields (example, captured_at, headers) to prevent noisy diffs.
+     */
+    private function capturedSchemasMatch(array $existing, array $new): bool
+    {
+        // Compare response schema
+        if (($existing['schema'] ?? null) !== ($new['schema'] ?? null)) {
+            return false;
+        }
+
+        // Compare request body schema (detects FormRequest changes)
+        if (($existing['request']['body_schema'] ?? null) !== ($new['request']['body_schema'] ?? null)) {
+            return false;
+        }
+
+        // Compare query parameter schema
+        if (($existing['request']['query_schema'] ?? null) !== ($new['request']['query_schema'] ?? null)) {
+            return false;
+        }
+
+        return true;
     }
 
     /**
@@ -542,6 +572,6 @@ class CaptureApiResponseMiddleware
         $uri = str_replace(['/', '.', ':', '-'], '_', $uri);
 
         // Build filename: method_route.json
-        return $method . '_' . $uri . '.json';
+        return $method.'_'.$uri.'.json';
     }
 }

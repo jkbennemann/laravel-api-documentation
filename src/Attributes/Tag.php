@@ -9,7 +9,8 @@ use Attribute;
 #[Attribute]
 class Tag
 {
-    public null|array|string $value = null;
-
-    public function __construct(null|string|array $value = null) {}
+    public function __construct(
+        public null|string|array $value = null,
+        public ?string $description = null,
+    ) {}
 }

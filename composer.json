@@ -1,6 +1,6 @@
 {
     "name": "jkbennemann/laravel-api-documentation",
-    "description": "This is an opinionated package to generate API documentation for your Laravel application.",
+    "description": "Zero-config OpenAPI 3.1.0 documentation generator for Laravel with plugin system, $ref deduplication, and multi-source analysis.",
     "keywords": [
         "Jakob Bennemann",
         "laravel",
@@ -19,6 +19,7 @@
         "php": "^8.2",
         "illuminate/contracts": "^10.0 || ^11.0 || ^12.0",
         "nikic/php-parser": "^5.3",
+        "phpstan/phpdoc-parser": "^2.0",
         "php-openapi/openapi": "^2.0",
         "spatie/laravel-package-tools": "^1.16"
     },
@@ -73,6 +74,11 @@
             "phpstan/extension-installer": true
         }
     },
+    "suggest": {
+        "ext-yaml": "Required for YAML output format support",
+        "spatie/laravel-data": "For automatic Spatie Data DTO schema extraction",
+        "spatie/laravel-query-builder": "For automatic query parameter extraction from Spatie Query Builder"
+    },
     "extra": {
         "laravel": {
             "providers": [
@@ -81,6 +87,9 @@
             "aliases": {
                 "LaravelApiDocumentation": "JkBennemann\\LaravelApiDocumentation\\Facades\\LaravelApiDocumentation"
             }
+        },
+        "api-documentation": {
+            "plugin-discovery": true
         }
     },
     "minimum-stability": "dev",

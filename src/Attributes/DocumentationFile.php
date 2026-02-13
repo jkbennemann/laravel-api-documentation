@@ -9,7 +9,11 @@ use Attribute;
 #[Attribute]
 class DocumentationFile
 {
+    public string|array $value;
+
     public function __construct(
         string|array $value
-    ) {}
+    ) {
+        $this->value = $value;
+    }
 }
