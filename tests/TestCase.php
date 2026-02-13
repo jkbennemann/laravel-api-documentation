@@ -33,4 +33,18 @@ class TestCase extends Orchestra
         $migration->up();
         */
     }
+
+    /**
+     * Resolve a $ref schema to its component definition within a spec.
+     */
+    protected function resolveSchemaRef(array $schema, array $spec): array
+    {
+        if (isset($schema['$ref']) && str_starts_with($schema['$ref'], '#/components/schemas/')) {
+            $name = substr($schema['$ref'], strlen('#/components/schemas/'));
+
+            return $spec['components']['schemas'][$name] ?? $schema;
+        }
+
+        return $schema;
+    }
 }

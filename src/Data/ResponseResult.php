@@ -7,7 +7,7 @@ namespace JkBennemann\LaravelApiDocumentation\Data;
 final class ResponseResult
 {
     /**
-     * @param  array<string, array{description: string, schema?: SchemaObject}>  $headers
+     * @param  array<string, array{description: string, schema?: SchemaObject, example?: mixed}>  $headers
      * @param  array<string, mixed>  $examples
      */
     public function __construct(

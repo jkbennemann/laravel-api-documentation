@@ -18,12 +18,15 @@ class RouteFilter
 
     private bool $includeClosureRoutes;
 
+    private bool $autoDetectApiRoutes;
+
     public function __construct(array $config)
     {
         $this->excludedPatterns = $config['excluded_routes'] ?? [];
         $this->excludedMethods = array_map('strtoupper', $config['excluded_methods'] ?? ['HEAD', 'OPTIONS']);
         $this->includeVendorRoutes = $config['include_vendor_routes'] ?? false;
         $this->includeClosureRoutes = $config['include_closure_routes'] ?? false;
+        $this->autoDetectApiRoutes = $config['auto_detect_api_routes'] ?? true;
     }
 
     public function shouldInclude(Route $route): bool
@@ -38,6 +41,13 @@ class RouteFilter
 
         if ($this->isExcludedByPattern($route)) {
             return false;
+        }
+
+        // Auto-detect API routes when enabled and no inclusion patterns are configured
+        if ($this->autoDetectApiRoutes && ! $this->hasInclusionPatterns()) {
+            if (! $this->isApiRoute($route)) {
+                return false;
+            }
         }
 
         return true;
@@ -125,5 +135,55 @@ class RouteFilter
         $regex = '/^'.str_replace('\*', '.*', preg_quote($pattern, '/')).'$/';
 
         return (bool) preg_match($regex, $value);
+    }
+
+    private function hasInclusionPatterns(): bool
+    {
+        foreach ($this->excludedPatterns as $pattern) {
+            if (str_starts_with($pattern, '!')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function isApiRoute(Route $route): bool
+    {
+        try {
+            $middleware = $route->gatherMiddleware();
+        } catch (\Throwable) {
+            // gatherMiddleware() can trigger controller constructors which may throw
+            // Fall back to checking the route action middleware
+            $middleware = $route->middleware();
+        }
+
+        $hasWeb = false;
+        $hasApi = false;
+
+        foreach ($middleware as $m) {
+            if (! is_string($m)) {
+                continue;
+            }
+            if ($m === 'web') {
+                $hasWeb = true;
+            }
+            if ($m === 'api' || str_starts_with($m, 'api:')) {
+                $hasApi = true;
+            }
+        }
+
+        // Routes with 'api' middleware → include
+        if ($hasApi) {
+            return true;
+        }
+
+        // Routes with 'web' middleware (and no 'api') → exclude (these are web/Blade routes)
+        if ($hasWeb) {
+            return false;
+        }
+
+        // No middleware group detected → include by default (likely an API route)
+        return true;
     }
 }

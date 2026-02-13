@@ -39,17 +39,17 @@ class RateLimitErrorAnalyzer implements ResponseExtractor
             headers: [
                 'Retry-After' => [
                     'description' => 'Number of seconds until the rate limit resets.',
-                    'schema' => ['type' => 'integer'],
+                    'schema' => SchemaObject::integer(),
                     'example' => 60,
                 ],
                 'X-RateLimit-Limit' => [
                     'description' => 'Maximum number of requests allowed per period.',
-                    'schema' => ['type' => 'integer'],
+                    'schema' => SchemaObject::integer(),
                     'example' => $throttle['limit'],
                 ],
                 'X-RateLimit-Remaining' => [
                     'description' => 'Number of requests remaining in the current period.',
-                    'schema' => ['type' => 'integer'],
+                    'schema' => SchemaObject::integer(),
                     'example' => 0,
                 ],
             ],
