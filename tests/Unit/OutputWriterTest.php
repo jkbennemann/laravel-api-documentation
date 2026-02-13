@@ -117,8 +117,10 @@ it('serializes scalars correctly in YAML', function () {
     expect($yaml)->toContain('string_val: hello')
         ->and($yaml)->toContain('int_val: 42')
         ->and($yaml)->toContain('bool_true: true')
-        ->and($yaml)->toContain('bool_false: false')
-        ->and($yaml)->toContain('null_val: null');
+        ->and($yaml)->toContain('bool_false: false');
+
+    // ext-yaml uses ~ for null, built-in uses null
+    expect($yaml)->toMatch('/null_val: (null|~)/');
 });
 
 it('quotes strings that look like booleans or numbers in YAML', function () {
@@ -130,9 +132,11 @@ it('quotes strings that look like booleans or numbers in YAML', function () {
         'version' => '1.0.0',
     ]);
 
-    expect($yaml)->toContain("looks_like_bool: 'true'")
-        ->and($yaml)->toContain("looks_like_number: '3.14'")
-        ->and($yaml)->toContain("version: '1.0.0'");
+    // ext-yaml uses double quotes, built-in uses single quotes — both valid YAML
+    expect($yaml)->toMatch('/looks_like_bool: [\'"]true[\'"]/')
+        ->and($yaml)->toMatch('/looks_like_number: [\'"]3\.14[\'"]/')
+        // ext-yaml may leave version unquoted (valid YAML — not ambiguous)
+        ->and($yaml)->toMatch('/version: [\'"]?1\.0\.0[\'"]?/');
 });
 
 it('quotes strings with special characters in YAML', function () {
@@ -143,8 +147,9 @@ it('quotes strings with special characters in YAML', function () {
         'with_hash' => 'some # comment',
     ]);
 
-    expect($yaml)->toContain('"key: value"')
-        ->and($yaml)->toContain('"some # comment"');
+    // ext-yaml and built-in may use different quoting, but value must be quoted
+    expect($yaml)->toMatch('/with_colon: [\'"]key: value[\'"]/')
+        ->and($yaml)->toMatch('/with_hash: [\'"]some # comment[\'"]/');
 });
 
 it('handles empty arrays and objects in YAML', function () {
