@@ -10,6 +10,7 @@ return [
     'title' => Str::title(env('APP_NAME', 'Service')).' API Documentation',
     'include_vendor_routes' => false,
     'include_closure_routes' => false,
+    'auto_detect_api_routes' => true,
     'excluded_routes' => [
         // add the routes you want to exclude from the documentation
         // use the route name or the route uri.

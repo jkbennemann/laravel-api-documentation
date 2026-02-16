@@ -88,7 +88,7 @@ class RouteConstraintTest extends TestCase
         expect($param['schema']['pattern'])->toBe('[A-Z]{3}-[0-9]{4}');
     }
 
-    public function test_no_constraint_defaults_to_string(): void
+    public function test_no_constraint_defaults_to_integer_for_model_binding(): void
     {
         Route::get('api/posts/{post}', [PostController::class, 'show']);
 
@@ -96,7 +96,7 @@ class RouteConstraintTest extends TestCase
 
         $param = $this->getPathParameter($spec, '/api/posts/{post}', 'get', 'post');
         expect($param)->not()->toBeNull();
-        expect($param['schema']['type'])->toBe('string');
+        expect($param['schema']['type'])->toBe('integer');
         expect($param['schema'])->not()->toHaveKey('pattern');
     }
 

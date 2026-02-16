@@ -33,7 +33,8 @@ class RouteDiscovery
     {
         $contexts = [];
 
-        foreach ($this->router->getRoutes() as $route) {
+        /** @var \Illuminate\Routing\Route $route */
+        foreach ($this->router->getRoutes()->getRoutes() as $route) {
             if (! $this->filter->shouldInclude($route)) {
                 continue;
             }
@@ -111,7 +112,8 @@ class RouteDiscovery
      */
     public function discoverRoute(string $uri, string $method = 'GET'): ?AnalysisContext
     {
-        foreach ($this->router->getRoutes() as $route) {
+        /** @var \Illuminate\Routing\Route $route */
+        foreach ($this->router->getRoutes()->getRoutes() as $route) {
             if ($route->uri() === $uri && in_array(strtoupper($method), $route->methods(), true)) {
                 $routeInfo = RouteInfo::fromRoute($route);
                 $routeInfo = new RouteInfo(

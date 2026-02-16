@@ -29,6 +29,7 @@ class RequestMethodCallAnalyzer implements QueryParameterExtractor
         'str' => 'string',
         'input' => 'string',
         'query' => 'string',
+        'get' => 'string',
         'date' => 'date-time',
         'enum' => 'enum',
         'collect' => 'array',
@@ -49,11 +50,11 @@ class RequestMethodCallAnalyzer implements QueryParameterExtractor
         $pathParamNames = array_keys($ctx->route->pathParameters);
 
         $nodeFinder = new NodeFinder;
-        $calls = $nodeFinder->findInstanceOf($ctx->astNode->stmts ?? [], MethodCall::class);
-
         $params = [];
         $seenNames = [];
 
+        // 1. Detect typed method calls: $request->integer('page'), $request->get('limit'), etc.
+        $calls = $nodeFinder->findInstanceOf($ctx->astNode->stmts ?? [], MethodCall::class);
         foreach ($calls as $call) {
             if (! $call->name instanceof Node\Identifier) {
                 continue;
@@ -97,12 +98,40 @@ class RequestMethodCallAnalyzer implements QueryParameterExtractor
             );
         }
 
+        // 2. Detect array access patterns: $request['page']
+        $arrayAccesses = $nodeFinder->findInstanceOf($ctx->astNode->stmts ?? [], Node\Expr\ArrayDimFetch::class);
+        foreach ($arrayAccesses as $access) {
+            if (! $this->isRequestVariable($access->var)) {
+                continue;
+            }
+            if (! $access->dim instanceof String_) {
+                continue;
+            }
+
+            $paramName = $access->dim->value;
+            if (in_array($paramName, $pathParamNames, true) || isset($seenNames[$paramName])) {
+                continue;
+            }
+
+            $seenNames[$paramName] = true;
+
+            $params[] = ParameterResult::query(
+                name: $paramName,
+                schema: SchemaObject::string(),
+                required: false,
+            );
+        }
+
         return $params;
     }
 
     private function isRequestVariable(Node $node): bool
     {
-        return $node instanceof Variable && $node->name === 'request';
+        if ($node instanceof Variable && is_string($node->name)) {
+            return in_array($node->name, ['request', 'req', 'rq'], true);
+        }
+
+        return false;
     }
 
     private function buildSchema(string $methodName, MethodCall $call): SchemaObject

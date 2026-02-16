@@ -11,7 +11,7 @@ class ValidationRuleMapper
     /** @var array<string, array{type: string, format?: string, pattern?: string}> */
     private array $ruleTypes;
 
-    public function __construct(array $config = [])
+    public function __construct(array $config = [], private readonly ?SchemaRegistry $schemaRegistry = null)
     {
         $this->ruleTypes = $config['smart_requests']['rule_types'] ?? $this->defaultRuleTypes();
     }
@@ -32,9 +32,32 @@ class ValidationRuleMapper
 
         foreach ($rules as $rule) {
             $rule = $this->normalizeRule($rule);
+
+            // Handle enum_class:ClassName pseudo-rule from AST extraction
+            if (str_starts_with($rule, 'enum_class:')) {
+                $enumClass = substr($rule, 11);
+                $enumSchema = $this->resolveEnumSchema($enumClass);
+                if ($enumSchema !== null) {
+                    if ($enumSchema->ref !== null) {
+                        return $enumSchema;
+                    }
+                    $schema->type = $enumSchema->type ?? 'string';
+                    $schema->enum = $enumSchema->enum;
+                    $hasTypeRule = true;
+                }
+
+                continue;
+            }
+
             $parts = explode(':', $rule, 2);
             $ruleName = $parts[0];
             $params = isset($parts[1]) ? explode(',', $parts[1]) : [];
+
+            // Handle Illuminate\Validation\Rules\Enum class name (from reflection fallback)
+            if ($ruleName === 'Illuminate\\Validation\\Rules\\Enum'
+                || $ruleName === 'Illuminate\\Validation\\Rules\\In') {
+                continue;
+            }
 
             // Type rules
             if (isset($this->ruleTypes[$ruleName])) {
@@ -60,6 +83,61 @@ class ValidationRuleMapper
         }
 
         return $schema;
+    }
+
+    private function resolveEnumSchema(string $enumClass): ?SchemaObject
+    {
+        // Try the class as-is
+        if (enum_exists($enumClass)) {
+            return $this->buildEnumSchema($enumClass);
+        }
+
+        // Try common namespaces
+        $prefixes = ['App\\Enums\\', 'App\\Models\\', 'App\\'];
+        foreach ($prefixes as $prefix) {
+            $fqcn = $prefix.$enumClass;
+            if (enum_exists($fqcn)) {
+                return $this->buildEnumSchema($fqcn);
+            }
+        }
+
+        return null;
+    }
+
+    private function buildEnumSchema(string $enumClass): ?SchemaObject
+    {
+        try {
+            $reflection = new \ReflectionEnum($enumClass);
+            $cases = $reflection->getCases();
+            $values = [];
+
+            foreach ($cases as $case) {
+                if ($case instanceof \ReflectionEnumBackedCase) {
+                    $values[] = $case->getBackingValue();
+                } else {
+                    $values[] = $case->getName();
+                }
+            }
+
+            $type = 'string';
+            $backingType = $reflection->getBackingType();
+            if ($backingType instanceof \ReflectionNamedType && $backingType->getName() === 'int') {
+                $type = 'integer';
+            }
+
+            $enumSchema = new SchemaObject(type: $type, enum: $values);
+
+            if ($this->schemaRegistry !== null && count($values) >= 2) {
+                $name = class_basename($enumClass);
+                $ref = $this->schemaRegistry->register($name, $enumSchema);
+
+                return SchemaObject::ref($ref);
+            }
+
+            return $enumSchema;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**
@@ -184,6 +262,9 @@ class ValidationRuleMapper
             }
         }
 
+        // Ensure all array-typed properties have an items schema
+        $this->ensureArrayItems($properties, $nested);
+
         return SchemaObject::object($properties, ! empty($required) ? $required : null);
     }
 
@@ -230,6 +311,9 @@ class ValidationRuleMapper
                 $subField = implode('.', array_slice($remaining, 1));
                 if ($properties[$topField]->items === null) {
                     $properties[$topField]->items = SchemaObject::object();
+                } elseif ($properties[$topField]->items->type !== 'object') {
+                    // Fix type confusion: items with nested properties must be objects
+                    $properties[$topField]->items->type = 'object';
                 }
                 $itemProps = $properties[$topField]->items->properties ?? [];
                 $itemRequired = $properties[$topField]->items->required ?? [];
@@ -282,6 +366,64 @@ class ValidationRuleMapper
                 $properties[$topField]->required = $subRequired;
             }
         }
+    }
+
+    /**
+     * Ensure all array-typed properties have an items schema.
+     * Infers item type from naming heuristics when no wildcard rule exists.
+     *
+     * @param  array<string, SchemaObject>  $properties
+     * @param  array<string, string[]|string>  $nested  Original nested rules for context
+     */
+    private function ensureArrayItems(array &$properties, array $nested): void
+    {
+        foreach ($properties as $field => $schema) {
+            if ($schema->type !== 'array' || $schema->items !== null) {
+                continue;
+            }
+
+            // Check if there's a wildcard rule for this field (already processed)
+            $hasWildcard = false;
+            foreach ($nested as $nestedField => $_) {
+                if (str_starts_with($nestedField, $field.'.')) {
+                    $hasWildcard = true;
+                    break;
+                }
+            }
+            if ($hasWildcard) {
+                continue;
+            }
+
+            // Infer item type from field name
+            $schema->items = $this->inferArrayItemType($field);
+
+            // Fix type confusion: if items has properties/required, it should be an object
+            if ($schema->items->properties !== null && $schema->items->type === 'array') {
+                $schema->items->type = 'object';
+            }
+        }
+    }
+
+    /**
+     * Infer the item type for an array field based on naming heuristics.
+     */
+    private function inferArrayItemType(string $field): SchemaObject
+    {
+        $lower = strtolower($field);
+
+        // Fields ending in _ids or containing 'id' patterns → likely integer IDs
+        if (str_ends_with($lower, '_ids') || $lower === 'ids') {
+            return SchemaObject::integer();
+        }
+
+        // Common plural fields that are typically arrays of identifiers
+        $stringArrayFields = ['tags', 'labels', 'emails', 'names', 'roles', 'permissions', 'scopes', 'types', 'values'];
+        if (in_array($lower, $stringArrayFields, true)) {
+            return SchemaObject::string();
+        }
+
+        // Default: string items
+        return SchemaObject::string();
     }
 
     private function applyConstraint(SchemaObject $schema, string $rule, array $params): void

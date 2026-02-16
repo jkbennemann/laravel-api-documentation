@@ -72,16 +72,16 @@ class RouteModelBindingTest extends TestCase
         expect($param['schema'])->toHaveKey('pattern');
     }
 
-    public function test_default_id_binding_stays_string(): void
+    public function test_default_id_binding_infers_integer_type(): void
     {
-        // User model uses default getRouteKeyName() which returns 'id'
+        // User model uses default getRouteKeyName() which returns 'id' → integer
         Route::get('api/users/{user}', [UserController::class, 'show']);
 
         $spec = $this->generateSpec();
         $param = $this->getPathParameter($spec, '/api/users/{user}', 'get', 'user');
 
         expect($param)->not()->toBeNull();
-        expect($param['schema']['type'])->toBe('string');
+        expect($param['schema']['type'])->toBe('integer');
     }
 
     public function test_maps_uuid_binding_field_to_uuid_format(): void

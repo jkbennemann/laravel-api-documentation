@@ -16,7 +16,7 @@ class FormRequestQueryAnalyzer implements QueryParameterExtractor
 
     private ValidationRuleMapper $ruleMapper;
 
-    private const QUERY_METHODS = ['GET', 'HEAD'];
+    private const QUERY_METHODS = ['GET', 'HEAD', 'DELETE'];
 
     public function __construct(array $config = [])
     {

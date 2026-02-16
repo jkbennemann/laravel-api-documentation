@@ -179,7 +179,7 @@ class SpatieQueryBuilderPlugin implements Plugin, QueryParameterExtractor
             // Handle array argument: allowedFilters(['name', 'email'])
             if ($arg->value instanceof Node\Expr\Array_) {
                 foreach ($arg->value->items as $item) {
-                    if ($item instanceof Node\Expr\ArrayItem && $item->value instanceof String_) {
+                    if ($item instanceof Node\ArrayItem && $item->value instanceof String_) {
                         $names[] = $item->value->value;
                     }
                 }

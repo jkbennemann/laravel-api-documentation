@@ -183,7 +183,7 @@ class ClassSchemaResolver
         return $this->resolveFromPublicProperties($reflection);
     }
 
-    private function resolveSpatieData(\ReflectionClass $reflection): ?SchemaObject
+    private function resolveSpatieData(\ReflectionClass $reflection): SchemaObject
     {
         $constructor = $reflection->getConstructor();
         if ($constructor === null) {

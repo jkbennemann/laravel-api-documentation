@@ -357,7 +357,7 @@ class JsonApiPlugin implements OperationTransformer, Plugin, ResponseExtractor
                 foreach ($returns as $return) {
                     if ($return->expr instanceof Node\Expr\Array_) {
                         foreach ($return->expr->items as $item) {
-                            if ($item instanceof Node\Expr\ArrayItem
+                            if ($item instanceof Node\ArrayItem
                                 && $item->key instanceof Node\Scalar\String_) {
                                 $relName = $item->key->value;
                                 $properties[$relName] = SchemaObject::object([
@@ -394,7 +394,7 @@ class JsonApiPlugin implements OperationTransformer, Plugin, ResponseExtractor
         foreach ($returns as $return) {
             if ($return->expr instanceof Node\Expr\Array_) {
                 foreach ($return->expr->items as $item) {
-                    if ($item instanceof Node\Expr\ArrayItem
+                    if ($item instanceof Node\ArrayItem
                         && $item->key instanceof Node\Scalar\String_) {
                         $properties[$item->key->value] = $this->inferTypeFromExpression($item->value);
                     }

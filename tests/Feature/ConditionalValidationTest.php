@@ -75,6 +75,7 @@ class ConditionalValidationTest extends TestCase
 
         $schema = $spec['paths']['/api/conditional']['post']['requestBody']['content']['application/json']['schema'] ?? null;
         expect($schema)->not()->toBeNull();
+        $schema = $this->resolveSchemaRef($schema, $spec);
 
         // 'type' should be required (plain required)
         expect($schema['required'])->toContain('type');
@@ -95,6 +96,7 @@ class ConditionalValidationTest extends TestCase
         $spec = $this->generateSpec();
 
         $schema = $spec['paths']['/api/conditional']['post']['requestBody']['content']['application/json']['schema'];
+        $schema = $this->resolveSchemaRef($schema, $spec);
         $typeProp = $schema['properties']['type'] ?? null;
         expect($typeProp)->not()->toBeNull();
         expect($typeProp['enum'])->toBe(['individual', 'company']);

@@ -151,7 +151,7 @@ class RouteFilteringTest extends TestCase
         Route::post('api/users', [SimpleController::class, 'simple']);
         Route::get('web/home', [SimpleController::class, 'simple']);
 
-        $uris = $this->discoverUris(['excluded_routes' => []]);
+        $uris = $this->discoverUris(['excluded_routes' => [], 'auto_detect_api_routes' => false]);
 
         expect($uris)->toContain('api/users');
         expect($uris)->toContain('web/home');

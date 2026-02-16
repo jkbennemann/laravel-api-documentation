@@ -173,10 +173,10 @@ class LaravelApiDocumentationServiceProvider extends PackageServiceProvider
 
         // Request extractors (highest priority first)
         $registry->addRequestExtractor(new RequestBodyAttributeAnalyzer, 100);
-        $formRequestAnalyzer = new FormRequestAnalyzer($config, $astCache);
+        $formRequestAnalyzer = new FormRequestAnalyzer($config, $astCache, $schemaRegistry);
         $registry->addRequestExtractor($formRequestAnalyzer, 90);
-        $registry->addRequestExtractor(new ContainerFormRequestAnalyzer($formRequestAnalyzer, $config, $astCache), 85);
-        $registry->addRequestExtractor(new InlineValidationAnalyzer($config), 80);
+        $registry->addRequestExtractor(new ContainerFormRequestAnalyzer($formRequestAnalyzer, $config, $astCache, $schemaRegistry), 85);
+        $registry->addRequestExtractor(new InlineValidationAnalyzer($config, $schemaRegistry), 80);
         $registry->addRequestExtractor(new RuntimeCaptureRequestAnalyzer($capturedRepo), 60);
 
         // Query parameter extractors
@@ -224,6 +224,7 @@ class LaravelApiDocumentationServiceProvider extends PackageServiceProvider
             $registry->register(new CodeSamplePlugin(
                 languages: $codeSamplesConfig['languages'] ?? null,
                 baseUrl: $codeSamplesConfig['base_url'] ?? null,
+                schemaRegistry: $app->make(SchemaRegistry::class),
             ));
         }
 

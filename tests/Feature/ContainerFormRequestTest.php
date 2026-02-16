@@ -37,6 +37,7 @@ class ContainerFormRequestTest extends TestCase
 
         $schema = $operation['requestBody']['content']['application/json']['schema'] ?? null;
         expect($schema)->not()->toBeNull();
+        $schema = $this->resolveSchemaRef($schema, $spec);
         expect($schema['properties'])->toHaveKey('parameter_1');
         expect($schema['properties'])->toHaveKey('parameter_2');
         expect($schema['required'])->toContain('parameter_1');
@@ -54,6 +55,7 @@ class ContainerFormRequestTest extends TestCase
 
         $schema = $operation['requestBody']['content']['application/json']['schema'] ?? null;
         expect($schema)->not()->toBeNull();
+        $schema = $this->resolveSchemaRef($schema, $spec);
         expect($schema['properties'])->toHaveKey('parameter_1');
         expect($schema['properties'])->toHaveKey('parameter_2');
     }
@@ -70,6 +72,7 @@ class ContainerFormRequestTest extends TestCase
 
         $schema = $operation['requestBody']['content']['application/json']['schema'] ?? null;
         expect($schema)->not()->toBeNull();
+        $schema = $this->resolveSchemaRef($schema, $spec);
         expect($schema['properties'])->toHaveKey('parameter_1');
         expect($schema['properties'])->toHaveKey('parameter_2');
         expect($schema['required'])->toContain('parameter_1');
@@ -87,6 +90,7 @@ class ContainerFormRequestTest extends TestCase
 
         $schema = $operation['requestBody']['content']['application/json']['schema'] ?? null;
         expect($schema)->not()->toBeNull();
+        $schema = $this->resolveSchemaRef($schema, $spec);
         expect($schema['properties'])->toHaveKey('parameter_1');
         expect($schema['properties'])->toHaveKey('parameter_2');
         expect($schema['required'])->toContain('parameter_1');

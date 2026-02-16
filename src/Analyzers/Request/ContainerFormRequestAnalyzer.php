@@ -8,7 +8,9 @@ use Illuminate\Foundation\Http\FormRequest;
 use JkBennemann\LaravelApiDocumentation\Cache\AstCache;
 use JkBennemann\LaravelApiDocumentation\Contracts\RequestBodyExtractor;
 use JkBennemann\LaravelApiDocumentation\Data\AnalysisContext;
+use JkBennemann\LaravelApiDocumentation\Data\SchemaObject;
 use JkBennemann\LaravelApiDocumentation\Data\SchemaResult;
+use JkBennemann\LaravelApiDocumentation\Schema\SchemaRegistry;
 use JkBennemann\LaravelApiDocumentation\Schema\ValidationRuleMapper;
 use PhpParser\Node;
 use PhpParser\Node\Expr;
@@ -42,8 +44,9 @@ class ContainerFormRequestAnalyzer implements RequestBodyExtractor
         private readonly FormRequestAnalyzer $formRequestAnalyzer,
         array $config = [],
         private readonly ?AstCache $astCache = null,
+        private readonly ?SchemaRegistry $schemaRegistry = null,
     ) {
-        $this->ruleMapper = new ValidationRuleMapper($config);
+        $this->ruleMapper = new ValidationRuleMapper($config, $schemaRegistry);
     }
 
     public function extract(AnalysisContext $ctx): ?SchemaResult
@@ -78,6 +81,15 @@ class ContainerFormRequestAnalyzer implements RequestBodyExtractor
         }
 
         $schema = $this->ruleMapper->mapAllRules($rules);
+
+        if ($this->schemaRegistry !== null) {
+            $name = class_basename($formRequestClass);
+            $registered = $this->schemaRegistry->registerIfComplex($name, $schema);
+            if ($registered instanceof SchemaObject) {
+                $schema = $registered;
+            }
+        }
+
         $contentType = $this->ruleMapper->hasFileUpload($rules)
             ? 'multipart/form-data'
             : 'application/json';
