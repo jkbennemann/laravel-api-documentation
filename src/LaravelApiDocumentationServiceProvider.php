@@ -42,6 +42,7 @@ use JkBennemann\LaravelApiDocumentation\Http\Controllers\DefaultDocumentationCon
 use JkBennemann\LaravelApiDocumentation\Http\Controllers\RedocController;
 use JkBennemann\LaravelApiDocumentation\Http\Controllers\ScalarController;
 use JkBennemann\LaravelApiDocumentation\Http\Controllers\SwaggerController;
+use JkBennemann\LaravelApiDocumentation\Plugins\ApiKeyAuthPlugin;
 use JkBennemann\LaravelApiDocumentation\Plugins\BearerAuthPlugin;
 use JkBennemann\LaravelApiDocumentation\Plugins\CodeSamplePlugin;
 use JkBennemann\LaravelApiDocumentation\Plugins\JsonApiPlugin;
@@ -212,6 +213,12 @@ class LaravelApiDocumentationServiceProvider extends PackageServiceProvider
 
     private function registerBuiltInPlugins(PluginRegistry $registry, $app): void
     {
+        // API key auth (enabled via config)
+        $apiKeyConfig = $app['config']['api-documentation']['security']['api_key'] ?? [];
+        if ($apiKeyConfig['enabled'] ?? false) {
+            $registry->register(new ApiKeyAuthPlugin($apiKeyConfig));
+        }
+
         // Bearer auth (always enabled)
         $registry->register(new BearerAuthPlugin);
 

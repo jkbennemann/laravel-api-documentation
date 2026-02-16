@@ -114,6 +114,26 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Security Scheme Configuration
+    |--------------------------------------------------------------------------
+    |
+    | Configure API key authentication detection. When enabled, routes using
+    | any of the listed middleware names will get an apiKey security scheme
+    | in the OpenAPI spec.
+    |
+    */
+    'security' => [
+        'api_key' => [
+            'enabled' => false,
+            'header' => 'X-API-KEY',
+            'scheme_name' => 'apiKeyAuth',
+            'description' => 'API key passed via request header',
+            'middleware' => ['auth.apikey', 'apikey', 'auth.api-key', 'auth.api_key', 'api-key', 'api_key'],
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Tag Descriptions
     |--------------------------------------------------------------------------
     |
