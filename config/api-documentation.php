@@ -51,6 +51,7 @@ return [
             'enabled' => false,
             'route' => '/documentation/scalar',
             'version' => '2.2.0',
+            'proxy_url' => 'https://proxy.scalar.com',
             'middleware' => [
                 'web',
             ],

@@ -12,11 +12,13 @@ class ScalarController
 
     public function index()
     {
+        $proxyUrl = config('api-documentation.ui.scalar.proxy_url', 'https://proxy.scalar.com');
+
         $filename = config('api-documentation.ui.storage.filename', null);
         $oldFile[] = [
             'name' => $filename,
             'url' => $filename ? asset($filename) : null,
-            'proxyUrl' => 'https://proxy.scalar.com',
+            'proxyUrl' => $proxyUrl ?: null,
         ];
 
         $files = [];
@@ -25,7 +27,7 @@ class ScalarController
                 $files[] = [
                     'title' => $file['filename'],
                     'url' => asset($file['filename']),
-                    'proxyUrl' => 'https://proxy.scalar.com',
+                    'proxyUrl' => $proxyUrl ?: null,
                 ];
             }
         }
