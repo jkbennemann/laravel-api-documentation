@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace JkBennemann\LaravelApiDocumentation\Analyzers\Response;
 
 use JkBennemann\LaravelApiDocumentation\Attributes\DataResponse;
+use JkBennemann\LaravelApiDocumentation\Attributes\ResponseBody;
 use JkBennemann\LaravelApiDocumentation\Cache\AstCache;
 use JkBennemann\LaravelApiDocumentation\Contracts\ResponseExtractor;
 use JkBennemann\LaravelApiDocumentation\Data\AnalysisContext;
@@ -58,9 +59,11 @@ class ReturnTypeAnalyzer implements ResponseExtractor
 
     public function extract(AnalysisContext $ctx): array
     {
-        // When explicit #[DataResponse] attributes exist, the developer has declared
-        // the response contract — don't add auto-detected responses that would conflict.
-        if ($ctx->hasAttribute(DataResponse::class)) {
+        // When explicit #[DataResponse] or #[ResponseBody] attributes exist, the
+        // developer has declared the response contract — don't add auto-detected
+        // responses that would conflict (e.g. a stray empty application/json next
+        // to a declared binary/XML/HTML body).
+        if ($ctx->hasAttribute(DataResponse::class) || $ctx->hasAttribute(ResponseBody::class)) {
             return [];
         }
 

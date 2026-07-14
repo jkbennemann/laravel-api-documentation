@@ -65,6 +65,13 @@ class OpenApiEmitter
         SchemaObject::$openApiVersion = $config['open_api_version'] ?? '3.1.0';
 
         $this->tags = [];
+
+        // Fresh SecurityBuilder per emit: the SchemaRegistry is reset between
+        // output files (multi-file generation), so the scheme cache must reset
+        // too — otherwise the 2nd+ file references securitySchemes it never
+        // re-registers into the fresh registry.
+        $this->securityBuilder = new SecurityBuilder($this->registry);
+
         $spec = $this->buildBase($config);
         $paths = [];
 

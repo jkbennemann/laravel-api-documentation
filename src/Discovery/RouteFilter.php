@@ -20,6 +20,9 @@ class RouteFilter
 
     private bool $autoDetectApiRoutes;
 
+    /** @var string[] Middleware substrings that force a route out of every output file */
+    private array $excludedMiddleware;
+
     public function __construct(array $config)
     {
         $this->excludedPatterns = $config['excluded_routes'] ?? [];
@@ -27,6 +30,7 @@ class RouteFilter
         $this->includeVendorRoutes = $config['include_vendor_routes'] ?? false;
         $this->includeClosureRoutes = $config['include_closure_routes'] ?? false;
         $this->autoDetectApiRoutes = $config['auto_detect_api_routes'] ?? true;
+        $this->excludedMiddleware = $config['excluded_middleware'] ?? [];
     }
 
     public function shouldInclude(Route $route): bool
@@ -36,6 +40,12 @@ class RouteFilter
         }
 
         if (! $this->includeVendorRoutes && $this->isVendorRoute($route)) {
+            return false;
+        }
+
+        // Hard, non-overridable exclusion by middleware (defense-in-depth for
+        // sensitive surfaces such as super-admin routes). Applies to every file.
+        if (! empty($this->excludedMiddleware) && $this->hasExcludedMiddleware($route)) {
             return false;
         }
 
@@ -64,6 +74,28 @@ class RouteFilter
             $route->methods(),
             fn (string $method) => ! in_array(strtoupper($method), $this->excludedMethods, true)
         ));
+    }
+
+    private function hasExcludedMiddleware(Route $route): bool
+    {
+        try {
+            $middleware = $route->gatherMiddleware();
+        } catch (\Throwable) {
+            $middleware = $route->middleware();
+        }
+
+        foreach ($middleware as $m) {
+            if (! is_string($m)) {
+                continue;
+            }
+            foreach ($this->excludedMiddleware as $needle) {
+                if ($needle !== '' && str_contains($m, $needle)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private function isClosureRoute(Route $route): bool

@@ -7,6 +7,7 @@ namespace JkBennemann\LaravelApiDocumentation\Discovery;
 use Illuminate\Routing\Router;
 use JkBennemann\LaravelApiDocumentation\Attributes\DocumentationFile;
 use JkBennemann\LaravelApiDocumentation\Attributes\ExcludeFromDocs;
+use JkBennemann\LaravelApiDocumentation\Contracts\RouteClassifier;
 use JkBennemann\LaravelApiDocumentation\Data\AnalysisContext;
 use JkBennemann\LaravelApiDocumentation\Data\RouteInfo;
 
@@ -16,12 +17,18 @@ class RouteDiscovery
 
     private ControllerReflector $reflector;
 
+    /** @var RouteClassifier|class-string<RouteClassifier>|null */
+    private mixed $classifier;
+
+    private bool $classifierResolved = false;
+
     public function __construct(
         private readonly Router $router,
         array $config,
     ) {
         $this->filter = new RouteFilter($config);
         $this->reflector = new ControllerReflector;
+        $this->classifier = $config['route_classifier'] ?? null;
     }
 
     /**
@@ -154,10 +161,40 @@ class RouteDiscovery
     }
 
     /**
+     * Lazily resolve the configured RouteClassifier (class-string or instance).
+     */
+    private function classifier(): ?RouteClassifier
+    {
+        if (! $this->classifierResolved) {
+            $this->classifierResolved = true;
+
+            $classifier = $this->classifier;
+            if (is_string($classifier)) {
+                $classifier = function_exists('app') ? app($classifier) : new $classifier;
+            }
+
+            $this->classifier = $classifier instanceof RouteClassifier ? $classifier : null;
+        }
+
+        return $this->classifier;
+    }
+
+    /**
      * @return string[]
      */
     private function resolveDocumentationFiles(RouteInfo $route): array
     {
+        // A configured RouteClassifier is the authoritative, fail-safe source of
+        // truth: a non-null return wins over attributes. Returning [] excludes
+        // the route from every file.
+        $classifier = $this->classifier();
+        if ($classifier !== null) {
+            $files = $classifier->classify($route);
+            if ($files !== null) {
+                return $files;
+            }
+        }
+
         if ($route->controller === null) {
             return ['default'];
         }
