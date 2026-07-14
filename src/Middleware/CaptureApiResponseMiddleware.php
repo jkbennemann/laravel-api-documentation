@@ -473,8 +473,9 @@ class CaptureApiResponseMiddleware
     private function recursiveSanitize(array $data, array $sensitiveKeys, string $redactedValue): array
     {
         foreach ($data as $key => $value) {
-            // Check if key is sensitive (case-insensitive)
-            $lowerKey = strtolower($key);
+            // Check if key is sensitive (case-insensitive). Cast to string first:
+            // list arrays have integer keys, which would fatal in strtolower().
+            $lowerKey = strtolower((string) $key);
             $isSensitive = false;
 
             foreach ($sensitiveKeys as $sensitiveKey) {
