@@ -56,7 +56,21 @@ class RuntimeCaptureResponseAnalyzer implements ResponseExtractor
 
     private function arrayToSchemaObject(array $data): SchemaObject
     {
+        // Empty schema descriptor → permissive ANY (validates against any value).
+        if ($data === []) {
+            return new SchemaObject;
+        }
+
         $type = $data['type'] ?? 'object';
+
+        // A capture whose value was all-null yields a degenerate null-only type
+        // (and, with a `nullable` flag, the invalid `["null","null"]`). The true
+        // type is unknown from a null sample, so emit a permissive ANY schema
+        // that validates against any value (including null) instead of forcing null.
+        if ($type === 'null') {
+            return new SchemaObject;
+        }
+
         $schema = new SchemaObject(type: $type);
 
         if (isset($data['format'])) {

@@ -320,7 +320,10 @@ class CaptureApiResponseMiddleware
         }
 
         if (is_null($data)) {
-            return ['type' => 'null', 'nullable' => true];
+            // Unknown type from a null sample — emit a permissive ANY schema
+            // rather than a null-only type (which would force null and can
+            // serialize to the invalid ["null","null"]).
+            return [];
         }
 
         if (is_bool($data)) {

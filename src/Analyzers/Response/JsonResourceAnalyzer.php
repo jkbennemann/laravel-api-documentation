@@ -355,12 +355,17 @@ class JsonResourceAnalyzer
             if ($item->key instanceof String_) {
                 $key = $item->key->value;
                 $propSchema = $this->inferPropertySchema($item->value, $resourceClass);
-                $properties[$key] = $propSchema;
 
-                // Mark as required unless it's a conditional field
-                if (! $this->isConditionalField($item->value)) {
+                // Mark as required unless it's a conditional field. A conditional field is
+                // optional and — for wrapped whenLoaded() relations that are loaded-but-null —
+                // may serialize as null, so make it nullable too.
+                if ($this->isConditionalField($item->value)) {
+                    $propSchema = $this->makeNullable($propSchema);
+                } else {
                     $required[] = $key;
                 }
+
+                $properties[$key] = $propSchema;
             } else {
                 // Dynamic key (e.g. enum method call, variable) — collect value schemas
                 $dynamicValueSchemas[] = $this->inferPropertySchema($item->value, $resourceClass);
@@ -410,6 +415,28 @@ class JsonResourceAnalyzer
             return SchemaObject::string();
         }
 
+        // Comparison / logical expressions evaluate to a boolean, e.g.
+        //   'is_archived' => $this->archived_at !== null
+        //   'is_active' => $a === $b,  '!$flag',  $obj instanceof Foo,  empty(...),  isset(...)
+        if ($value instanceof Expr\BinaryOp\Identical
+            || $value instanceof Expr\BinaryOp\NotIdentical
+            || $value instanceof Expr\BinaryOp\Equal
+            || $value instanceof Expr\BinaryOp\NotEqual
+            || $value instanceof Expr\BinaryOp\Smaller
+            || $value instanceof Expr\BinaryOp\SmallerOrEqual
+            || $value instanceof Expr\BinaryOp\Greater
+            || $value instanceof Expr\BinaryOp\GreaterOrEqual
+            || $value instanceof Expr\BinaryOp\BooleanAnd
+            || $value instanceof Expr\BinaryOp\BooleanOr
+            || $value instanceof Expr\BinaryOp\LogicalAnd
+            || $value instanceof Expr\BinaryOp\LogicalOr
+            || $value instanceof Expr\BooleanNot
+            || $value instanceof Expr\Instanceof_
+            || $value instanceof Expr\Empty_
+            || $value instanceof Expr\Isset_) {
+            return SchemaObject::boolean();
+        }
+
         // $this->when($condition, $value)
         if ($value instanceof Expr\MethodCall && $value->name instanceof Node\Identifier) {
             $methodName = $value->name->toString();
@@ -433,7 +460,7 @@ class JsonResourceAnalyzer
                 return SchemaObject::object();
             }
 
-            // Method call type inference from config
+            // Method call type inference from config (explicit mapping wins)
             $methodTypes = $this->config['smart_responses']['method_types'] ?? [];
             if (isset($methodTypes[$methodName])) {
                 $mapping = $methodTypes[$methodName];
@@ -442,6 +469,44 @@ class JsonResourceAnalyzer
                     type: $mapping['type'],
                     format: $mapping['format'] ?? null,
                 );
+            }
+
+            // $this->someMethod(...) — resolve the declared return type of the method on the
+            // Resource class (or its underlying model, since JsonResource proxies unknown
+            // calls to the resource). Covers computed accessors like isStandalone(): bool or
+            // settingsForJson(): object|array. Falls through to the string default otherwise.
+            if ($value->var instanceof Expr\Variable && $value->var->name === 'this') {
+                $resolved = $this->resolveMethodReturnSchema($methodName, $resourceClass);
+                if ($resolved !== null) {
+                    return $resolved;
+                }
+            }
+        }
+
+        // Date/time formatting helpers, e.g. $this->created_at->toIso8601String() or the
+        // nullable-safe $this->deleted_at?->format(...). A nullsafe receiver (?->) means the
+        // whole expression can resolve to null, so the schema must be nullable.
+        if ($value instanceof Expr\MethodCall || $value instanceof Expr\NullsafeMethodCall) {
+            $methodName = $value->name instanceof Node\Identifier ? strtolower($value->name->toString()) : '';
+            $receiverNullable = $value instanceof Expr\NullsafeMethodCall
+                || $value->var instanceof Expr\NullsafePropertyFetch
+                || $value->var instanceof Expr\NullsafeMethodCall;
+
+            $dateFormatters = [
+                'toiso8601string', 'toiso8601zulustring', 'todatetimestring', 'todatestring',
+                'totimestring', 'toatomstring', 'torfc3339string', 'torfc2822string',
+                'todatetimelocalstring', 'format',
+            ];
+            if (in_array($methodName, $dateFormatters, true)) {
+                $schema = SchemaObject::string($methodName === 'todatestring' ? 'date' : 'date-time');
+                $schema->nullable = $receiverNullable;
+
+                return $schema;
+            }
+
+            // Any other call through a nullsafe operator may yield null.
+            if ($receiverNullable) {
+                return new SchemaObject(type: 'string', nullable: true);
             }
         }
 
@@ -1014,12 +1079,114 @@ class JsonResourceAnalyzer
         return null;
     }
 
+    /**
+     * Resolve the schema for a `$this->method(...)` call by reflecting the method's declared
+     * return type. Checks the Resource class first, then its underlying model (JsonResource
+     * proxies unknown method calls to the wrapped model).
+     */
+    private function resolveMethodReturnSchema(string $methodName, string $resourceClass): ?SchemaObject
+    {
+        $candidates = [$resourceClass];
+        if ($this->modelAnalyzer !== null) {
+            $model = $this->modelAnalyzer->getModelForResource($resourceClass);
+            if ($model !== null) {
+                $candidates[] = $model;
+            }
+        }
+
+        foreach ($candidates as $class) {
+            try {
+                $reflection = new \ReflectionClass($class);
+                if (! $reflection->hasMethod($methodName)) {
+                    continue;
+                }
+
+                $returnType = $reflection->getMethod($methodName)->getReturnType();
+                if ($returnType === null) {
+                    return null;
+                }
+
+                return $this->schemaFromReturnType($returnType);
+            } catch (\Throwable) {
+                continue;
+            }
+        }
+
+        return null;
+    }
+
+    private function schemaFromReturnType(\ReflectionType $returnType): ?SchemaObject
+    {
+        if ($returnType instanceof \ReflectionNamedType) {
+            $name = strtolower($returnType->getName());
+
+            // No meaningful shape — let the caller fall back to its default.
+            if (in_array($name, ['void', 'never', 'mixed', 'static', 'self', '$this'], true)) {
+                return null;
+            }
+
+            // A bare array/iterable is an ambiguous JSON container (object OR list).
+            if (in_array($name, ['array', 'iterable'], true)) {
+                $schema = $this->permissiveJsonSchema();
+                if ($returnType->allowsNull()) {
+                    $schema->nullable = true;
+                }
+
+                return $schema;
+            }
+        }
+
+        return $this->typeMapper->mapReflectionType($returnType);
+    }
+
+    /**
+     * Return a nullable variant of a schema. A $ref cannot carry a `nullable` flag
+     * (it renders as the bare reference), so wrap it in anyOf with a null branch.
+     */
+    private function makeNullable(SchemaObject $schema): SchemaObject
+    {
+        if ($schema->ref !== null) {
+            return new SchemaObject(anyOf: [$schema, new SchemaObject(type: 'null')]);
+        }
+
+        $schema->nullable = true;
+
+        return $schema;
+    }
+
+    /**
+     * Permissive schema for values whose JSON shape (object vs. list) is unknown.
+     */
+    private function permissiveJsonSchema(): SchemaObject
+    {
+        return new SchemaObject(oneOf: [
+            SchemaObject::object(),
+            new SchemaObject(type: 'array', items: new SchemaObject),
+        ]);
+    }
+
     private function isConditionalField(Node $value): bool
     {
         if ($value instanceof Expr\MethodCall && $value->name instanceof Node\Identifier) {
             $name = $value->name->toString();
 
-            return in_array($name, ['when', 'whenLoaded', 'whenNotNull', 'whenCounted', 'whenPivotLoaded']);
+            if (in_array($name, ['when', 'whenLoaded', 'whenNotNull', 'whenCounted', 'whenPivotLoaded', 'whenAppended'], true)) {
+                return true;
+            }
+        }
+
+        // A conditional value wrapped in a Resource call is still conditional:
+        //   SomeResource::collection($this->whenLoaded('x'))
+        //   new SomeResource($this->whenLoaded('x'))
+        //   SomeResource::make($this->when(...))
+        // When the underlying relation/attribute is absent, the resource resolves to a
+        // MissingValue and the key is stripped from the response — so it is NOT required.
+        if ($value instanceof Expr\StaticCall || $value instanceof Expr\New_ || $value instanceof Expr\MethodCall) {
+            foreach ($value->args as $arg) {
+                if ($arg instanceof Node\Arg && $this->isConditionalField($arg->value)) {
+                    return true;
+                }
+            }
         }
 
         return false;

@@ -444,7 +444,9 @@ class PhpDocParser
             'float', 'double' => SchemaObject::number('double'),
             'bool', 'boolean', 'true', 'false' => SchemaObject::boolean(),
             'null' => new SchemaObject(type: 'string', nullable: true),
-            'array', 'list' => new SchemaObject(type: 'array', items: SchemaObject::string()),
+            // Bare `array`/`list` (no element type) → permissive ANY items,
+            // never a misleading string element type.
+            'array', 'list' => new SchemaObject(type: 'array', items: new SchemaObject),
             'object', 'stdclass' => SchemaObject::object(),
             'mixed' => new SchemaObject,
             'void', 'never' => null,

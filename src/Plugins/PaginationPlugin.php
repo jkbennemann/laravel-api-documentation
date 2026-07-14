@@ -8,6 +8,7 @@ use Illuminate\Http\Resources\Json\ResourceCollection;
 use JkBennemann\LaravelApiDocumentation\Contracts\OperationTransformer;
 use JkBennemann\LaravelApiDocumentation\Contracts\Plugin;
 use JkBennemann\LaravelApiDocumentation\Data\AnalysisContext;
+use JkBennemann\LaravelApiDocumentation\Data\SchemaObject;
 use JkBennemann\LaravelApiDocumentation\PluginRegistry;
 use PhpParser\Node;
 use PhpParser\Node\Expr\MethodCall;
@@ -187,36 +188,56 @@ class PaginationPlugin implements OperationTransformer, Plugin
      */
     private function addPaginationMetadata(array $schema, string $type): array
     {
+        // Build property schemas via SchemaObject so nullability is rendered for the
+        // active OpenAPI version (3.1 → type: [T, "null"]; 3.0 → nullable: true).
+        $prop = static fn (string $t, ?string $format = null, bool $nullable = false, mixed $example = null): array => (new SchemaObject(
+            type: $t,
+            format: $format,
+            example: $example,
+            nullable: $nullable,
+        ))->jsonSerialize();
+
         if ($type === 'cursorPaginate') {
+            // Laravel's cursor paginator resource response also carries a `links` block
+            // (first/last are always null for cursor pagination; prev/next are URLs).
+            $schema['properties']['links'] = [
+                'type' => 'object',
+                'properties' => [
+                    'first' => $prop('string', 'uri', true),
+                    'last' => $prop('string', 'uri', true),
+                    'prev' => $prop('string', 'uri', true),
+                    'next' => $prop('string', 'uri', true, 'https://example.com/api/resource?cursor=eyJpZCI6MTV9'),
+                ],
+            ];
             $schema['properties']['meta'] = [
                 'type' => 'object',
                 'properties' => [
-                    'path' => ['type' => 'string', 'example' => 'https://example.com/api/resource'],
-                    'per_page' => ['type' => 'integer', 'example' => 15],
-                    'next_cursor' => ['type' => 'string', 'nullable' => true, 'example' => 'eyJpZCI6MTUsIl9wb2ludHNUb05leHRJdGVtcyI6dHJ1ZX0'],
-                    'prev_cursor' => ['type' => 'string', 'nullable' => true, 'example' => null],
+                    'path' => $prop('string', null, false, 'https://example.com/api/resource'),
+                    'per_page' => $prop('integer', null, false, 15),
+                    'next_cursor' => $prop('string', null, true, 'eyJpZCI6MTUsIl9wb2ludHNUb05leHRJdGVtcyI6dHJ1ZX0'),
+                    'prev_cursor' => $prop('string', null, true),
                 ],
             ];
         } else {
             $schema['properties']['links'] = [
                 'type' => 'object',
                 'properties' => [
-                    'first' => ['type' => 'string', 'format' => 'uri', 'example' => 'https://example.com/api/resource?page=1'],
-                    'last' => ['type' => 'string', 'format' => 'uri', 'nullable' => true, 'example' => 'https://example.com/api/resource?page=10'],
-                    'prev' => ['type' => 'string', 'format' => 'uri', 'nullable' => true, 'example' => null],
-                    'next' => ['type' => 'string', 'format' => 'uri', 'nullable' => true, 'example' => 'https://example.com/api/resource?page=2'],
+                    'first' => $prop('string', 'uri', true, 'https://example.com/api/resource?page=1'),
+                    'last' => $prop('string', 'uri', true, 'https://example.com/api/resource?page=10'),
+                    'prev' => $prop('string', 'uri', true),
+                    'next' => $prop('string', 'uri', true, 'https://example.com/api/resource?page=2'),
                 ],
             ];
             $schema['properties']['meta'] = [
                 'type' => 'object',
                 'properties' => [
-                    'current_page' => ['type' => 'integer', 'example' => 1],
-                    'from' => ['type' => 'integer', 'nullable' => true, 'example' => 1],
-                    'last_page' => ['type' => 'integer', 'example' => 10],
-                    'per_page' => ['type' => 'integer', 'example' => 15],
-                    'to' => ['type' => 'integer', 'nullable' => true, 'example' => 15],
-                    'total' => ['type' => 'integer', 'example' => 150],
-                    'path' => ['type' => 'string', 'example' => 'https://example.com/api/resource'],
+                    'current_page' => $prop('integer', null, false, 1),
+                    'from' => $prop('integer', null, true, 1),
+                    'last_page' => $prop('integer', null, false, 10),
+                    'per_page' => $prop('integer', null, false, 15),
+                    'to' => $prop('integer', null, true, 15),
+                    'total' => $prop('integer', null, false, 150),
+                    'path' => $prop('string', null, false, 'https://example.com/api/resource'),
                 ],
             ];
         }

@@ -100,7 +100,9 @@ class LaravelApiDocumentationServiceProvider extends PackageServiceProvider
 
         $this->app->singleton(PhpDocParser::class, function ($app) {
             $parser = new PhpDocParser;
-            $parser->setClassResolver($app->make(ClassSchemaResolver::class));
+            $resolver = $app->make(ClassSchemaResolver::class);
+            $parser->setClassResolver($resolver);
+            $resolver->setPhpDocParser($parser);
 
             return $parser;
         });
@@ -189,10 +191,12 @@ class LaravelApiDocumentationServiceProvider extends PackageServiceProvider
         $registry->addQueryExtractor(new RequestMethodCallAnalyzer, 65);
 
         // Response extractors
-        $registry->addResponseExtractor(new DataResponseAttributeAnalyzer($schemaRegistry, $config), 100);
-
         $classResolver = $app->make(ClassSchemaResolver::class);
         $modelAnalyzer = $app->make(EloquentModelAnalyzer::class);
+        $dataResponseAnalyzer = new DataResponseAttributeAnalyzer($schemaRegistry, $config, $classResolver);
+        $dataResponseAnalyzer->setModelAnalyzer($modelAnalyzer);
+        $registry->addResponseExtractor($dataResponseAnalyzer, 100);
+
         $phpDocParser = $app->make(PhpDocParser::class);
         $returnTypeAnalyzer = new ReturnTypeAnalyzer($schemaRegistry, $classResolver, $modelAnalyzer, $phpDocParser, $config, $astCache);
         $registry->addResponseExtractor($returnTypeAnalyzer, 90);

@@ -28,12 +28,31 @@ class DataResponseAttributeAnalyzer implements ResponseExtractor
     public function __construct(
         ?SchemaRegistry $registry = null,
         private readonly array $config = [],
+        ?\JkBennemann\LaravelApiDocumentation\Schema\ClassSchemaResolver $classResolver = null,
     ) {
         $this->typeMapper = new TypeMapper;
+
+        // Wire the class resolver so #[DataResponse(resource: SomeDto::class)] /
+        // #[ResponseBody(dataClass: ...)] resolve to a fully-typed schema from the
+        // class's typed properties, instead of collapsing to a bare {type:object}.
+        if ($classResolver !== null) {
+            $this->typeMapper->setClassResolver($classResolver);
+        }
 
         if ($registry !== null) {
             $this->resourceAnalyzer = new JsonResourceAnalyzer($registry, $this->config);
         }
+    }
+
+    /**
+     * Wire the Eloquent model analyzer into the internal JsonResourceAnalyzer so
+     * that #[DataResponse(resource: SomeResource::class)] resolves model-backed
+     * property types (e.g. UUID primary keys as strings, DB column nullability)
+     * instead of falling back to name-based heuristics.
+     */
+    public function setModelAnalyzer(\JkBennemann\LaravelApiDocumentation\Schema\EloquentModelAnalyzer $analyzer): void
+    {
+        $this->resourceAnalyzer?->setModelAnalyzer($analyzer);
     }
 
     public function extract(AnalysisContext $ctx): array
