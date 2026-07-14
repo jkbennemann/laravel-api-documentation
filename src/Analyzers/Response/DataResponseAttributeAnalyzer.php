@@ -194,6 +194,16 @@ class DataResponseAttributeAnalyzer implements ResponseExtractor
             $schema = SchemaObject::array($schema);
         }
 
+        // A ResponseBody that declares a NON-JSON content type but no data class
+        // (e.g. a PDF/image/XML/HTML/binary download) still deserves a body so
+        // the media type is visible: represent it as an opaque string, using the
+        // `binary` format for genuinely binary payloads.
+        if ($schema === null && $attr->dataClass === null && $attr->contentType !== 'application/json') {
+            $binaryTypes = ['application/pdf', 'application/octet-stream', 'application/zip'];
+            $isBinary = in_array($attr->contentType, $binaryTypes, true) || str_starts_with($attr->contentType, 'image/');
+            $schema = SchemaObject::string($isBinary ? 'binary' : null);
+        }
+
         return new ResponseResult(
             statusCode: $attr->statusCode,
             schema: $schema,
