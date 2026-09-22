@@ -196,6 +196,16 @@ return [
     | Register additional plugins or disable auto-discovered ones.
     |
     */
+    /*
+     * Warn before starting when the process's memory_limit is below this many megabytes.
+     *
+     * Analysing a large API allocates a lot, and running out is not a visible failure: the process
+     * exits 255 with nothing printed, shutdown functions never run, and the document from the
+     * previous run stays on disk looking current. The warning is the only thing that can be said
+     * while there is still a process to say it.
+     */
+    'minimum_memory_mb' => 512,
+
     'plugins' => [
         // Additional plugin classes to register
         // Example: \App\Docs\CustomPlugin::class,

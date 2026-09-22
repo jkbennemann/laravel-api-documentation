@@ -31,6 +31,8 @@ class GenerateDocumentationCommand extends Command
         SchemaRegistry $registry,
         ClassSchemaResolver $classResolver,
     ): int {
+        $this->warnIfMemoryIsTight();
+
         // Clear cache if requested
         if ($this->option('clear-cache')) {
             $cache = app(\JkBennemann\LaravelApiDocumentation\Cache\AstCache::class);
@@ -288,6 +290,55 @@ class GenerateDocumentationCommand extends Command
     /**
      * @return array<string, mixed>
      */
+    /**
+     * Say so, before starting, when the limit is too low to finish.
+     *
+     * Analysing a large document allocates a lot: one real application's second document (287 paths,
+     * 336 components) exhausts 128M partway through. When that happens the process disappears —
+     * exit 255, nothing on stdout or stderr, shutdown functions never reached — and the file from
+     * the PREVIOUS run is still sitting on disk looking current. Two commits shipped a stale
+     * document that way before anyone checked the exit code.
+     *
+     * Nothing inside the process can report a death like that, so the warning has to come first.
+     * The end-of-run check below catches every partial failure the process does survive.
+     */
+    private function warnIfMemoryIsTight(): void
+    {
+        $limit = $this->memoryLimitInBytes();
+        $recommended = (int) config('api-documentation.minimum_memory_mb', 512);
+
+        if ($limit === null || $limit >= $recommended * 1024 * 1024) {
+            return;
+        }
+
+        $current = (int) round($limit / 1024 / 1024);
+
+        $this->warn("memory_limit is {$current}M. Analysing a large API can need considerably more, "
+            ."and running out kills the process silently — no error, and the previous file left on "
+            .'disk looking current. If generation stops partway, re-run with '
+            ."`php -d memory_limit={$recommended}M artisan api:generate`.");
+    }
+
+    /** The active memory_limit in bytes; null when unlimited or unreadable. */
+    private function memoryLimitInBytes(): ?int
+    {
+        $raw = trim((string) ini_get('memory_limit'));
+
+        if ($raw === '' || $raw === '-1') {
+            return null;
+        }
+
+        $unit = strtolower(substr($raw, -1));
+        $value = (int) $raw;
+
+        return match ($unit) {
+            'g' => $value * 1024 * 1024 * 1024,
+            'm' => $value * 1024 * 1024,
+            'k' => $value * 1024,
+            default => $value,
+        };
+    }
+
     private function buildDomainConfig(string $fileKey): array
     {
         $domains = config('api-documentation.domains', ['default' => []]);

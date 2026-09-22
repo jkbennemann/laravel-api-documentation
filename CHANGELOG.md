@@ -67,6 +67,13 @@ All notable changes to `laravel-api-documentation` will be documented in this fi
 - Hub page at `/documentation` redirecting to the default viewer.
 - Alternative UI link appending for multi-viewer setups.
 
+### Added
+- **`api:generate` warns when `memory_limit` is too low to finish**, before it starts. Running out
+  of memory is invisible: the process exits 255 with nothing on stdout or stderr, shutdown functions
+  are never reached, and the document from the previous run stays on disk looking current. A
+  shutdown handler was tried and never fired, so the check has to happen while there is still a
+  process to print it. Threshold: `api-documentation.minimum_memory_mb`, default 512.
+
 ### Fixed
 - **An `array` field with named child rules is documented as an object.** Laravel spells such a
   field twice — `'config' => ['required', 'array']` declares it, `'config.url' => [...]` describes
