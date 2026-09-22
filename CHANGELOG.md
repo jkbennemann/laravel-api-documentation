@@ -68,6 +68,12 @@ All notable changes to `laravel-api-documentation` will be documented in this fi
 - Alternative UI link appending for multi-viewer setups.
 
 ### Fixed
+- **An `array` field with named child rules is documented as an object.** Laravel spells such a
+  field twice — `'config' => ['required', 'array']` declares it, `'config.url' => [...]` describes
+  what goes in it — and the first rule won. The schema then carried `type: array` alongside
+  `properties`, which is not valid OpenAPI (`properties` is ignored on an array), so a generated
+  client saw a list of strings where the API wants an object and could not build a valid request.
+  A field with a `field.*` rule still describes items and stays an array.
 - **A create that returns its PARENT is documented 200, not 201.** The 201 rule looked for a create
   call anywhere in the action, but Laravel keys the status on the model the RETURNED resource wraps.
   The ordinary nested-collection shape — `Step::create(...)` then

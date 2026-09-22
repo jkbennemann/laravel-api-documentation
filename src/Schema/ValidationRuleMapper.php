@@ -332,6 +332,16 @@ class ValidationRuleMapper
         // Handle nested objects: address.street
         if (! isset($properties[$topField])) {
             $properties[$topField] = SchemaObject::object();
+        } elseif ($properties[$topField]->type !== 'object' && $properties[$topField]->items === null) {
+            // The parent already exists because Laravel spells it twice: `'config' => ['array']`
+            // declares it, `'config.url' => [...]` describes what is inside. The first rule maps to
+            // `type: array`, and hanging properties off that produces a schema OpenAPI ignores —
+            // `properties` means nothing on an array — so a generated client saw a list of strings
+            // where the API wants an object. A named child means an associative array, which is a
+            // JSON object. The `items === null` guard leaves a genuine list alone: a field with a
+            // `field.*` rule has items and stays an array.
+            $properties[$topField]->type = 'object';
+            $properties[$topField]->items = null;
         }
 
         if (count($remaining) === 1) {
