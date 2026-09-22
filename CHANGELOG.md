@@ -67,6 +67,16 @@ All notable changes to `laravel-api-documentation` will be documented in this fi
 - Hub page at `/documentation` redirecting to the default viewer.
 - Alternative UI link appending for multi-viewer setups.
 
+### Fixed
+- **A `#[DataResponse]` no longer suppresses the statuses it does not name.** The attribute
+  previously turned return-statement analysis off entirely, so a method annotated for its success
+  shape silently lost every error status its own code returns. Annotating the happy path is the
+  common case, which made the status a caller meets most often the one missing from the document.
+  The attribute still owns the statuses it declares.
+- **Statuses raised by a guard helper are documented.** `abort()` was only found in the action's own
+  body, so the very common `$this->enforcePlan($tenant)` / `$this->authorizeAccess()` opening left
+  its 403 undocumented. Same-class calls on `$this` are now followed one level.
+
 ### Changed
 - Configuration file restructured with `analysis`, `code_samples`, `smart_responses`, `smart_requests`, `error_responses`, `capture`, and domain-level overrides.
 - Service provider rewritten for plugin-based architecture with auto-discovery from Composer `extra`.

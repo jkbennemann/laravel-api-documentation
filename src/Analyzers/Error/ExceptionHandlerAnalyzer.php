@@ -11,7 +11,9 @@ use JkBennemann\LaravelApiDocumentation\Data\ResponseResult;
 use JkBennemann\LaravelApiDocumentation\Data\SchemaObject;
 use JkBennemann\LaravelApiDocumentation\Schema\PhpDocParser;
 use PhpParser\Node;
+use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\NodeFinder;
+use PhpParser\ParserFactory;
 
 class ExceptionHandlerAnalyzer implements ResponseExtractor
 {
@@ -19,6 +21,9 @@ class ExceptionHandlerAnalyzer implements ResponseExtractor
     private array $providers;
 
     private ?PhpDocParser $phpDocParser;
+
+    /** @var array<string, array<string, ClassMethod>> parsed methods, keyed by source file */
+    private array $methodsByFile = [];
 
     /**
      * @param  ExceptionSchemaProvider[]  $providers
@@ -85,7 +90,106 @@ class ExceptionHandlerAnalyzer implements ResponseExtractor
             $results[] = $result;
         }
 
+        foreach ($this->findAbortsInGuardHelpers($ctx) as $result) {
+            $results[] = $result;
+        }
+
         return $results;
+    }
+
+    /**
+     * Statuses raised by a guard helper the action calls on itself.
+     *
+     * Controllers routinely start with `$this->enforcePlan($tenant)` or `$this->authorizeAccess()`,
+     * and the `abort(403)` then lives one call away from the method being analysed. Reading only the
+     * action's own body meant those statuses were invisible — an endpoint that refuses most callers
+     * with a 403 documented no 403 at all.
+     *
+     * Deliberately ONE level and same-class only. The guard-helper idiom is exactly that shape, and
+     * following calls further would start reporting statuses from service objects that a caller of
+     * this endpoint may never actually see.
+     *
+     * @return ResponseResult[]
+     */
+    private function findAbortsInGuardHelpers(AnalysisContext $ctx): array
+    {
+        if ($ctx->sourceFilePath === null || ! $ctx->hasAst()) {
+            return [];
+        }
+
+        $siblings = $this->methodsInFile($ctx->sourceFilePath);
+        if ($siblings === []) {
+            return [];
+        }
+
+        $results = [];
+        $self = $ctx->astNode instanceof ClassMethod ? $ctx->astNode->name->toString() : null;
+
+        foreach ($this->methodsCalledOnThis($ctx->astNode) as $name) {
+            // A method that calls itself would otherwise be walked twice for the same aborts.
+            if ($name === $self || ! isset($siblings[$name])) {
+                continue;
+            }
+
+            foreach ($this->findAbortCalls($siblings[$name]) as $result) {
+                $results[] = $result;
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Names of methods the body invokes on `$this`.
+     *
+     * @return list<string>
+     */
+    private function methodsCalledOnThis(Node $node): array
+    {
+        $names = [];
+
+        foreach ((new NodeFinder)->findInstanceOf($node, Node\Expr\MethodCall::class) as $call) {
+            if (! $call->var instanceof Node\Expr\Variable || $call->var->name !== 'this') {
+                continue;
+            }
+            if ($call->name instanceof Node\Identifier) {
+                $names[] = $call->name->toString();
+            }
+        }
+
+        return array_values(array_unique($names));
+    }
+
+    /**
+     * Every method declared in a source file, keyed by name.
+     *
+     * Cached per file: a controller's actions are analysed one after another and each would
+     * otherwise re-parse the same file once per guard helper it calls.
+     *
+     * @return array<string, ClassMethod>
+     */
+    private function methodsInFile(string $path): array
+    {
+        if (array_key_exists($path, $this->methodsByFile)) {
+            return $this->methodsByFile[$path];
+        }
+
+        $methods = [];
+
+        try {
+            $code = @file_get_contents($path);
+            if ($code !== false) {
+                $stmts = (new ParserFactory)->createForNewestSupportedVersion()->parse($code) ?? [];
+                foreach ((new NodeFinder)->findInstanceOf($stmts, ClassMethod::class) as $method) {
+                    $methods[$method->name->toString()] = $method;
+                }
+            }
+        } catch (\Throwable) {
+            // An unparseable file is not worth failing generation over; the action's own body has
+            // already been analysed by the caller.
+        }
+
+        return $this->methodsByFile[$path] = $methods;
     }
 
     /**

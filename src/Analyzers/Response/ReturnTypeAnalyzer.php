@@ -59,12 +59,30 @@ class ReturnTypeAnalyzer implements ResponseExtractor
 
     public function extract(AnalysisContext $ctx): array
     {
-        // When explicit #[DataResponse] or #[ResponseBody] attributes exist, the
-        // developer has declared the response contract — don't add auto-detected
-        // responses that would conflict (e.g. a stray empty application/json next
-        // to a declared binary/XML/HTML body).
-        if ($ctx->hasAttribute(DataResponse::class) || $ctx->hasAttribute(ResponseBody::class)) {
-            return [];
+        // An explicit #[DataResponse] or #[ResponseBody] owns the statuses it NAMES: the developer
+        // declared those, and auto-detection must not put a stray empty application/json next to a
+        // declared binary/XML/HTML body.
+        //
+        // It does not own the ones it says nothing about. Bailing out entirely here meant a method
+        // annotated for its success shape silently lost every error status its own code returns —
+        // and since annotating the happy path is the common case, the status a caller meets most
+        // often was the one missing from the document. Found by driving a live API against its own
+        // published reference: `return response()->json($body, 404)` sat one line above a
+        // `#[DataResponse(status: 200)]` and went undocumented.
+        //
+        // Return-type and PHPDoc analysis stay off in that case. Neither can produce a status the
+        // attribute has not already declared, and their generic 200 IS the stray response above.
+        $declared = $this->attributeDeclaredStatuses($ctx);
+
+        if ($declared !== []) {
+            if (! $ctx->hasAst()) {
+                return [];
+            }
+
+            return array_values(array_filter(
+                $this->analyzeReturnStatements($ctx),
+                fn (ResponseResult $result) => ! in_array($result->statusCode, $declared, true),
+            ));
         }
 
         $results = [];
@@ -291,6 +309,26 @@ class ReturnTypeAnalyzer implements ResponseExtractor
         }
 
         return $results;
+    }
+
+    /**
+     * Statuses the developer has declared with an attribute, which auto-detection must not restate.
+     *
+     * @return list<int>
+     */
+    private function attributeDeclaredStatuses(AnalysisContext $ctx): array
+    {
+        $statuses = [];
+
+        foreach ($ctx->getAttributes(DataResponse::class) as $attribute) {
+            $statuses[] = $attribute->status;
+        }
+
+        foreach ($ctx->getAttributes(ResponseBody::class) as $attribute) {
+            $statuses[] = $attribute->statusCode;
+        }
+
+        return array_values(array_unique($statuses));
     }
 
     /** @return list<ResponseResult> */
