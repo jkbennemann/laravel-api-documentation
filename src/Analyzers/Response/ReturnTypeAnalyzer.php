@@ -125,13 +125,16 @@ class ReturnTypeAnalyzer implements ResponseExtractor
                         $isCollection = is_subclass_of($resolved, \Illuminate\Http\Resources\Json\ResourceCollection::class);
                         $schema = $this->applyResourceWrap($resolved, $schema);
 
-                        return [new ResponseResult(
-                            statusCode: 200,
-                            schema: $schema,
-                            description: 'Success',
-                            source: 'phpdoc:return_resource',
-                            isCollection: $isCollection,
-                        )];
+                        return array_map(
+                            fn (int $status) => new ResponseResult(
+                                statusCode: $status,
+                                schema: $schema,
+                                description: $status === 201 ? 'Created' : 'Success',
+                                source: 'phpdoc:return_resource',
+                                isCollection: $isCollection,
+                            ),
+                            $this->resourceSuccessStatuses($ctx),
+                        );
                     }
                 }
 
@@ -204,13 +207,16 @@ class ReturnTypeAnalyzer implements ResponseExtractor
                 $isCollection = is_subclass_of($typeName, \Illuminate\Http\Resources\Json\ResourceCollection::class);
                 $schema = $this->applyResourceWrap($typeName, $schema);
 
-                return [new ResponseResult(
-                    statusCode: 200,
-                    schema: $schema,
-                    description: 'Success',
-                    source: 'return_type:JsonResource',
-                    isCollection: $isCollection,
-                )];
+                return array_map(
+                    fn (int $status) => new ResponseResult(
+                        statusCode: $status,
+                        schema: $schema,
+                        description: $status === 201 ? 'Created' : 'Success',
+                        source: 'return_type:JsonResource',
+                        isCollection: $isCollection,
+                    ),
+                    $this->resourceSuccessStatuses($ctx),
+                );
             }
         }
 
@@ -244,6 +250,51 @@ class ReturnTypeAnalyzer implements ResponseExtractor
      * @return ResponseResult[]
      */
     private function analyzeReturnStatements(AnalysisContext $ctx): array
+    {
+        return $this->withConditionalCreateCompanion($this->collectReturnStatements($ctx), $ctx);
+    }
+
+    /**
+     * `firstOrCreate` / `updateOrCreate` answer 201 when they create and 200 when they find, so a
+     * single status would be a guess either way. The AST paths each yield one result, so the pair
+     * is completed here rather than in three places.
+     *
+     * @param  list<ResponseResult>  $results
+     * @return list<ResponseResult>
+     */
+    private function withConditionalCreateCompanion(array $results, AnalysisContext $ctx): array
+    {
+        $statuses = $this->resourceSuccessStatuses($ctx);
+        if ($statuses !== [201, 200]) {
+            return $results;
+        }
+
+        foreach ($results as $result) {
+            if ($result->statusCode === 200) {
+                return $results;
+            }
+        }
+
+        foreach ($results as $result) {
+            if ($result->statusCode === 201) {
+                $results[] = new ResponseResult(
+                    statusCode: 200,
+                    schema: $result->schema,
+                    description: 'Success',
+                    contentType: $result->contentType,
+                    source: $result->source,
+                    isCollection: $result->isCollection,
+                );
+
+                break;
+            }
+        }
+
+        return $results;
+    }
+
+    /** @return list<ResponseResult> */
+    private function collectReturnStatements(AnalysisContext $ctx): array
     {
         if (! $ctx->hasAst()) {
             return [];
@@ -429,7 +480,7 @@ class ReturnTypeAnalyzer implements ResponseExtractor
                                     $schema = $this->applyResourceWrap($returnTypeName, $schema);
 
                                     return new ResponseResult(
-                                        statusCode: 200,
+                                        statusCode: $this->primaryResourceStatus($ctx),
                                         schema: $schema,
                                         description: 'Success',
                                         source: 'ast:method_indirection',
@@ -492,7 +543,7 @@ class ReturnTypeAnalyzer implements ResponseExtractor
                 $schema = $this->applyResourceWrap($resolved, $schema);
 
                 return new ResponseResult(
-                    statusCode: 200,
+                    statusCode: $this->primaryResourceStatus($ctx),
                     schema: $schema,
                     description: 'Success',
                     source: 'ast:new_resource',
@@ -539,7 +590,7 @@ class ReturnTypeAnalyzer implements ResponseExtractor
                     $schema = $this->applyResourceWrap($resolvedName, $schema);
 
                     return new ResponseResult(
-                        statusCode: 200,
+                        statusCode: $this->primaryResourceStatus($ctx),
                         schema: $schema,
                         description: 'Success',
                         source: 'ast:resource_static',
@@ -1221,5 +1272,86 @@ class ReturnTypeAnalyzer implements ResponseExtractor
             ],
             required: ['message'],
         );
+    }
+
+    /**
+     * The status a JsonResource return actually produces at runtime.
+     *
+     * Laravel does not always answer 200 here. `ResourceResponse::calculateStatus()` returns **201**
+     * when the wrapped model reports `wasRecentlyCreated`, so a `store()` that simply returns
+     * `new ThingResource($thing)` emits 201 with nothing in the source saying so. Reading the
+     * return type alone therefore documented 200 for every create in the application — a 2026-09-22
+     * conformance run against production found 26 of 35 collection POSTs affected, and a client
+     * generated from that document breaks on every create it makes.
+     *
+     * We reproduce the runtime rule as closely as static analysis allows: on a POST route, look for
+     * a call that persists a new model. A definite create means 201. `firstOrCreate` and
+     * `updateOrCreate` may or may not create, so those genuinely produce either status and both are
+     * documented rather than guessing one.
+     *
+     * @return list<int> the success statuses to emit, in order
+     */
+    /** The status to use where only one can be expressed. */
+    private function primaryResourceStatus(AnalysisContext $ctx): int
+    {
+        return $this->resourceSuccessStatuses($ctx)[0];
+    }
+
+    private function resourceSuccessStatuses(AnalysisContext $ctx): array
+    {
+        if (! in_array('POST', array_map('strtoupper', $ctx->route->methods), true)) {
+            return [200];
+        }
+
+        $source = $this->actionSource($ctx);
+        if ($source === null) {
+            return [200];
+        }
+
+        // Either-status calls first: they are also matched by the definite patterns below.
+        if (preg_match('/->(firstOrCreate|updateOrCreate)\s*\(/', $source)
+            || preg_match('/::(firstOrCreate|updateOrCreate)\s*\(/', $source)) {
+            return [201, 200];
+        }
+
+        $createsAModel = preg_match('/::(create|forceCreate)\s*\(/', $source)
+            || preg_match('/->(create|forceCreate)\s*\(/', $source)
+            || preg_match('/->save\s*\(\s*\)/', $source);
+
+        return $createsAModel ? [201] : [200];
+    }
+
+    /** The action's own source text, for the create-detection above. Null when unavailable. */
+    private function actionSource(AnalysisContext $ctx): ?string
+    {
+        if ($ctx->sourceFilePath === null || ! is_file($ctx->sourceFilePath)) {
+            return null;
+        }
+
+        $method = $ctx->actionMethod();
+        if ($method === null) {
+            return null;
+        }
+
+        $contents = @file_get_contents($ctx->sourceFilePath);
+        if ($contents === false) {
+            return null;
+        }
+
+        // From the action's signature to the start of the next one. Crude, and deliberately so:
+        // the alternative is walking the AST for every candidate call shape, and a false 201 on a
+        // create-adjacent action is a far smaller error than the blanket 200 this replaces.
+        $pattern = '/function\s+'.preg_quote($method, '/').'\s*\(/';
+        if (! preg_match($pattern, $contents, $m, PREG_OFFSET_CAPTURE)) {
+            return null;
+        }
+
+        $start = $m[0][1];
+        $next = preg_match('/
+    (?:public|protected|private)\s/', substr($contents, $start + 1), $n, PREG_OFFSET_CAPTURE)
+            ? $n[0][1]
+            : null;
+
+        return $next === null ? substr($contents, $start) : substr($contents, $start, $next);
     }
 }
