@@ -73,6 +73,21 @@ class CreateStatusController
         return new SimpleJsonResource($user);
     }
 
+    /**
+     * Saves a model it did NOT create — an update, so 200.
+     *
+     * `$incident->forceFill([...])->save()` on a route-bound model is how every acknowledge, snooze
+     * and toggle in a real application is written. Counting any `->save()` as a create puts a 201 on
+     * all of them: the resource reports `wasRecentlyCreated === false` and Laravel answers 200.
+     */
+    public function acknowledge(
+        \JkBennemann\LaravelApiDocumentation\Tests\Stubs\Models\User $user
+    ): SimpleJsonResource {
+        $user->save();
+
+        return new SimpleJsonResource($user);
+    }
+
     /** The same resource on a GET is never a create. */
     public function show(): SimpleJsonResource
     {

@@ -81,12 +81,14 @@ All notable changes to `laravel-api-documentation` will be documented in this fi
   `properties`, which is not valid OpenAPI (`properties` is ignored on an array), so a generated
   client saw a list of strings where the API wants an object and could not build a valid request.
   A field with a `field.*` rule still describes items and stays an array.
-- **A create that returns its PARENT is documented 200, not 201.** The 201 rule looked for a create
-  call anywhere in the action, but Laravel keys the status on the model the RETURNED resource wraps.
-  The ordinary nested-collection shape — `Step::create(...)` then
-  `return new PolicyResource($policy)` — was documented 201 while the endpoint answers 200. The rule
-  now follows the variable the returned resource is given, through a `DB::transaction` wrapper, and
-  falls back to the old method-wide scan only when no variable can be identified.
+- **The 201 rule follows the model the RETURNED resource wraps.** It previously looked for a create
+  call anywhere in the action, and Laravel does not: it keys the status on what the returned resource
+  is given. Two shapes were documented 201 while answering 200 — a create that returns its parent
+  (`Step::create(...)` then `return new PolicyResource($policy)`), and `->save()` on a route-bound
+  model, which is how every acknowledge, snooze and toggle is written. The rule now follows the
+  variable handed to the returned resource, through a `DB::transaction` wrapper, counts `->save()`
+  only on a model instantiated in the same action, and falls back to the old method-wide scan when
+  no variable can be identified.
 - **A `#[DataResponse]` no longer suppresses the statuses it does not name.** The attribute
   previously turned return-statement analysis off entirely, so a method annotated for its success
   shape silently lost every error status its own code returns. Annotating the happy path is the

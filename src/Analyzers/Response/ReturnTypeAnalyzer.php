@@ -1463,16 +1463,44 @@ class ReturnTypeAnalyzer implements ResponseExtractor
         }
 
         // `$thing = new Thing(...); $thing->save();` — persisted, just not in one expression.
-        foreach ($finder->findInstanceOf($stmts, MethodCall::class) as $call) {
-            if ($call->var instanceof Variable
-                && $call->var->name === $variable
-                && $call->name instanceof Identifier
-                && $call->name->toString() === 'save') {
-                $verdict = 'definite';
+        //
+        // Gated on the variable being NEW here. `$incident->save()` on a route-bound model is an
+        // update, and the resource it is handed back in reports `wasRecentlyCreated === false`, so
+        // Laravel answers 200. Counting every ->save() would put a 201 on every acknowledge,
+        // snooze and toggle in the application.
+        if ($verdict === 'no' && $this->isInstantiatedHere($variable, $stmts)) {
+            foreach ($finder->findInstanceOf($stmts, MethodCall::class) as $call) {
+                if ($call->var instanceof Variable
+                    && $call->var->name === $variable
+                    && $call->name instanceof Identifier
+                    && $call->name->toString() === 'save') {
+                    $verdict = 'definite';
+                }
             }
         }
 
         return $verdict;
+    }
+
+    /**
+     * Is this variable assigned from a `new` in the action, rather than arriving already loaded?
+     *
+     * @param  array<int, \PhpParser\Node\Stmt>  $stmts
+     */
+    private function isInstantiatedHere(string $variable, array $stmts): bool
+    {
+        $finder = new NodeFinder;
+
+        foreach ($finder->findInstanceOf($stmts, Assign::class) as $assign) {
+            if (! $assign->var instanceof Variable || $assign->var->name !== $variable) {
+                continue;
+            }
+            if ($finder->findFirstInstanceOf($assign->expr, New_::class) !== null) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** The action's own source text, for the create-detection above. Null when unavailable. */

@@ -88,6 +88,16 @@ class CreateStatusDetectionTest extends TestCase
         expect($statuses)->not()->toContain('201');
     }
 
+    public function test_saving_a_model_the_action_did_not_create_stays_200(): void
+    {
+        Route::post('api/incidents/{user}/acknowledge', [CreateStatusController::class, 'acknowledge']);
+
+        $statuses = $this->statuses('/api/incidents/{user}/acknowledge');
+
+        expect($statuses)->toContain('200');
+        expect($statuses)->not()->toContain('201');
+    }
+
     public function test_a_create_inside_a_transaction_is_still_a_create(): void
     {
         Route::post('api/tx-users', [CreateStatusController::class, 'storeInsideTransaction']);
