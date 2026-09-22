@@ -87,6 +87,11 @@ class GenerateDocumentationCommand extends Command
             $domainConfig = $domains[$fileKey] ?? $domains['default'] ?? [];
             $domainConfig = array_merge(
                 [
+                    // Which document is being built. A multi-document setup often needs an
+                    // operation to read differently per document — the same endpoint can be
+                    // callable in one and refused in another — and a transformer had no way to
+                    // tell them apart. Reaches transformers as context metadata; see OpenApiEmitter.
+                    'domain' => $fileKey,
                     'open_api_version' => config('api-documentation.open_api_version', '3.1.0'),
                     'version' => config('api-documentation.version', '1.0.0'),
                     'title' => config('api-documentation.title', 'API Documentation'),
@@ -290,6 +295,7 @@ class GenerateDocumentationCommand extends Command
 
         return array_merge(
             [
+                'domain' => $fileKey,
                 'open_api_version' => config('api-documentation.open_api_version', '3.1.0'),
                 'version' => config('api-documentation.version', '1.0.0'),
                 'title' => config('api-documentation.title', 'API Documentation'),

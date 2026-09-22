@@ -77,4 +77,21 @@ class CreateStatusDetectionTest extends TestCase
 
         expect($this->statuses('/api/widgets/first', 'get'))->not()->toContain('201');
     }
+
+    public function test_creating_a_child_and_returning_the_parent_stays_200(): void
+    {
+        Route::post('api/policies/{parent}/steps', [CreateStatusController::class, 'addChildReturningParent']);
+
+        $statuses = $this->statuses('/api/policies/{parent}/steps');
+
+        expect($statuses)->toContain('200');
+        expect($statuses)->not()->toContain('201');
+    }
+
+    public function test_a_create_inside_a_transaction_is_still_a_create(): void
+    {
+        Route::post('api/tx-users', [CreateStatusController::class, 'storeInsideTransaction']);
+
+        expect($this->statuses('/api/tx-users'))->toContain('201');
+    }
 }

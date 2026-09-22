@@ -98,8 +98,13 @@ class OpenApiEmitter
                 security: $this->securityBuilder->buildOperationSecurity($security),
             );
 
-            // Apply operation transformers
-            $operation = $this->pipeline->transformOperation($operation, $ctx);
+            // Apply operation transformers. They get the document key, so an operation can read
+            // differently in each document it appears in — the same endpoint is often callable
+            // under one document's credential and refused under another's.
+            $operation = $this->pipeline->transformOperation(
+                $operation,
+                isset($config['domain']) ? $ctx->withMetadata('domain', $config['domain']) : $ctx,
+            );
 
             // Collect tags (with optional description from #[Tag] attribute)
             $tagAttr = $ctx->getAttribute(Tag::class);

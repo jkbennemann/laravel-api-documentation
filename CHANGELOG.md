@@ -68,6 +68,12 @@ All notable changes to `laravel-api-documentation` will be documented in this fi
 - Alternative UI link appending for multi-viewer setups.
 
 ### Fixed
+- **A create that returns its PARENT is documented 200, not 201.** The 201 rule looked for a create
+  call anywhere in the action, but Laravel keys the status on the model the RETURNED resource wraps.
+  The ordinary nested-collection shape — `Step::create(...)` then
+  `return new PolicyResource($policy)` — was documented 201 while the endpoint answers 200. The rule
+  now follows the variable the returned resource is given, through a `DB::transaction` wrapper, and
+  falls back to the old method-wide scan only when no variable can be identified.
 - **A `#[DataResponse]` no longer suppresses the statuses it does not name.** The attribute
   previously turned return-statement analysis off entirely, so a method annotated for its success
   shape silently lost every error status its own code returns. Annotating the happy path is the

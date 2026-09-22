@@ -16,10 +16,14 @@ use JkBennemann\LaravelApiDocumentation\Schema\EloquentModelAnalyzer;
 use JkBennemann\LaravelApiDocumentation\Schema\PhpDocParser;
 use JkBennemann\LaravelApiDocumentation\Schema\SchemaRegistry;
 use PhpParser\Node;
+use PhpParser\Node\Arg;
 use PhpParser\Node\Expr;
+use PhpParser\Node\Expr\Assign;
 use PhpParser\Node\Expr\MethodCall;
 use PhpParser\Node\Expr\New_;
 use PhpParser\Node\Expr\StaticCall;
+use PhpParser\Node\Expr\Variable;
+use PhpParser\Node\Identifier;
 use PhpParser\Node\Name;
 use PhpParser\Node\Stmt\Return_;
 use PhpParser\NodeFinder;
@@ -1341,6 +1345,34 @@ class ReturnTypeAnalyzer implements ResponseExtractor
             return [200];
         }
 
+        // What the runtime rule actually keys on is the model the RETURNED resource wraps, so ask
+        // about that variable rather than about the method as a whole.
+        //
+        // A method that creates a CHILD and returns its PARENT is the case that matters, and it is
+        // an ordinary REST shape: `EscalationStep::create(...)` followed by
+        // `return new EscalationPolicyResource($escalationPolicy)`. The policy was loaded by route
+        // binding and was not recently created, so Laravel answers 200 — while a method-wide scan
+        // for a create call says 201 and documents a status the endpoint never returns.
+        $returned = $this->returnedResourceVariables($ctx);
+
+        if ($returned !== []) {
+            $statuses = [200];
+
+            foreach ($returned as $variable) {
+                $origin = $this->creationOf($variable, $ctx);
+                if ($origin === 'maybe') {
+                    return [201, 200];
+                }
+                if ($origin === 'definite') {
+                    $statuses = [201];
+                }
+            }
+
+            return $statuses;
+        }
+
+        // No identifiable variable — a collection, a literal, a chained builder. Fall back to
+        // reading the method, which is what the first version of this did for everything.
         $source = $this->actionSource($ctx);
         if ($source === null) {
             return [200];
@@ -1357,6 +1389,90 @@ class ReturnTypeAnalyzer implements ResponseExtractor
             || preg_match('/->save\s*\(\s*\)/', $source);
 
         return $createsAModel ? [201] : [200];
+    }
+
+    /**
+     * Names of the variables handed to a resource this action returns.
+     *
+     * Matches `return new ThingResource($thing)` and `return (new ThingResource($thing))->response()`
+     * and the `->additional(...)` chains in between. Anything else yields nothing, and the caller
+     * falls back to reading the whole method.
+     *
+     * @return list<string>
+     */
+    private function returnedResourceVariables(AnalysisContext $ctx): array
+    {
+        if (! $ctx->hasAst()) {
+            return [];
+        }
+
+        $variables = [];
+
+        foreach ((new NodeFinder)->findInstanceOf($ctx->astNode->stmts ?? [], Return_::class) as $return) {
+            $expr = $return->expr;
+
+            // Unwrap ->response(), ->additional([...]), ->withCookie(...) and friends.
+            while ($expr instanceof MethodCall) {
+                $expr = $expr->var;
+            }
+
+            if (! $expr instanceof New_ || ! $expr->class instanceof Name) {
+                continue;
+            }
+
+            $first = $expr->args[0] ?? null;
+            if ($first instanceof Arg && $first->value instanceof Variable && is_string($first->value->name)) {
+                $variables[] = $first->value->name;
+            }
+        }
+
+        return array_values(array_unique($variables));
+    }
+
+    /**
+     * Whether a variable holds a model this action just persisted.
+     *
+     * 'definite' — assigned from a create, or saved. 'maybe' — assigned from firstOrCreate /
+     * updateOrCreate, which genuinely produce either status. 'no' — everything else, including a
+     * route-bound parameter the method never assigns.
+     *
+     * The assignment's whole right-hand side is searched, not just its outermost call, because the
+     * create is routinely wrapped: `$m = DB::transaction(fn () => Model::create([...]))`.
+     */
+    private function creationOf(string $variable, AnalysisContext $ctx): string
+    {
+        $finder = new NodeFinder;
+        $stmts = $ctx->astNode->stmts ?? [];
+        $verdict = 'no';
+
+        foreach ($finder->findInstanceOf($stmts, Assign::class) as $assign) {
+            if (! $assign->var instanceof Variable || $assign->var->name !== $variable) {
+                continue;
+            }
+
+            foreach ($finder->find($assign->expr, fn ($node) => $node instanceof StaticCall || $node instanceof MethodCall) as $call) {
+                $name = $call->name instanceof Identifier ? $call->name->toString() : null;
+
+                if (in_array($name, ['firstOrCreate', 'updateOrCreate'], true)) {
+                    return 'maybe';
+                }
+                if (in_array($name, ['create', 'forceCreate'], true)) {
+                    $verdict = 'definite';
+                }
+            }
+        }
+
+        // `$thing = new Thing(...); $thing->save();` — persisted, just not in one expression.
+        foreach ($finder->findInstanceOf($stmts, MethodCall::class) as $call) {
+            if ($call->var instanceof Variable
+                && $call->var->name === $variable
+                && $call->name instanceof Identifier
+                && $call->name->toString() === 'save') {
+                $verdict = 'definite';
+            }
+        }
+
+        return $verdict;
     }
 
     /** The action's own source text, for the create-detection above. Null when unavailable. */
