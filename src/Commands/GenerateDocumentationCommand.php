@@ -314,7 +314,7 @@ class GenerateDocumentationCommand extends Command
         $current = (int) round($limit / 1024 / 1024);
 
         $this->warn("memory_limit is {$current}M. Analysing a large API can need considerably more, "
-            ."and running out kills the process silently — no error, and the previous file left on "
+            .'and running out kills the process silently — no error, and the previous file left on '
             .'disk looking current. If generation stops partway, re-run with '
             ."`php -d memory_limit={$recommended}M artisan api:generate`.");
     }
